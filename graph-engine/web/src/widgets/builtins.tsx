@@ -45,7 +45,8 @@ export function NumberEditor({ value, config, input, onCommit }: WidgetEditorPro
   const [draft, setDraft] = useState(asString(value));
   useEffect(() => setDraft(asString(value)), [value]);
 
-  const isInt = input.widget?.subtype === 'int' || config.subtype === 'int';
+  const isInt =
+    input.type === 'int' || input.widget?.subtype === 'int' || config.subtype === 'int';
   const commit = () => {
     const trimmed = draft.trim();
     if (trimmed === '') {
@@ -55,7 +56,12 @@ export function NumberEditor({ value, config, input, onCommit }: WidgetEditorPro
     const parsed = Number(trimmed);
     // Guard against NaN/Infinity — neither round-trips (A-D5). Invalid input is
     // left for the node body to reject at run; we just don't commit garbage.
-    if (Number.isFinite(parsed) && parsed !== value) onCommit(parsed);
+    if (!Number.isFinite(parsed)) return;
+    // An int input must never persist a float into the source (Python would
+    // only object at the next run): round, and show what actually committed.
+    const next = isInt ? Math.round(parsed) : parsed;
+    setDraft(asString(next));
+    if (next !== value) onCommit(next);
   };
   return (
     <input

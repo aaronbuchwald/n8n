@@ -56,19 +56,43 @@ export function WidgetSlot({ input, value, hasLiteral, nodeId }: WidgetSlotProps
   const [open, setOpen] = useState(false);
   const slotRef = useRef<HTMLSpanElement>(null);
 
-  // Click-outside closes the open editor. This is the primary "done editing"
-  // affordance alongside the explicit ✕ button, so a debounced editor (table
-  // 500ms, math on-change) can be typed in freely and only settles on dismiss —
-  // onCommit itself NEVER closes (that was the mid-edit collapse bug).
+  // Dismissal: click-outside and Escape, alongside the explicit Done button.
+  // A debounced editor (table 500ms, math on-change) can be typed in freely and
+  // only settles on dismiss — onCommit itself NEVER closes (that was the
+  // mid-edit collapse bug).
+  //
+  // Both listeners are CAPTURE-phase on the document: ReactFlow's pane
+  // (d3-zoom) stops pointer events before they bubble back up to the document,
+  // so a bubble-phase listener never sees canvas clicks — capture runs first,
+  // on the way down. Escape gets the same treatment so it works regardless of
+  // which element inside the editor holds focus.
   useEffect(() => {
     if (!open) return;
-    const onPointerDown = (event: MouseEvent) => {
+    const onPointerDown = (event: PointerEvent) => {
       if (slotRef.current && !slotRef.current.contains(event.target as Node)) {
+        // Settle first: blur a focused field inside the slot so blur-committing
+        // editors (text/number) commit their draft before the editor unmounts
+        // (unmounting alone never fires blur).
+        const active = document.activeElement;
+        if (active instanceof HTMLElement && slotRef.current.contains(active)) {
+          active.blur();
+        }
         setOpen(false);
       }
     };
-    document.addEventListener('mousedown', onPointerDown);
-    return () => document.removeEventListener('mousedown', onPointerDown);
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      // Escape cancels: close WITHOUT settling, leaving the last committed
+      // value in place. Stop it here so nothing above reinterprets the key.
+      event.stopPropagation();
+      setOpen(false);
+    };
+    document.addEventListener('pointerdown', onPointerDown, true);
+    document.addEventListener('keydown', onKeyDown, true);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown, true);
+      document.removeEventListener('keydown', onKeyDown, true);
+    };
   }, [open]);
 
   // Read-only, or a non-widget input (list/dict/etc.): today's behavior. Kept
@@ -84,12 +108,31 @@ export function WidgetSlot({ input, value, hasLiteral, nodeId }: WidgetSlotProps
     return (
       <button
         type="button"
-        className="ge-socket__state ge-socket__state--widget ge-widget-chip"
+        // `nodrag` keeps a press on the chip from starting a node drag (which
+        // would also select the node).
+        className="ge-socket__state ge-socket__state--widget ge-widget-chip nodrag"
         data-testid="widget-chip"
         title={`Edit ${input.name}`}
-        onClick={() => setOpen(true)}
+        // A kind-chip (no literal yet) otherwise reads like a value ("precision
+        // number") — dash the border and italicize so it reads as a placeholder.
+        style={
+          hasLiteral
+            ? undefined
+            : { border: '1px dashed var(--ge-node-border-strong)', fontStyle: 'italic' }
+        }
+        onClick={(event) => {
+          // Opening the editor must not ALSO select the node and slide the
+          // inspector over the canvas — ReactFlow's node click handler sits
+          // above this button.
+          event.stopPropagation();
+          setOpen(true);
+        }}
       >
         {chip}
+        {/* The static "this is editable" cue; hover styling alone isn't discoverable. */}
+        <span aria-hidden="true" style={{ marginLeft: 4, opacity: 0.6, fontStyle: 'normal' }}>
+          ✎
+        </span>
       </button>
     );
   }
@@ -101,6 +144,9 @@ export function WidgetSlot({ input, value, hasLiteral, nodeId }: WidgetSlotProps
       ref={slotRef}
       className="ge-widget-slot nodrag nowheel nopan"
       data-testid="widget-slot"
+      // Clicks inside the open editor (fields, Done) must not bubble into
+      // ReactFlow's node click handler and select/inspect the node.
+      onClick={(event) => event.stopPropagation()}
     >
       <span className="ge-widget-slot__bar">
         <span className="ge-widget-slot__label" title={input.name}>
