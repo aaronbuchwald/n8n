@@ -5,6 +5,9 @@
 export interface Widget {
   kind: string;
   subtype?: string;
+  // Optional, editor-specific options declared in Python via `Widget(kind, **config)`
+  // (ADR 0005 A-D3). Opaque to the shell; passed through to the editor component.
+  config?: Record<string, unknown>;
 }
 
 export interface SpecInput {

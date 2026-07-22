@@ -2,12 +2,7 @@ import { Handle, Position, type NodeProps, type Node } from '@xyflow/react';
 import type { SpecNodeData } from '../types';
 import { inHandle, outHandle } from '../buildGraph';
 import { previewValue } from '../preview';
-
-function formatValue(v: unknown): string {
-  if (typeof v === 'string') return `"${v}"`;
-  const json: string | undefined = JSON.stringify(v);
-  return json ?? String(v);
-}
+import { WidgetSlot } from '../widgets/WidgetSlot';
 
 // A compact per-socket result overlay shown on a node after a run. Truncated so
 // a long value (e.g. a big list) doesn't blow out the card; click the node to
@@ -127,7 +122,6 @@ export function SpecNode({ data }: NodeProps<SpecNode>) {
             {spec.inputs.map((input) => {
               const wired = wiredInputs.has(input.name);
               const hasLiteral = Object.prototype.hasOwnProperty.call(boundInputs, input.name);
-              const literal = hasLiteral ? formatValue(boundInputs[input.name]) : null;
               return (
                 <div className="ge-socket ge-socket--in" key={input.name}>
                   <Handle
@@ -140,19 +134,19 @@ export function SpecNode({ data }: NodeProps<SpecNode>) {
                     {input.name}
                   </span>
                   <span className="ge-socket__type">{input.type}</span>
+                  {/* The one widget editor slot (ADR 0005 A-D4). WidgetSlot owns
+                      read-only display AND the editor, so this stays a single
+                      mount — B/C-ui add editor files, never touch this line. */}
                   {wired ? (
                     <span className="ge-socket__state ge-socket__state--wired">wired</span>
-                  ) : literal !== null ? (
-                    <span className="ge-socket__state ge-socket__state--value" title={literal}>
-                      {literal}
-                    </span>
-                  ) : input.widget ? (
-                    <span className="ge-socket__state ge-socket__state--widget">
-                      {input.widget.kind}
-                    </span>
-                  ) : input.required ? (
-                    <span className="ge-socket__state ge-socket__state--required">required</span>
-                  ) : null}
+                  ) : (
+                    <WidgetSlot
+                      input={input}
+                      value={boundInputs[input.name]}
+                      hasLiteral={hasLiteral}
+                      nodeId={id}
+                    />
+                  )}
                 </div>
               );
             })}

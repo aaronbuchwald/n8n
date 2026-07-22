@@ -61,7 +61,7 @@ from .schema import (
     validate_graph,
     validate_node_spec,
 )
-from .spec import node_spec
+from .spec import Widget, node_spec
 from .version import SCHEMA_VERSION
 
 __version__ = SCHEMA_VERSION
@@ -69,6 +69,7 @@ __version__ = SCHEMA_VERSION
 __all__ = [
     # entry points
     "node_spec",
+    "Widget",
     "Graph",
     "bind",
     "run",

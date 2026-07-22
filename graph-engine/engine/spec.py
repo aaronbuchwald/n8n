@@ -19,12 +19,47 @@ The result is a JSON-serialisable ``dict`` conforming to the node-spec schema in
 from __future__ import annotations
 
 import inspect
+import json
 from typing import Any, Callable, Optional
 
 from .errors import EngineError
 
 # Default output-socket name when a function has one plain return value.
 DEFAULT_OUTPUT = "result"
+
+
+class Widget:
+    """A declarative editing-widget contract for one input (ADR 0005 A-D2).
+
+    A ``Widget`` declares only a *contract* — a registry ``kind`` the UI resolves
+    to an editor component, plus JSON-serialisable ``config`` that is opaque to
+    the engine. No HTML, no callbacks; a headless or non-React front-end is free
+    to ignore or reinterpret it. Serialised into the input spec's existing
+    ``widget`` field as ``{"kind": ..., "config"?: {...}}`` (additive, A-D3).
+
+    Args:
+        kind: registry key the UI resolves to an editor component (open
+            vocabulary; core kinds: ``number``/``text``/``checkbox``).
+        **config: JSON-serialisable options passed through to that editor. The
+            ``json.dumps`` guard fails at import time — not save time — if a
+            caller passes something unserialisable.
+    """
+
+    __slots__ = ("kind", "config")
+
+    def __init__(self, kind: str, **config: object) -> None:
+        self.kind = kind
+        self.config = config
+        json.dumps(config)  # fail at import time, not save time
+
+    def to_dict(self) -> dict:
+        d: dict[str, Any] = {"kind": self.kind}
+        if self.config:
+            d["config"] = dict(self.config)
+        return d
+
+    def __repr__(self) -> str:
+        return f"Widget({self.kind!r}, {self.config!r})"
 
 # Python scalar types that render as an editable widget when a socket is left
 # unconnected. Anything else (list, dict, custom classes) must be wired.
@@ -68,12 +103,16 @@ def _widget_for(type_name: Optional[str]) -> Optional[dict]:
     return _WIDGET_BY_TYPE.get(type_name)
 
 
-def _input_spec(param: inspect.Parameter) -> dict:
+def _input_spec(param: inspect.Parameter, widget: Optional[Widget] = None) -> dict:
     type_name = _type_name(param.annotation)
     required = param.default is inspect.Parameter.empty
     default, default_repr = (None, None)
     if not required:
         default, default_repr = _jsonify_default(param.default)
+
+    # A declared widget overrides the type-derived one (A-D2); undeclared inputs
+    # keep today's derivation unchanged.
+    widget_dict = widget.to_dict() if widget is not None else _widget_for(type_name)
 
     entry: dict[str, Any] = {
         "name": param.name,
@@ -81,7 +120,7 @@ def _input_spec(param: inspect.Parameter) -> dict:
         "kind": _KIND_LABEL[param.kind],
         "required": required,
         "default": default,
-        "widget": _widget_for(type_name),
+        "widget": widget_dict,
     }
     if default_repr is not None:
         entry["defaultRepr"] = default_repr
@@ -117,6 +156,7 @@ def node_spec(
     name: Optional[str] = None,
     title: Optional[str] = None,
     outputs: Optional[list] = None,
+    widgets: Optional[dict[str, Widget]] = None,
     module: Optional[str] = None,
     qualname: Optional[str] = None,
 ) -> dict:
@@ -128,17 +168,29 @@ def node_spec(
         title: human label; defaults to ``name``.
         outputs: explicit output sockets (names or ``{"name","type"}`` dicts);
             >1 makes a multi-output node whose callable returns a keyed dict.
+        widgets: per-parameter editing-widget declarations (ADR 0005 A-D2), keyed
+            by parameter name. A declared :class:`Widget` overrides the
+            type-derived one; a key naming no parameter raises ``EngineError`` at
+            import time.
         module / qualname: override the identity (defaults to ``fn.__module__`` /
             ``fn.__qualname__``); together they form the collision-proof id.
 
     Raises:
         EngineError: the callable uses ``*args``/``**kwargs`` (not addressable as
-            named sockets).
+            named sockets), or a ``widgets`` key names no parameter.
     """
     signature = inspect.signature(fn)
     short_name = name or fn.__name__
     module = module or fn.__module__
     qualname = qualname or fn.__qualname__
+
+    widgets = widgets or {}
+    unknown = set(widgets) - set(signature.parameters)
+    if unknown:
+        names = ", ".join(sorted(repr(n) for n in unknown))
+        raise EngineError(
+            f"{short_name!r} declares widget(s) for unknown parameter(s): {names}"
+        )
 
     inputs = []
     for param in signature.parameters.values():
@@ -147,7 +199,7 @@ def node_spec(
                 f"{short_name!r} uses *args/**kwargs, which cannot be named "
                 f"input sockets; wrap it in a fixed-signature function"
             )
-        inputs.append(_input_spec(param))
+        inputs.append(_input_spec(param, widgets.get(param.name)))
 
     return {
         "id": f"{module}.{qualname}",

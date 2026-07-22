@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
 from .errors import DuplicateNodeType, UnknownNodeType
-from .spec import node_spec
+from .spec import Widget, node_spec
 
 
 @dataclass(frozen=True)
@@ -44,6 +44,7 @@ class NodeRegistry:
         name: Optional[str] = None,
         title: Optional[str] = None,
         outputs: Optional[list] = None,
+        widgets: Optional[dict[str, Widget]] = None,
         module: Optional[str] = None,
         qualname: Optional[str] = None,
         replace: bool = False,
@@ -55,7 +56,13 @@ class NodeRegistry:
                 and ``replace`` is false.
         """
         spec = node_spec(
-            fn, name=name, title=title, outputs=outputs, module=module, qualname=qualname
+            fn,
+            name=name,
+            title=title,
+            outputs=outputs,
+            widgets=widgets,
+            module=module,
+            qualname=qualname,
         )
         node_id = spec["id"]
         existing = self._by_id.get(node_id)
