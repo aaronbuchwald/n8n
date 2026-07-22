@@ -110,6 +110,10 @@ class Graph:
         self.nodes.append(Node(id=id, type=type, inputs=dict(inputs or {}), position=position))
         return self
 
+    # connecting via string seems precarious - I guess that the registry can prevent name collisions, but we
+    # end up with the potential for namespace errors (can handle this).
+    # Is there an alternative approach where we perhaps use references or objects ie. ref to Node rather than named
+    # string?
     def connect(self, source: str, source_output: str, target: str, target_input: str) -> "Graph":
         """Add an edge and return ``self`` for chaining."""
         self.edges.append(
@@ -118,12 +122,16 @@ class Graph:
         return self
 
     # -- queries ---------------------------------------------------------
+    # ... this is dumb, we can just support a map if this is needed and remove it if it's not needed.
     def node(self, node_id: str) -> Node:
         for n in self.nodes:
             if n.id == node_id:
                 return n
         raise KeyError(f"no node with id {node_id!r}")
 
+    # should there be a difference between a node within a graph (where its inputs are defined)
+    # and a node that you can create an instance of? Then a node within a graph can linked its
+    # parents and children by reference.
     def incoming(self, node_id: str) -> list[Edge]:
         """Edges terminating on ``node_id`` (its connected inputs)."""
         return [e for e in self.edges if e.target == node_id]

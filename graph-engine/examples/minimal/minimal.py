@@ -61,6 +61,12 @@ def render_summary(total: float, average: float) -> str:
 # -- wiring ----------------------------------------------------------------
 
 
+# Replace registry pattern with decorators - decorate a function as a node type
+# so it can be called in any other (this should parse it for any children and allow parents to invoke it)
+# this should result in every decorated node being possible to render as a graph including main
+# do we need a separate decorator for main in that case or is it just the higher level instance / class ?
+# maybe main (or similar) is a UI only decorator that creates a view or graph instance from it and everything
+# else is just a node.
 def build_registry() -> NodeRegistry:
     reg = NodeRegistry()
     reg.register(read_values, third_party_import="from minimal import read_values")
