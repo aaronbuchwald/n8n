@@ -61,5 +61,5 @@ packages = ["engine", "server", "nodepacks/calc", "nodepacks/sources", "nodepack
 [tool.pytest.ini_options]
 # `engine` and the node packs are installed into the venv; only the example
 # modules need a path so tests can import them directly.
-pythonpath = ["examples/minimal", "examples/readings", "examples/bijection", "examples/symbolic", "examples/table", "examples/showcase"]
+pythonpath = ["examples/minimal", "examples/readings", "examples/bijection", "examples/symbolic", "examples/table", "examples/showcase", "examples/capacity_check"]
 testpaths = ["tests"]
