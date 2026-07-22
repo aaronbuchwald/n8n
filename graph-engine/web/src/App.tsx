@@ -33,7 +33,7 @@ export default function App() {
           example graph · read-only · contract v{doc.version}
         </span>
         <span className="ge-topbar__out" data-testid="graph-output-label">
-          output → {doc.output.node}.{doc.output.socket}
+          output → {doc.output ? `${doc.output.node}.${doc.output.socket}` : 'none'}
         </span>
       </header>
       <div className="ge-canvas" data-testid="flow-canvas">
