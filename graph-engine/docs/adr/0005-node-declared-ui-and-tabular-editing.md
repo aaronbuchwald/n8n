@@ -1,6 +1,6 @@
 # ADR 0005 — Node-declared UI widgets and tabular recipe editing
 
-Status: **proposed** · Scope: `graph-engine/` · Relates to: ADR 0001 (spec/widget
+Status: **accepted** (2026-07) · Scope: `graph-engine/` · Relates to: ADR 0001 (spec/widget
 seam), ADR 0003 (environment descriptor), ADR 0004 (graph ⟷ source bijection)
 
 Designs three features as one architecture: **(A)** a node-declared editing-UI
@@ -549,7 +549,14 @@ never need to touch that file.
 - The engine remains pure stdlib and UI-agnostic; nothing new is serialized
   into the graph beyond ordinary literals.
 
-## Open confirmations (human decisions needed to move to "accepted")
+## Open confirmations — RESOLVED
+
+**All seven accepted as recommended** (2026-07): (1) `widgets=` kwarg; (2) math
+v1 = text + KaTeX preview, MathLive deferred; (3) one `apply_recipe` node with
+the recipe as a widget literal; (4) v1 pure-stdlib table backend, polars later;
+(5) no SheetJS in v1; (6) minimal custom grid, AG-Grid as the upgrade path;
+(7) both wave-α contracts (widget `{kind, config}` + editor props; recipe schema
+v1) frozen as specified. The original recommendations are retained below.
 
 1. **Widget declaration API = `@node(widgets={...})` kwarg** — vs
    `Annotated[...]` on parameters. *(Recommend: kwarg now — matches
