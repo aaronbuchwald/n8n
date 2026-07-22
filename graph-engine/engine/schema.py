@@ -132,6 +132,49 @@ GRAPH_SCHEMA: dict = {
                  "properties": {"node": {"type": "string"}, "socket": {"type": "string"}}},
             ],
         },
+        "environment": {
+            "description": (
+                "Optional, declarative execution-environment descriptor: the *what* "
+                "(packages, host paths, network posture) never the *how*. Absent → "
+                "stdlib only, no fs outside scratch cwd, no network. Enforcement is a "
+                "later concern (see docs/adr/0003-*.md); v1 is accident-proof, not "
+                "malice-proof."
+            ),
+            "type": "object",
+            "additionalProperties": True,
+            "properties": {
+                "dependencies": {
+                    "type": "array",
+                    "description": "Third-party packages the graph needs. Default [] = stdlib only.",
+                    "items": {
+                        "type": "object",
+                        "required": ["name"],
+                        "additionalProperties": True,
+                        "properties": {
+                            "name": {"type": "string", "description": "Distribution name (e.g. 'sympy')."},
+                            "version": {"type": "string", "description": "PEP 440 specifier (e.g. '1.13.*')."},
+                        },
+                    },
+                },
+                "mounts": {
+                    "type": "array",
+                    "description": "Host paths made available in the run cwd. Default [] = no fs access.",
+                    "items": {
+                        "type": "object",
+                        "required": ["path", "mode"],
+                        "additionalProperties": True,
+                        "properties": {
+                            "path": {"type": "string", "description": "Path, relative to the run's scratch cwd."},
+                            "mode": {"enum": ["ro", "rw"], "description": "Read-only or read-write access."},
+                        },
+                    },
+                },
+                "network": {
+                    "enum": ["none"],
+                    "description": "Network posture. Only 'none' is allowed in v1 (default).",
+                },
+            },
+        },
     },
 }
 
@@ -189,4 +232,40 @@ def validate_graph(graph: Any) -> dict:
     if output is not None:
         _require("node" in output and "socket" in output, "graph 'output' needs 'node' and 'socket'")
         _require(output["node"] in ids, f"graph output node {output['node']!r} is not a node id")
+
+    environment = graph.get("environment")
+    if environment is not None:
+        _validate_environment(environment)
     return graph
+
+
+def _validate_environment(environment: Any) -> None:
+    """Validate the optional graph-level ``environment`` descriptor (see ADR 0003).
+
+    Declarative only — this checks *shape*, not that anything is installed or
+    confined. Absent is handled by the caller; here the block is present, so its
+    fields are checked. Unknown keys are tolerated (additive-tolerant schema).
+    """
+    _require(isinstance(environment, dict), "graph 'environment' must be an object")
+
+    deps = environment.get("dependencies", [])
+    _require(isinstance(deps, list), "environment 'dependencies' must be a list")
+    for dep in deps:
+        _require(isinstance(dep, dict) and "name" in dep, "each dependency needs a 'name'")
+        _require(isinstance(dep["name"], str), "dependency 'name' must be a string")
+        if "version" in dep:
+            _require(isinstance(dep["version"], str), "dependency 'version' must be a string")
+
+    mounts = environment.get("mounts", [])
+    _require(isinstance(mounts, list), "environment 'mounts' must be a list")
+    for mount in mounts:
+        _require(isinstance(mount, dict), "each mount must be an object")
+        _require("path" in mount and isinstance(mount["path"], str), "each mount needs a string 'path'")
+        _require("mode" in mount, "each mount needs a 'mode'")
+        _require(mount["mode"] in ("ro", "rw"), f"mount 'mode' must be 'ro' or 'rw', got {mount['mode']!r}")
+
+    if "network" in environment:
+        _require(
+            environment["network"] == "none",
+            f"environment 'network' must be 'none' in v1, got {environment['network']!r}",
+        )
