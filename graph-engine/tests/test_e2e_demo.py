@@ -15,13 +15,15 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 
 from server.app import create_app
-from server.demo import load_showcase_graph, make_showcase_workspace
+from server.demo import SHOWCASE_RUN_PATH_OVERRIDES, load_showcase_graph, make_showcase_workspace
 
 
 def _demo_client() -> TestClient:
     workspace = make_showcase_workspace()
     graph = load_showcase_graph(workspace)
-    return TestClient(create_app(sample_graph=graph, workspace=workspace))
+    return TestClient(
+        create_app(sample_graph=graph, workspace=workspace, run_path_overrides=SHOWCASE_RUN_PATH_OVERRIDES)
+    )
 
 
 def test_demo_specs_include_sym_and_table_nodes() -> None:
@@ -42,6 +44,15 @@ def test_demo_graph_is_served_and_parses() -> None:
     types = {n["type"] for n in graph["nodes"]}
     assert "sym.parse_expr" in types
     assert "table.apply_recipe" in types
+
+
+def test_demo_graph_served_path_stays_relative() -> None:
+    """The served graph is pristine (review 0005 #3): no machine-absolute path,
+    even though the same graph runs successfully below."""
+    client = _demo_client()
+    graph = client.get("/api/graph").json()
+    read_table = next(n for n in graph["nodes"] if n["type"] == "table.read_table")
+    assert read_table["inputs"]["path"] == "showcase.csv"
 
 
 def test_demo_workspace_reports_branch_and_module() -> None:

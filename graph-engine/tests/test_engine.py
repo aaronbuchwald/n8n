@@ -234,6 +234,26 @@ def test_node_execution_error_carries_node_id():
     assert isinstance(exc.value.__cause__, ValueError)
 
 
+def test_node_execution_error_message_has_no_wrapping_prefix():
+    """review 0005 #14: `.message` is the raw cause text — no `node 'x' (y)
+    raised Z:` prefix — while `str(exc)` keeps the fuller form for logs."""
+    g = Graph().add("boom", f"{__name__}.boom", inputs={"x": 1})
+    with pytest.raises(NodeExecutionError) as exc:
+        run(g, _registry())
+    assert exc.value.message == "nope"
+    assert "nope" in str(exc.value) and str(exc.value) != "nope"  # str(exc) is the fuller form
+
+
+def test_node_execution_error_carries_partial_outputs_of_nodes_that_ran():
+    """review 0005 #6: nodes that finished before the failure aren't discarded."""
+    g = Graph().add("a", f"{__name__}.inc", inputs={"x": 1}).add("boom", f"{__name__}.boom")
+    g.connect("a", "result", "boom", "x")
+    with pytest.raises(NodeExecutionError) as exc:
+        run(g, _registry())
+    assert exc.value.order == ["a"]
+    assert exc.value.outputs == {"a": {"result": 2}}
+
+
 def test_run_cycle():
     g = Graph().add("a", f"{__name__}.inc").add("b", f"{__name__}.inc")
     g.connect("a", "result", "b", "x")

@@ -153,6 +153,34 @@ def test_run_node_error_carries_node_id(client):
     assert r["errors"] and r["errors"][0]["nodeId"] == "empty"
 
 
+def test_run_node_error_message_has_no_node_prefix(client):
+    """review 0005 #14: `message` is the raw cause text, so a UI reading
+    `{nodeId, message}` never has to strip a `node 'x' (y) raised Z:` prefix."""
+    g = _graph()
+    g["nodes"][0]["inputs"]["x"] = 0
+    g["nodes"].append({"id": "empty", "type": "calc.average", "inputs": {"values": []}})
+    g["edges"] = [{"source": "empty", "sourceOutput": "result", "target": "avg", "targetInput": "values"}]
+    r = client.post("/api/run", json={"graph": g}).json()
+    err = r["errors"][0]
+    assert err["message"] == "division by zero"
+    assert "empty" not in err["message"] and "raised" not in err["message"]
+
+
+def test_run_error_returns_partial_outputs_of_nodes_that_ran(client):
+    """review 0005 #6: a failed run doesn't discard already-executed nodes."""
+    g = _graph()
+    g["nodes"][0]["inputs"]["x"] = 0  # src -> [0, 1, 2], never reaches avg
+    g["nodes"].append({"id": "empty", "type": "calc.average", "inputs": {"values": []}})
+    g["edges"] = [{"source": "empty", "sourceOutput": "result", "target": "avg", "targetInput": "values"}]
+    r = client.post("/api/run", json={"graph": g}).json()
+    assert r["errors"] and r["errors"][0]["nodeId"] == "empty"
+    # `src` had no dependency on the failing node, so it ran to completion —
+    # its output is still here even though the run overall failed.
+    assert r["outputs"]["src"]["result"] == [0, 1, 2]
+    assert "src" in r["order"]
+    assert "avg" not in r["outputs"] and "avg" not in r["order"]  # never ran
+
+
 def test_export_returns_python(client):
     py = client.post("/api/export", json={"graph": _graph()}).json()["python"]
     assert "from calc import average" in py
@@ -218,10 +246,12 @@ def test_graph_accepts_a_graph_object():
 def demo_client() -> TestClient:
     from engine import DEFAULT_REGISTRY
 
-    from server.demo import load_minimal_graph
+    from server.demo import MINIMAL_RUN_PATH_OVERRIDES, load_minimal_graph
 
     graph = load_minimal_graph()  # imports minimal → registers minimal.* on DEFAULT_REGISTRY
-    return TestClient(create_app(DEFAULT_REGISTRY, sample_graph=graph))
+    return TestClient(
+        create_app(DEFAULT_REGISTRY, sample_graph=graph, run_path_overrides=MINIMAL_RUN_PATH_OVERRIDES)
+    )
 
 
 def test_demo_graph_types_all_present_in_specs(demo_client):
@@ -230,6 +260,14 @@ def test_demo_graph_types_all_present_in_specs(demo_client):
     types = {n["type"] for n in graph["nodes"]}
     assert types == {"minimal.read_values", "minimal.total", "minimal.average", "minimal.render_summary"}
     assert types <= set(specs)  # every node type the sample graph uses exists in the palette
+
+
+def test_demo_graph_path_literal_stays_relative_as_authored():
+    """The served graph is pristine (review 0005 #3) — no machine-absolute path."""
+    from server.demo import load_minimal_graph
+
+    by_type = {n["type"]: n for n in load_minimal_graph()["nodes"]}
+    assert by_type["minimal.read_values"]["inputs"]["path"] == "readings.csv"
 
 
 def test_demo_graph_validates_and_runs_to_html_card(demo_client):
