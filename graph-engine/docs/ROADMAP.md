@@ -77,6 +77,9 @@ graph LR
 - **C2→C3→C4→C5**: subprocess + ephemeral `uv` venv (dependency whitelisting becomes real) → mount guard → network posture; honor `environment` on `/api/run`. Threat model stays honest-mistake isolation (ADR 0003).
 - **A4** `pick` node (nested-output access without paths-on-edges).
 
+**Symbolic-math node pack (`nodepacks/sym`) — the requested SymPy + handcalcs + forallpeople compute layer.**
+A node pack (like `calc`/`sources`): **SymPy** (build an expression · `solve`/rearrange · `lambdify` to numbers), **forallpeople** (real units on values), **handcalcs** (typeset the substituted steps → HTML). It declares its `environment.dependencies` (`sympy`, `handcalcs`, `forallpeople`) via the C1 descriptor; it **runs in-process today** (deps behind a pack extra) and reproducibly under **C2–C5** later. Demos stay simple (e.g. solve a quadratic symbolically then check it numerically; a unit-carrying formula rendered by handcalcs) — never structural/engineering domain. **This is a nodes-only feature — it needs no UI.** It can slot in as the next node-pack stream, in parallel with the web work. *(The visual equation **editor** — a MathLive widget to author equations on the canvas — is the separate Phase-5 piece below and needs the node-declared-widget seam first.)*
+
 **Phase 5 — rich editing (E1–E7)**
 - Source editing over `GET/PUT /api/source/{id}` (routes reserved 501). Write path edits the **real `.py`** via `module`/`qualname`; imports read-only (shown, not edited) per the current decision; re-introspect + re-`bind` on save.
 - Node-declared widgets: renderer registry over the open `widget.kind` vocabulary — **before** the equation editor (the editor is just another widget).
