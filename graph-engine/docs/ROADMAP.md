@@ -110,9 +110,27 @@ graph LR
 
 **Don't build yet:** Phase-6 VCS (blocked on ids); `network` values beyond `"none"` (can't enforce yet); cross-language / IPC (YAGNI); SSE/streaming runs (sync is fine); equation editor before the widget-registry seam; auth/multi-user; a layout-engine dep at B1.
 
+**Resolved decisions:**
+1. **Where do saved graphs live? → the backing `.py` files, directly.** The graph
+   *is* an editor of the source tree: saving graph wiring rewrites the `@main`
+   composite, and editing a node body rewrites that `@node` function — in place,
+   on the **currently checked-out git branch** (no side branch / PR for edits, for
+   now). The UI shows which branch it's editing. This is the **source-tree-editing
+   stream** (below), in flight.
+5. **PR base branch → keep stacking on `integration/wave-1`** until the UI quality
+   pass lands; open a clean PR set to `master` after.
+
+**Source-tree-editing stream (in flight — Fable):** `GET/PUT /api/source/{id}`
+(edit the real `@node` function body/signature, re-introspect + re-bind), graph
+write-back to the `@main` composite (D5: patch wiring lines only, bodies/imports
+preserved), and a current-branch indicator. Writes are guarded to the repo tree;
+layout stays in a sidecar, never in the `.py`. This un-blocks and front-runs B4.
+
 **Open decisions (human):**
-1. **Where do saved graphs live?** Recommend **files on disk** (keeps the ordinary-Python + diffable-JSON story; sets up Phase-6 git for free) over a server store. *Blocks B4.*
-2. **Stable node id scheme** — explicit `id=` in tracing vs content-hash. Decide **with B4 save**, or accumulate migration debt.
-3. **`position` as authored data** — once B4 lets users drag, write positions back to the (nullable) `position` field; auto-layout only fills `null`. Recommend yes.
-4. **HTML-output rendering** — sandboxed iframe (recommended) vs text-only, decided at B3 before habits form.
-5. **PR base branch** — the stream PRs stack on `claude/nodezator-gui-python-conversion-nm1tgv`; confirm whether to retarget `master` before merging.
+2. **Stable node id scheme** — variable-name ids (ADR 0004 D3) are adopted; confirm at B4 save whether anything more is needed for diff stability.
+3. **`position` as authored data** — once B4 lets users drag, write positions to a layout sidecar; auto-layout fills the rest. Recommend yes.
+4. **HTML-output rendering** — sandboxed iframe: **shipped at B3**.
+
+**Housekeeping TODO:** `web/dist` is currently force-tracked in git so the UI can
+be reviewed without a local JS build. **Revert it to gitignored** once the local
+toolchain is confirmed and reviews no longer depend on the committed bundle.
