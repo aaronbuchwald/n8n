@@ -11,6 +11,13 @@ core:
 
 The graph payload is the engine's existing graph JSON — no new format. Values
 are JSON-serialised with a ``{"$repr","$type"}`` fallback for non-JSON returns.
+
+.. warning::
+   ``/api/run`` executes arbitrary node code **in-process, with no isolation**
+   (nodes can read any host path, open sockets, etc.) until the sandboxed runner
+   lands (stream C / ADR 0003). The app binds ``127.0.0.1`` by default — **do
+   not expose it on an untrusted network**, and do not run graphs you don't
+   trust, until enforcement exists.
 """
 
 from .app import create_app
