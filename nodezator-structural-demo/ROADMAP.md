@@ -18,12 +18,13 @@ Your nine features fall on two sides of a line:
 | Features | Nature | Home |
 |---|---|---|
 | 1–5 (graph↔Python, pure-Python nodes, inputs/APIs, arbitrary code, forallpeople/handcalcs/symbolic) | **logic** | Native to Nodezator's core — buildable *today* |
-| 6–9 (embedded spreadsheet, visual equation editor, VCS-from-UI, embedded Copilot/agents) | **rich UI + platform** | Outgrow pygame — pull toward a **web / VS Code-hosted** editor over the same core |
+| 6–8 (embedded spreadsheet, visual equation editor, VCS-from-UI) | **rich UI + platform** | Outgrow pygame — pull toward a **web / VS Code-hosted** editor over the same core |
+| 9 (embedded Copilot/agents) | **deferred** | out of scope for this roadmap (no LLM API key needed) | — |
 
 So the strategy is: **prove the reusable core first (cheap, in Nodezator),
 then replace the weak pygame UI with a [ReactFlow](https://reactflow.dev/)
 front-end over that same core (Phase 4) exactly when a feature forces it — never
-before.** The ReactFlow re-render is the backbone that unlocks features 6–9, and
+before.** The ReactFlow re-render is the backbone that unlocks features 6–8, and
 its first checkpoint is a **PR that shows the graph re-rendered in ReactFlow**
 beside the pygame original. Every phase leaves a reviewable checkpoint.
 
@@ -76,11 +77,11 @@ headless engine so any UI can drive it.
 | 6 | Embedded CSV/Excel-like table in the graph | **Custom viewer node (pygame) — limited** | a viewer/widget node holding a grid | Web **data-grid node** (pivot trigger) |
 | 7 | Symbolic equation editing in the editor → Python | **Gap** (no native math editor) | a node whose widget *is* an equation editor | Web **MathLive/MathQuill → SymPy** node |
 | 8 | Version control from the UI (VS Code / Code-OSS lineage) | **Gap** (standalone app, no VCS) | graph files + generated `.py` are diffable | VS Code-hosted editor + **graph-aware diff** |
-| 9 | Embedded Copilot with arbitrary agents | **Gap** | agent tools = the engine's own API | **Anthropic-API agent** over the engine tools |
+| 9 | Embedded Copilot with arbitrary agents | **Deferred — out of scope** | — | Dropped from this roadmap: too far out, and avoids any LLM API-key dependency. Revisit later; the engine API would be the agent's tool surface. |
 
 **Reading the matrix:** 1–5 need *code*, not *platform* — cheap and native.
-6 is where a pygame grid stops being worth it. 7–9 need a modern web/editor host.
-That boundary is the pivot the roadmap is built around.
+6 is where a pygame grid stops being worth it. 7–8 need a modern web/editor host.
+That boundary is the pivot the roadmap is built around. (9 is deferred — see below.)
 
 ---
 
@@ -117,11 +118,12 @@ That boundary is the pivot the roadmap is built around.
   web editor inside **VS Code (Code-OSS — the base Cursor forked)** lets us reuse
   its built-in Git; we add a **graph-aware diff** (semantic node/edge diff, not
   just JSON text diff).
-- **(9) Embedded Copilot/agents.** The engine's API (list node specs, mutate
-  graph, run, export) *is* the agent's tool surface. An **Anthropic-API**
-  agent with tool-use can add nodes, wire them, author node functions, and
-  explain calcs; "arbitrary agents" = pluggable tool/agent definitions. (We'll
-  pull current model IDs/patterns from the `claude-api` skill at that phase.)
+- **(9) Embedded Copilot/agents — deferred, out of scope.** Dropped from this
+  roadmap: it's too far out and it's the only thing that would require an LLM API
+  key, so removing it keeps the whole plan key-free. If revisited later, the
+  natural design is unchanged — the engine's API (list node specs, mutate graph,
+  run, export) becomes the agent's tool surface, and "arbitrary agents" = pluggable
+  tool/agent definitions. Nothing in Phases 0–6 forecloses it.
 
 ---
 
@@ -137,7 +139,7 @@ Extract Nodezator's model into a UI-agnostic package:
 `node_spec(fn)` (introspection → JSON schema of inputs/outputs/widgets),
 `Graph` (nodes + edges as data), `run(graph)` (topological execute),
 `to_python(graph)` (emit runnable script). Freeze the **node-spec + graph JSON
-schema** — this is the contract every later UI and the agent depend on.
+schema** — this is the contract every later UI depends on.
 > Review: the JSON schemas and the four engine entry points.
 
 ### Phase 1 — Nodes & inputs in Nodezator  ·  *checkpoint: working graph + exported .py*
@@ -193,10 +195,10 @@ widget state so they still export to Python.
 Use VS Code's Git plus a **graph-aware diff** over graph JSON + generated `.py`.
 > Review: make a change, view a semantic graph diff, commit and branch from the UI.
 
-### Phase 7 — Embedded Copilot + agents  ·  *checkpoint: an agent edits the graph*
-An agent panel (Anthropic API, tool-use) whose tools are the engine API;
-"arbitrary agents" = pluggable tool/agent configs.
-> Review: "add an RFEM load-case node and wire it in" → the agent edits graph + code correctly.
+### Phase 7 — *(deferred: embedded Copilot + agents)*
+Removed from this roadmap to avoid any LLM API-key dependency and because it's
+too far out. The engine API built in Phase 0 keeps it a clean future add-on if
+we choose to revisit it. **The roadmap now ends at Phase 6.**
 
 ---
 

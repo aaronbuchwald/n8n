@@ -5,11 +5,11 @@ can provision incrementally. **Verified against the current session** where note
 
 ## Bottom line
 
+- **No LLM API key is required.** The agent phase (former Phase 7) was dropped,
+  so the roadmap needs **zero external secrets**.
 - **Phases 0–2 (core, Nodezator nodes, symbolic): need nothing new.** Only PyPI,
   which is already reachable. We can start immediately.
 - **Phases 4–6 (web/VS Code UI): need the npm registry** — already reachable.
-- **Phase 7 (embedded Copilot/agents): needs `ANTHROPIC_API_KEY`** — the only
-  hard external secret. `api.anthropic.com` is reachable; just no key yet.
 - **CDNs are blocked**, so all web assets (ReactFlow, KaTeX/MathJax, MathLive)
   are **bundled locally via npm**, never loaded from a CDN at runtime.
 
@@ -22,9 +22,8 @@ can provision incrementally. **Verified against the current session** where note
 | Chromium (`/opt/pw-browsers`, `PLAYWRIGHT_BROWSERS_PATH` set) | ✅ present |
 | `pypi.org`, `files.pythonhosted.org` | ✅ 200 |
 | `registry.npmjs.org` | ✅ 200 |
-| `api.anthropic.com` | ✅ reachable (401 — needs key) |
 | `cdn.jsdelivr.net` / public CDNs | ❌ blocked → bundle locally |
-| `ANTHROPIC_API_KEY` | ❌ unset (needed at Phase 7) |
+| LLM API key | ➖ not required (agent phase dropped) |
 
 ## Full requirements by phase
 
@@ -37,17 +36,16 @@ can provision incrementally. **Verified against the current session** where note
 | 4 Web shell | — | `PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers`, `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1` | + registry.npmjs.org |
 | 5 Rich widgets | — | (same) | (same; assets bundled, no CDN) |
 | 6 VCS in UI | — | (same) | + open-vsx.org **or** marketplace.visualstudio.com, update.code.visualstudio.com *(only if hosting real VS Code)* |
-| 7 Copilot/agents | **`ANTHROPIC_API_KEY`** | `ANTHROPIC_MODEL` (optional, to pin) | + api.anthropic.com |
+
+The roadmap ends at Phase 6 and requires **no secrets**.
 
 Notes:
 - **RFEM stays mocked** — no external host or credentials. Only if we later wire
   the *real* Dlubal API do we need its endpoint (LAN gRPC in RFEM 6 / SOAP in
   RFEM 5) + license — out of scope for this roadmap.
-- **No `OPENAI_API_KEY`** unless you want a second agent backend; the plan uses
-  Claude only.
-- **`ANTHROPIC_BASE_URL`** is already set in Claude Code sessions to route the
-  *harness's* model calls; the Phase-7 *app* needs its own real
-  `ANTHROPIC_API_KEY` and should call `api.anthropic.com` directly.
+- **No LLM API keys** (`ANTHROPIC_API_KEY` / `OPENAI_API_KEY`) — the agent phase
+  was dropped. If an embedded Copilot is revisited later, that's when a key
+  (and `api.anthropic.com` on the allowlist) would be added.
 
 ## Recommended network policy
 
@@ -57,16 +55,15 @@ A **custom allowlist** is ideal. Minimum set for the whole roadmap:
 pypi.org
 files.pythonhosted.org
 registry.npmjs.org
-api.anthropic.com
 # only if Phase 6 hosts real VS Code / installs extensions:
 open-vsx.org
 marketplace.visualstudio.com
 update.code.visualstudio.com
 ```
 
-If a custom allowlist isn't practical, pick the preset that permits PyPI + npm +
-`api.anthropic.com` outbound. We deliberately **do not** depend on CDNs, so the
-policy does not need to open `*.jsdelivr.net` / `unpkg.com`.
+If a custom allowlist isn't practical, pick the preset that permits PyPI + npm
+outbound. We deliberately **do not** depend on CDNs, so the policy does not need
+to open `*.jsdelivr.net` / `unpkg.com`. No LLM endpoint is needed.
 
 ## Creating the cloud environment (Claude Code on the web)
 
@@ -76,10 +73,7 @@ When creating/editing the environment:
 1. **Repository / branch:** point at this repo; work branch
    `claude/nodezator-gui-python-conversion-nm1tgv`.
 2. **Network policy:** apply the allowlist above (or the closest preset).
-3. **Environment variables / secrets:** add when you reach Phase 7 —
-   - `ANTHROPIC_API_KEY` = *your key* (mark as secret)
-   - `ANTHROPIC_MODEL` = *(optional pin; we'll confirm the current id from the
-     `claude-api` skill at Phase 7)*
+3. **Environment variables:** no secrets required. For the web phases set —
    - `PLAYWRIGHT_BROWSERS_PATH` = `/opt/pw-browsers`
    - `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD` = `1`
 4. **Setup script (optional but handy):** see below — pre-installs deps so the
@@ -111,5 +105,5 @@ context:
 > UI-agnostic package exposing `node_spec(fn)`, a `Graph` model, `run(graph)`,
 > and `to_python(graph)`, and freeze the node-spec + graph JSON schema. Stop at
 > the Phase 0 checkpoint and show me the schemas + the four entry points before
-> proceeding. `ANTHROPIC_API_KEY` is only needed at Phase 7; flag it then. Do
-> not load assets from CDNs — bundle locally (they're blocked).
+> proceeding. No LLM API key is needed (the agent phase was dropped). Do not
+> load assets from CDNs — bundle locally (they're blocked).
