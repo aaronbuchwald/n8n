@@ -24,8 +24,7 @@ import ast
 import pytest
 
 import table
-from engine import run, to_python
-from table.errors import UserError
+from engine import UserError, run, to_python
 from table.expr import compile_expr
 from table.recipe import StdlibInterpreter, interpret
 

@@ -12,9 +12,10 @@ Three nodes:
 
 The op vocabulary, the ``filter``/``derive`` expression grammar, and the
 interpreter structure are documented in :mod:`table.recipe` and
-:mod:`table.expr`; :mod:`table.errors` defines the local :class:`UserError`
-this pack raises for every bad-input case (unknown op/version/function/column,
-unsafe expression syntax, malformed table/recipe shape).
+:mod:`table.expr`. Every bad-input case (unknown op/version/function/column,
+unsafe expression syntax, malformed table/recipe shape) raises
+:class:`engine.UserError` — the shared "the user's fault" error the engine
+now owns (ADR 0005 Part A), re-exported here for pack-local convenience.
 
 Like every pack, each function here is an ordinary Python callable first and a
 node second — ``@node`` only registers it by its ``module.qualname`` id
@@ -30,9 +31,8 @@ import csv
 import html
 import io
 
-from engine import Widget, node
+from engine import UserError, Widget, node
 
-from .errors import UserError
 from .recipe import StdlibInterpreter, interpret, validate_table_shape
 
 _MAX_PREVIEW_ROWS = 20

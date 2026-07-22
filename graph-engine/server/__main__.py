@@ -4,9 +4,12 @@
 default registry (the fuller loader is stream A3). Without it, the palette is
 whatever has already been registered in-process.
 
-``--demo`` (the default) loads the bundled *minimal* example so the app has a
-real palette **and** a sample graph to render at ``GET /api/graph``. Pass
-``--no-demo`` for an empty registry, or ``--library`` to load your own types.
+``--demo`` (the default) loads the bundled *showcase* example so the app has a
+real palette **and** a sample graph that surfaces every editable widget kind
+(math, table-recipe, text, number) at ``GET /api/graph``. Pass ``--no-demo`` for
+an empty registry, or ``--library`` to load your own types. Running the showcase
+needs the ``sym`` extra (SymPy et al.):
+``uv run --extra sym --extra server python -m server --demo``.
 
 **Enter to open:** when stdin is a TTY, the server prints a hint and — on the
 first Enter — opens the app view (``http://{host}:{port}/``) in your browser.
@@ -26,7 +29,7 @@ import webbrowser
 import uvicorn
 
 from .app import WEB_DIST, create_app
-from .demo import load_minimal_graph, make_minimal_workspace
+from .demo import load_showcase_graph, make_showcase_workspace
 
 
 def view_url(host: str, port: int) -> str:
@@ -76,8 +79,8 @@ def main() -> None:
     for module in args.library:
         importlib.import_module(module)
 
-    workspace = make_minimal_workspace() if args.demo else None
-    sample_graph = load_minimal_graph(workspace) if args.demo else None
+    workspace = make_showcase_workspace() if args.demo else None
+    sample_graph = load_showcase_graph(workspace) if args.demo else None
 
     url = args.open_url or view_url(args.host, args.port)
 

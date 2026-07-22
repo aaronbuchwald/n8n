@@ -1,6 +1,8 @@
 import { test, expect } from '@playwright/test';
 
-const NODE_TITLES = ['read_values', 'total', 'average', 'render_summary'];
+// The showcase demo (ADR 0005): a few stable node titles from both chains.
+const NODE_TITLES = ['read_table', 'apply_recipe', 'parse_expr', 'dashboard'];
+const NODE_COUNT = 12;
 
 // This spec loads the app from the FastAPI STATIC MOUNT at "/" (baseURL points
 // at the uvicorn port, not vite preview). It proves the built bundle works when
@@ -43,7 +45,7 @@ test('serves a working app from the FastAPI static mount at "/"', async ({ page 
       page.locator('[data-testid="node-title"]', { hasText: new RegExp(`^${title}$`) }),
     ).toBeVisible();
   }
-  await expect(page.getByTestId('spec-node')).toHaveCount(4);
+  await expect(page.getByTestId('spec-node')).toHaveCount(NODE_COUNT);
   await expect(page.getByTestId('output-badge')).toBeVisible();
 
   await page.screenshot({ path: 'tests/__screenshots__/server-mount.png', fullPage: false });

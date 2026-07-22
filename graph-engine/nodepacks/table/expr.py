@@ -33,7 +33,7 @@ from __future__ import annotations
 import ast
 from typing import Any, Callable
 
-from .errors import UserError
+from engine import UserError
 
 # The fixed, closed function whitelist (ADR 0005 C-D1). Adding a function is a
 # deliberate, versioned change to this grammar — not a runtime option.

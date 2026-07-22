@@ -21,9 +21,34 @@ import { buildFlow, layoutFlowNodes } from './buildGraph';
 import { NodeInspector } from './components/NodeInspector';
 import { SpecNode } from './components/SpecNode';
 import { inspectNode } from './inspect';
-import type { GraphDoc, NodeSpecs } from './types';
+import type { GraphDoc, NodeSpecs, SpecNodeData } from './types';
 
 const nodeTypes: NodeTypes = { specNode: SpecNode };
+
+function sameSet(a: Set<string>, b: Set<string>): boolean {
+  return a.size === b.size && [...a].every((x) => b.has(x));
+}
+
+// The graph-shaped data fields (everything buildFlow derives, minus the run
+// results the run effect owns). Used to skip no-op re-renders during the
+// controlled data sync below.
+function sameGraphData(a: SpecNodeData, b: SpecNodeData): boolean {
+  return (
+    a.spec === b.spec &&
+    a.type === b.type &&
+    a.isOutput === b.isOutput &&
+    JSON.stringify(a.boundInputs) === JSON.stringify(b.boundInputs) &&
+    sameSet(a.wiredInputs, b.wiredInputs) &&
+    sameSet(a.wiredOutputs, b.wiredOutputs)
+  );
+}
+
+// A structural signature: the node ids + edges. It changes only on a real
+// topology change (add/remove node or rewire), never on a literal edit — which
+// is what lets a widget commit reflect in place without a re-layout/re-frame.
+function structureKeyOf(nodes: { id: string }[], edges: { id: string }[]): string {
+  return JSON.stringify({ n: nodes.map((n) => n.id), e: edges.map((e) => e.id) });
+}
 
 // Smoothstep reads cleanly for a layered left-to-right DAG: edges leave/enter
 // horizontally and take soft right-angle turns between layers.
@@ -50,11 +75,45 @@ function GraphCanvas({ graph, specs, runOutputs, errorNodeId }: GraphViewProps) 
   // Controlled state so ReactFlow can sync node dimensions back (minimap) and
   // apply drag position changes. Without change handlers both are inert.
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
-  const [edges, , onEdgesChange] = useEdgesState(initialEdges);
+  const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
 
   const nodesInitialized = useNodesInitialized();
   const { fitView } = useReactFlow();
   const [phase, setPhase] = useState<LayoutPhase>('measuring');
+
+  // When the served graph changes after a widget commit + quiet reload, fold the
+  // freshly derived node DATA (bound literals, wiring, output flag) onto the
+  // existing nodes IN PLACE — preserving each node's measured size and dragged
+  // position, and NOT re-running the measuring→framing→fit pipeline. Only a real
+  // topology change (nodes added/removed or rewired) re-seeds and re-frames, so a
+  // literal edit feels instant and local. buildFlow already recomputed
+  // initialNodes/initialEdges on the [graph, specs] change that triggered this.
+  const structureKey = structureKeyOf(initialNodes, initialEdges);
+  const structureRef = useRef(structureKey);
+  useEffect(() => {
+    if (structureKey === structureRef.current) {
+      // Same topology: patch data only, keeping geometry and run results.
+      const byId = new Map(initialNodes.map((n) => [n.id, n]));
+      setNodes((current) =>
+        current.map((n) => {
+          const built = byId.get(n.id);
+          if (!built) return n;
+          const data: SpecNodeData = {
+            ...built.data,
+            result: n.data.result,
+            hasError: n.data.hasError,
+          };
+          return sameGraphData(n.data, data) ? n : { ...n, data };
+        }),
+      );
+      return;
+    }
+    // Real structural change: adopt the freshly laid-out graph and re-frame it.
+    structureRef.current = structureKey;
+    setNodes(initialNodes);
+    setEdges(initialEdges);
+    setPhase('measuring');
+  }, [structureKey, initialNodes, initialEdges, setNodes, setEdges]);
 
   // The initial layout uses estimated node sizes. Once ReactFlow has measured
   // the real DOM sizes, re-run the layout with them, then frame the whole

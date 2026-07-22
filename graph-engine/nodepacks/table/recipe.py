@@ -19,7 +19,7 @@ positionally to ``columns``.
   "aggs": [{"col": str, "fn": <sum|mean|median|min|max|count>, "as": str}]}``
 * ``limit``     -- ``{"op": "limit", "n": int}``
 
-Unknown ``version``, ``op``, or aggregate ``fn`` -> :class:`~table.errors.UserError`
+Unknown ``version``, ``op``, or aggregate ``fn`` -> :class:`engine.UserError`
 naming exactly what v1 supports (C-D5) — no silent reinterpretation.
 
 **Backend structure (C-D3):** the reference (and only, in v1) backend is
@@ -38,7 +38,8 @@ from __future__ import annotations
 import statistics
 from typing import Any, Callable
 
-from .errors import UserError
+from engine import UserError
+
 from .expr import compile_expr
 
 SUPPORTED_VERSION = 1

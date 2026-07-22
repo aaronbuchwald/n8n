@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import {
   exportGraph,
@@ -12,6 +12,7 @@ import { ExportPanel } from './components/ExportPanel';
 import { RunResultsPanel } from './components/RunResultsPanel';
 import { SourceEditor } from './components/SourceEditor';
 import { GraphView } from './GraphView';
+import { makeGraphCommitter, WidgetEditingProvider } from './widgets';
 
 type LoadState =
   | { status: 'loading' }
@@ -34,6 +35,9 @@ export default function App() {
   const [python, setPython] = useState<string | null>(null);
   const [exportState, setExportState] = useState<ActionState>(IDLE);
   const [editingSource, setEditingSource] = useState(false);
+  // A failed widget commit surfaces here as a transient banner (A-D5: PUT
+  // /api/graph rejected). Auto-clears so it never lingers over the canvas.
+  const [widgetError, setWidgetError] = useState<string | null>(null);
 
   // `quiet` refreshes in place (no loading flash) — used after a source save
   // so the open editor panel isn't unmounted mid-edit.
@@ -55,7 +59,32 @@ export default function App() {
     void reload({ quiet: true });
   }, [reload]);
 
+  // A widget commit persisted: refresh the served graph WITHOUT a loading flash
+  // (GraphView folds the new literals onto the canvas in place). A commit that
+  // failed surfaces the message; the banner self-dismisses.
+  const onWidgetSaved = useCallback(() => {
+    setWidgetError(null);
+    void reload({ quiet: true });
+  }, [reload]);
+  const onWidgetError = useCallback((error: Error) => {
+    setWidgetError(error.message);
+  }, []);
+
+  useEffect(() => {
+    if (!widgetError) return;
+    const timer = window.setTimeout(() => setWidgetError(null), 6000);
+    return () => window.clearTimeout(timer);
+  }, [widgetError]);
+
   const graph = state.status === 'ready' ? state.data.graph : null;
+
+  // The commit seam (A-D5): mounted only when a graph is loaded, so editors are
+  // live on the ready canvas and read-only otherwise. Recreated when the graph
+  // identity changes so a commit always diffs against the freshest served graph.
+  const commit = useMemo(
+    () => (graph ? makeGraphCommitter(graph, onWidgetSaved, onWidgetError) : null),
+    [graph, onWidgetSaved, onWidgetError],
+  );
   // Contract version comes from /api/specs (the palette contract), per ADR 0002.
   const version = state.status === 'ready' ? state.data.version : null;
 
@@ -135,9 +164,9 @@ export default function App() {
         </span>
       </header>
 
-      {(runState.error || exportState.error) && (
+      {(runState.error || exportState.error || widgetError) && (
         <div className="ge-actionbar-error" data-testid="action-error" role="alert">
-          {runState.error ?? exportState.error}
+          {runState.error ?? exportState.error ?? widgetError}
         </div>
       )}
 
@@ -159,12 +188,14 @@ export default function App() {
       {state.status === 'ready' && (
         <div className="ge-main">
           <div className="ge-workspace">
-            <GraphView
-              graph={state.data.graph}
-              specs={state.data.specs}
-              runOutputs={run?.outputs ?? null}
-              errorNodeId={errorNodeId}
-            />
+            <WidgetEditingProvider value={commit}>
+              <GraphView
+                graph={state.data.graph}
+                specs={state.data.specs}
+                runOutputs={run?.outputs ?? null}
+                errorNodeId={errorNodeId}
+              />
+            </WidgetEditingProvider>
             {run && <RunResultsPanel run={run} onClose={() => setRun(null)} />}
           </div>
           {python !== null && <ExportPanel python={python} onClose={() => setPython(null)} />}

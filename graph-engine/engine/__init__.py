@@ -48,10 +48,17 @@ from .errors import (
     SchemaError,
     TracingError,
     UnknownNodeType,
+    UserError,
 )
 from .execute import ExecutionResult, run
 from .emit import to_python
-from .composite import find_composite, from_composite, to_composite, wiring_lines
+from .composite import (
+    composite_call_names,
+    find_composite,
+    from_composite,
+    to_composite,
+    wiring_lines,
+)
 from .graph import Edge, Graph, Node
 from .ordering import topological_order, topological_sort
 from .registry import DEFAULT_REGISTRY, NodeRegistry, RegisteredNode
@@ -78,6 +85,7 @@ __all__ = [
     "from_composite",
     "wiring_lines",
     "find_composite",
+    "composite_call_names",
     # authoring (decorators + tracing)
     "node",
     "graph",
@@ -106,6 +114,7 @@ __all__ = [
     "SCHEMA_VERSION",
     # errors
     "EngineError",
+    "UserError",
     "SchemaError",
     "GraphError",
     "UnknownNodeType",
