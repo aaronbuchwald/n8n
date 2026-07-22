@@ -107,6 +107,10 @@ class Graph:
     nodes: list[Node] = field(default_factory=list)
     edges: list[Edge] = field(default_factory=list)
     output: Optional[dict[str, str]] = None
+    # Optional, declarative execution-environment descriptor (deps + mounts +
+    # network posture). Absent → stdlib only, no fs, no network. Purely
+    # declarative; enforcement is a later concern (see docs/adr/0003-*.md).
+    environment: Optional[dict[str, Any]] = None
     version: str = SCHEMA_VERSION
     _by_id: dict[str, Node] = field(default_factory=dict, repr=False, compare=False)
 
@@ -159,12 +163,17 @@ class Graph:
 
     # -- serialisation ---------------------------------------------------
     def to_dict(self) -> dict:
-        return {
+        data: dict = {
             "version": self.version,
             "nodes": [n.to_dict() for n in self.nodes],
             "edges": [e.to_dict() for e in self.edges],
             "output": self.output,
         }
+        # Omit when absent so existing graphs and the golden snapshots stay
+        # byte-identical (do NOT emit "environment": null).
+        if self.environment is not None:
+            data["environment"] = self.environment
+        return data
 
     @classmethod
     def from_dict(cls, data: dict) -> "Graph":
@@ -172,6 +181,7 @@ class Graph:
             nodes=[Node.from_dict(n) for n in data.get("nodes", [])],
             edges=[Edge.from_dict(e) for e in data.get("edges", [])],
             output=data.get("output"),
+            environment=data.get("environment"),
             version=data.get("version", SCHEMA_VERSION),
         )
 
