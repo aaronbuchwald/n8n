@@ -59,10 +59,15 @@ def test_api_still_works_with_static_mount_present(registry, web_dist):
     assert set(body["specs"]) == {"calc.total"}
 
 
-def test_no_mount_when_dist_missing(registry, tmp_path):
-    # Point at a non-existent dir → no mount; "/" is not served (404), API is.
+def test_build_hint_served_when_dist_missing(registry, tmp_path):
+    # Point at a non-existent dir → no static mount; "/" serves a friendly build
+    # hint (not a raw 404) and the API still works.
     client = TestClient(create_app(registry, web_dist=tmp_path / "does-not-exist"))
-    assert client.get("/").status_code == 404
+    r = client.get("/")
+    assert r.status_code == 200
+    assert "text/html" in r.headers["content-type"]
+    assert "pnpm build" in r.text  # tells the user how to build the web
+    assert "/api/specs" in r.text  # links to the live API
     assert client.get("/api/specs").status_code == 200
 
 

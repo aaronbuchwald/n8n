@@ -2,15 +2,52 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import Body, FastAPI, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+
+logger = logging.getLogger("server")
 
 # The production web bundle, if it has been built (`cd web && pnpm build`).
 WEB_DIST = Path(__file__).resolve().parents[1] / "web" / "dist"
+
+# Shown at "/" when the web bundle hasn't been built yet — a friendly hint
+# instead of a raw 404, so opening the printed URL explains the next step.
+# Pure stdlib string; no template engine, no CDN.
+_NOT_BUILT_HTML = """<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>graph-engine · web not built</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body { font-family: system-ui, -apple-system, sans-serif; line-height: 1.6;
+           max-width: 40rem; margin: 4rem auto; padding: 0 1.5rem; }
+    h1 { font-size: 1.4rem; }
+    code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    pre { background: rgba(127,127,127,.15); padding: .8rem 1rem; border-radius: 6px;
+          overflow-x: auto; }
+    .muted { opacity: .75; }
+    a { color: #5b8def; }
+  </style>
+</head>
+<body>
+  <h1>The web app hasn't been built yet</h1>
+  <p>The API is running, but the <code>web/dist</code> bundle is missing, so
+     there's nothing to serve at <code>/</code>. Build it once:</p>
+  <pre>cd web &amp;&amp; pnpm install &amp;&amp; pnpm build</pre>
+  <p>then reload this page. The server picks up <code>web/dist</code> the next
+     time it starts.</p>
+  <p class="muted">The API is live meanwhile — try
+     <a href="/api/specs">/api/specs</a> or <a href="/api/graph">/api/graph</a>.</p>
+</body>
+</html>
+"""
 
 from engine import (
     DEFAULT_REGISTRY,
@@ -136,9 +173,19 @@ def create_app(
     def put_source(spec_id: str, body: dict = Body(default={})) -> JSONResponse:
         return JSONResponse(status_code=501, content={"message": "source editing is not implemented yet (stream E)"})
 
-    # Serve the built SPA at "/" — mounted LAST so /api/* routes win. Skipped
-    # gracefully when the bundle hasn't been built (opening "/" would 404).
+    # Serve the built SPA at "/" — mounted LAST so /api/* routes win. When the
+    # bundle hasn't been built, serve a friendly build hint at "/" instead of a
+    # raw 404, and log loudly which case we're in so the startup output is clear.
     if web_dist is not None and web_dist.is_dir():
+        logger.info("web/dist found at %s — app served at /", web_dist)
         app.mount("/", StaticFiles(directory=web_dist, html=True), name="web")
+    else:
+        logger.warning(
+            "web/dist NOT built — run: cd web && pnpm build; / will show a build hint"
+        )
+
+        @app.get("/", response_class=HTMLResponse)
+        def build_hint() -> HTMLResponse:
+            return HTMLResponse(content=_NOT_BUILT_HTML, status_code=200)
 
     return app
