@@ -30,7 +30,7 @@ import csv
 import html
 import io
 
-from engine import node
+from engine import Widget, node
 
 from .errors import UserError
 from .recipe import StdlibInterpreter, interpret, validate_table_shape
@@ -80,7 +80,7 @@ def read_table(path: str = "table.csv", text: str = "") -> dict:
     return {"columns": columns, "rows": data_rows}
 
 
-@node
+@node(widgets={"recipe": Widget("table-recipe")})
 def apply_recipe(table: dict, recipe: dict = None) -> dict:
     """Apply a versioned op-list ``recipe`` to ``table``; returns a new table.
 

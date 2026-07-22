@@ -12,13 +12,14 @@
 //   registerWidget('table-recipe', lazyEditor(() => import('./table')));
 
 import { CheckboxEditor, NumberEditor, TextEditor } from './builtins';
-import { registerWidget } from './registry';
+import { lazyEditor, registerWidget } from './registry';
 
 // Core kinds (A-D6: flat names). These mirror engine/spec.py's type-derived
 // widgets, so every str/int/float/bool input has a working editor out of the box.
 registerWidget('text', TextEditor);
 registerWidget('number', NumberEditor);
 registerWidget('checkbox', CheckboxEditor);
+registerWidget('table-recipe', lazyEditor(() => import('./table/TableRecipeEditor')));
 
 // Public API for the shell and downstream streams.
 export {
