@@ -9,6 +9,7 @@ self-contained** (no runtime dependencies, no reference to any other project).
 |---|---|
 | [`engine/`](engine/) | The headless core: `node_spec`, `Graph`, `bind`, `run`, `to_python`, plus the decorator/tracing authoring layer (`node`, `graph`, `main`). **Pure standard library.** See [`engine/README.md`](engine/README.md). |
 | `examples/minimal/` | The smallest end-to-end graph: read a file → two processors → a rendered HTML card. Authored with decorators. |
+| [`web/`](web/) | **Web shell (B1):** a read-only ReactFlow render of the example graph. Self-contained Vite + React + TS app with its own `package.json` (not part of any pnpm workspace); all assets bundled locally, no CDN. See [`web/README.md`](web/README.md). |
 | `freeze_schemas.py` | Writes the golden example snapshots to `engine/schemas/` (and the schema contract on demand, `--contract`). |
 | `docs/adr/` | Architecture decision records (start with `0001` for the core design + deferrals). |
 | `tests/` | 33 tests: introspection, bind/validation, run, tracing, ordering, and the graph→Python round-trip. |
