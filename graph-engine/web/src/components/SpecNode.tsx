@@ -1,16 +1,37 @@
 import { Handle, Position, type NodeProps, type Node } from '@xyflow/react';
 import type { SpecNodeData } from '../types';
 import { inHandle, outHandle } from '../buildGraph';
+import { previewValue } from '../preview';
 
 function formatValue(v: unknown): string {
   if (typeof v === 'string') return `"${v}"`;
   return JSON.stringify(v);
 }
 
+// A compact per-socket result overlay shown on a node after a run. Truncated so
+// a long value (e.g. a big list) doesn't blow out the card.
+function ResultChips({ result }: { result: Record<string, unknown> }) {
+  const entries = Object.entries(result);
+  if (entries.length === 0) return null;
+  return (
+    <div className="ge-node__result" data-testid="node-result">
+      {entries.map(([socket, value]) => (
+        <div className="ge-node__result-row" key={socket}>
+          <span className="ge-node__result-socket">{socket}</span>
+          <span className="ge-node__result-value" title={previewValue(value)}>
+            {previewValue(value)}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 type SpecNode = Node<SpecNodeData, 'specNode'>;
 
 export function SpecNode({ data }: NodeProps<SpecNode>) {
-  const { id, type, spec, boundInputs, wiredInputs, wiredOutputs, isOutput } = data;
+  const { id, type, spec, boundInputs, wiredInputs, wiredOutputs, isOutput, result, hasError } =
+    data;
 
   // A spec can be missing if the graph references a type with no matching spec.
   // Render generic target/source handles (matching the ids its edges reference)
@@ -19,7 +40,11 @@ export function SpecNode({ data }: NodeProps<SpecNode>) {
     const targetNames = wiredInputs.size > 0 ? [...wiredInputs] : [null];
     const sourceNames = wiredOutputs.size > 0 ? [...wiredOutputs] : [null];
     return (
-      <div className="ge-node ge-node--missing" data-testid="spec-node" data-node-title={id}>
+      <div
+        className={`ge-node ge-node--missing${hasError ? ' ge-node--error' : ''}`}
+        data-testid="spec-node"
+        data-node-title={id}
+      >
         <div className="ge-node__header">
           <span className="ge-node__title" data-testid="node-title">
             {id}
@@ -56,13 +81,14 @@ export function SpecNode({ data }: NodeProps<SpecNode>) {
             ))}
           </div>
         </div>
+        {result && <ResultChips result={result} />}
       </div>
     );
   }
 
   return (
     <div
-      className={`ge-node${isOutput ? ' ge-node--output' : ''}`}
+      className={`ge-node${isOutput ? ' ge-node--output' : ''}${hasError ? ' ge-node--error' : ''}`}
       data-testid="spec-node"
       data-node-title={spec.title}
       title={spec.doc}
@@ -128,6 +154,8 @@ export function SpecNode({ data }: NodeProps<SpecNode>) {
           ))}
         </div>
       </div>
+
+      {result && <ResultChips result={result} />}
     </div>
   );
 }

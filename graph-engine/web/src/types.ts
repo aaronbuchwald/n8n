@@ -77,4 +77,9 @@ export interface SpecNodeData extends Record<string, unknown> {
   wiredOutputs: Set<string>;
   // True when this node produces the graph's final output socket.
   isOutput: boolean;
+  // The socket values this node produced in the most recent run (null before a
+  // run, or when the run failed before reaching this node).
+  result: Record<string, unknown> | null;
+  // True when the most recent run failed at this node.
+  hasError: boolean;
 }
