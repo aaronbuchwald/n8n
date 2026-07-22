@@ -10,7 +10,7 @@
 //  * editable (a commit is provided) — an input WITH a widget renders
 //    `editorFor(input.widget)`, collapsed to a value chip that expands on click.
 
-import { Suspense, useState } from 'react';
+import { Suspense, useEffect, useRef, useState } from 'react';
 import type { SpecInput } from '../types';
 import './index'; // side-effect: register the built-in editors once
 import { editorFor } from './registry';
@@ -54,8 +54,25 @@ function ReadOnlyState({ input, value, hasLiteral }: Omit<WidgetSlotProps, 'node
 export function WidgetSlot({ input, value, hasLiteral, nodeId }: WidgetSlotProps) {
   const commit = useWidgetCommit();
   const [open, setOpen] = useState(false);
+  const slotRef = useRef<HTMLSpanElement>(null);
 
-  // Read-only, or a non-widget input (list/dict/etc.): today's behavior.
+  // Click-outside closes the open editor. This is the primary "done editing"
+  // affordance alongside the explicit ✕ button, so a debounced editor (table
+  // 500ms, math on-change) can be typed in freely and only settles on dismiss —
+  // onCommit itself NEVER closes (that was the mid-edit collapse bug).
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: MouseEvent) => {
+      if (slotRef.current && !slotRef.current.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    return () => document.removeEventListener('mousedown', onPointerDown);
+  }, [open]);
+
+  // Read-only, or a non-widget input (list/dict/etc.): today's behavior. Kept
+  // byte-identical to the pre-edit markup so read-only assertions still hold.
   if (!commit || !input.widget) {
     return <ReadOnlyState input={input} value={value} hasLiteral={hasLiteral} />;
   }
@@ -77,17 +94,37 @@ export function WidgetSlot({ input, value, hasLiteral, nodeId }: WidgetSlotProps
     );
   }
 
+  // `nodrag`/`nowheel`/`nopan` stop ReactFlow from stealing pointer/scroll while
+  // editing inside the node card.
   return (
-    <span className="ge-widget-slot" data-testid="widget-slot">
+    <span
+      ref={slotRef}
+      className="ge-widget-slot nodrag nowheel nopan"
+      data-testid="widget-slot"
+    >
+      <span className="ge-widget-slot__bar">
+        <span className="ge-widget-slot__label" title={input.name}>
+          {input.name}
+        </span>
+        <button
+          type="button"
+          className="ge-widget-slot__done"
+          data-testid="widget-done"
+          title="Done editing"
+          aria-label={`Done editing ${input.name}`}
+          onClick={() => setOpen(false)}
+        >
+          Done
+        </button>
+      </span>
       <Suspense fallback={<span className="ge-socket__state">…</span>}>
         <Editor
           value={value}
           config={input.widget.config ?? {}}
           input={input}
-          onCommit={(next) => {
-            commit(nodeId, input.name, next);
-            setOpen(false);
-          }}
+          // onCommit persists the literal but leaves the editor OPEN — the user
+          // dismisses via Done / click-outside / toggling the chip.
+          onCommit={(next) => commit(nodeId, input.name, next)}
         />
       </Suspense>
     </span>

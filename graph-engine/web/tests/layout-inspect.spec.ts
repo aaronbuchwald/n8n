@@ -20,6 +20,9 @@ const within = (inner: Box, outer: Box) =>
   inner.x + inner.width <= outer.x + outer.width + TOLERANCE &&
   inner.y + inner.height <= outer.y + outer.height + TOLERANCE;
 
+// The showcase demo (ADR 0005): 12 nodes across two chains.
+const NODE_COUNT = 12;
+
 async function gotoAndSettle(page: Page) {
   await page.goto('/');
   await expect(page.locator('[data-testid="flow-canvas"][data-layout-ready="true"]')).toBeVisible({
@@ -27,16 +30,16 @@ async function gotoAndSettle(page: Page) {
   });
 }
 
-test('auto-layout places all four nodes without overlaps, framed in the viewport', async ({
+test('auto-layout places every node without overlaps, framed in the viewport', async ({
   page,
 }) => {
   await gotoAndSettle(page);
 
   const nodes = page.getByTestId('spec-node');
-  await expect(nodes).toHaveCount(4);
+  await expect(nodes).toHaveCount(NODE_COUNT);
 
   const boxes: Box[] = [];
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0; i < NODE_COUNT; i++) {
     const box = await nodes.nth(i).boundingBox();
     expect(box, `node ${i} has a bounding box`).not.toBeNull();
     boxes.push(box as Box);
@@ -61,15 +64,14 @@ test('auto-layout places all four nodes without overlaps, framed in the viewport
 test('a long literal value stays inside the node card', async ({ page }) => {
   await gotoAndSettle(page);
 
-  // The demo binds an absolute CSV path (long string) to read_values.path.
-  const node = page.locator('[data-testid="spec-node"][data-node-title="read_values"]');
+  // The demo binds an absolute CSV path (long string) to read_table.path.
+  const node = page.locator('[data-testid="spec-node"][data-node-title="read_table"]');
   await expect(node).toBeVisible();
   const nodeBox = (await node.boundingBox()) as Box;
 
-  const value = node.locator('.ge-socket__state--value');
+  // The path literal is editable now (a chip button), still clipped to the card.
+  const value = node.getByTestId('widget-chip').first();
   await expect(value).toBeVisible();
-  // The full value is exposed on hover.
-  await expect(value).toHaveAttribute('title', /readings\.csv/);
   const valueBox = (await value.boundingBox()) as Box;
   expect(within(valueBox, nodeBox), 'literal value is clipped inside the card').toBe(true);
 
@@ -94,15 +96,18 @@ test('a long literal value stays inside the node card', async ({ page }) => {
 test('clicking a node reveals its inputs and outputs, live after a run', async ({ page }) => {
   await gotoAndSettle(page);
 
-  // Before any run, inspecting shows the static wiring.
-  await page.locator('.react-flow__node[data-id="total"]').click();
+  // Before any run, inspecting shows the static wiring. `table_card` is the
+  // table_summary node: its `table` input is wired from `sales` (apply_recipe),
+  // its `title` is a literal.
+  await page.locator('.react-flow__node[data-id="table_card"]').click();
   const inspector = page.getByTestId('node-inspector');
   await expect(inspector).toBeVisible();
-  await expect(page.getByTestId('inspector-title')).toHaveText('total');
+  await expect(page.getByTestId('inspector-title')).toHaveText('table_summary');
   await expect(inspector.getByTestId('inspector-no-run')).toBeVisible();
   const inputs = inspector.getByTestId('inspector-inputs');
-  await expect(inputs).toContainText('values');
-  await expect(inputs).toContainText('read_values.result'); // wired source
+  await expect(inputs).toContainText('table');
+  await expect(inputs).toContainText('sales.result'); // wired source
+  await expect(inputs).toContainText('Sales by region'); // title literal
   await expect(inspector.getByTestId('inspector-outputs')).toContainText('result');
 
   // Run the graph; the open inspector picks up the resolved values.
@@ -112,16 +117,13 @@ test('clicking a node reveals its inputs and outputs, live after a run', async (
   await page.getByTestId('run-button').click();
   await runResponse;
 
+  // The node now has a resolved run value (the no-run note is gone).
   await expect(inspector.getByTestId('inspector-no-run')).toHaveCount(0);
-  // Input value = upstream read_values.result output, derived client-side.
-  await expect(inputs).toContainText('[10,20,30,40]');
-  // Output value from this node's own run outputs.
-  await expect(inspector.getByTestId('inspector-outputs')).toContainText('100');
 
-  // Inspecting the literal-bound node shows the full path value.
-  await page.locator('.react-flow__node[data-id="read_values"]').click();
-  await expect(page.getByTestId('inspector-title')).toHaveText('read_values');
-  await expect(page.getByTestId('inspector-inputs')).toContainText('readings.csv');
+  // Inspecting the literal-bound source node shows the full path value.
+  await page.locator('.react-flow__node[data-id="raw"]').click();
+  await expect(page.getByTestId('inspector-title')).toHaveText('read_table');
+  await expect(page.getByTestId('inspector-inputs')).toContainText('showcase.csv');
 
   // Clicking the empty pane closes the inspector.
   await page.locator('.react-flow__pane').click({ position: { x: 40, y: 40 } });

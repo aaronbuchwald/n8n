@@ -30,7 +30,7 @@ export default defineConfig({
       // so the static mount picks up the freshly built web/dist. Single chained
       // command so the build is guaranteed to finish before uvicorn starts.
       // `cwd` is the graph-engine root (relative to this config's dir, web/).
-      command: `cd web && pnpm build && cd .. && uv run --extra server python -m server --demo --host 127.0.0.1 --port ${SERVER_PORT} --no-open`,
+      command: `cd web && pnpm build && cd .. && uv run --extra sym --extra server python -m server --demo --host 127.0.0.1 --port ${SERVER_PORT} --no-open`,
       cwd: '..',
       url: `http://127.0.0.1:${SERVER_PORT}/api/specs`,
       reuseExistingServer: !process.env.CI,

@@ -451,6 +451,92 @@ body,
   background: var(--ge-danger-soft);
 }
 
+/* ---- editable widget slot (ADR 0005 A-D4) ---- */
+/* The collapsed chip: same footprint as the read-only state, but affords a
+   click. It toggles the inline editor open/closed. */
+.ge-widget-chip {
+  cursor: pointer;
+  border: 1px solid transparent;
+  font-family: var(--ge-mono);
+  color: var(--ge-value);
+  background: var(--ge-value-soft);
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+
+.ge-widget-chip:hover {
+  border-color: var(--ge-node-border-strong);
+  background: rgba(227, 178, 98, 0.22);
+}
+
+/* The expanded editor. Breaks onto its own full-width row under the socket so a
+   math preview / recipe grid has room, without disturbing the socket layout. */
+.ge-widget-slot {
+  flex: 1 1 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  margin-top: 4px;
+  padding: 7px;
+  border: 1px solid var(--ge-node-border-strong);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.ge-widget-slot__bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ge-widget-slot__label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--ge-muted);
+  text-transform: uppercase;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ge-widget-slot__done {
+  margin-left: auto;
+  padding: 2px 9px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--ge-accent);
+  background: var(--ge-accent-soft);
+  border: 1px solid transparent;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.ge-widget-slot__done:hover {
+  border-color: var(--ge-accent);
+}
+
+.ge-widget-input {
+  width: 100%;
+  padding: 5px 8px;
+  font-size: 12px;
+  font-family: var(--ge-mono);
+  color: var(--ge-text);
+  background: var(--ge-bg);
+  border: 1px solid var(--ge-node-border-strong);
+  border-radius: 6px;
+}
+
+.ge-widget-input:focus {
+  outline: none;
+  border-color: var(--ge-accent);
+}
+
+.ge-widget-math-preview {
+  color: var(--ge-text);
+  overflow-x: auto;
+}
+
 /* ---- handles: dots centred exactly on the card border ---- */
 .ge-handle {
   width: 9px;

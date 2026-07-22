@@ -13,6 +13,18 @@ class EngineError(Exception):
     """Base class for all headless-engine errors."""
 
 
+class UserError(EngineError):
+    """A failure caused by *user* input, not a bug in the engine or a node.
+
+    Raised when a value the user supplied is invalid in a way only the running
+    node body can decide: a bad recipe shape or version, unsafe/unknown
+    expression syntax, an unknown column/op/function, and similar (ADR 0005
+    Part C). It stays an :class:`EngineError` so everything that already catches
+    engine errors keeps catching it, and node packs raise this shared name
+    instead of defining their own.
+    """
+
+
 class SchemaError(EngineError):
     """A node-spec or graph document violated the frozen JSON schema."""
 

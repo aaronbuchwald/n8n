@@ -27,7 +27,13 @@ from .graph import Graph
 from .registry import DEFAULT_REGISTRY, NodeRegistry
 from .spec import DEFAULT_OUTPUT, is_multi_output
 
-__all__ = ["to_composite", "from_composite", "wiring_lines", "find_composite"]
+__all__ = [
+    "to_composite",
+    "from_composite",
+    "wiring_lines",
+    "find_composite",
+    "composite_call_names",
+]
 
 
 # ======================================================================
@@ -154,46 +160,81 @@ def wiring_lines(
     registry: Optional[NodeRegistry] = None,
     *,
     module: Optional[str] = None,
+    call_names: Optional[dict[str, str]] = None,
     indent: str = "    ",
 ) -> list[str]:
     """Emit only the composite-body wiring lines (assignments + ``return``).
 
-    Used when patching a composite **in place** inside its own authoring module
-    (ADR 0004 D5): the ``@node`` functions are defined in that same module, so
-    calls are emitted by bare qualname and no imports are added. ``module``
-    (when given) asserts every node type is defined there. Because a node id is
-    a local variable of the composite, an id equal to a called function name
-    would shadow that function (Python function-scoping) — rejected with a
-    rename hint rather than emitting broken code.
+    Used when patching a composite **in place** inside its authoring module
+    (ADR 0004 D5): no imports are added, so each node's call name must already
+    be bound in that module. Two ways to say which name to call a node type by:
+
+    * ``call_names`` — an explicit ``type_id -> local call name`` map (built by
+      :func:`composite_call_names` from the module's imports + local defs). This
+      supports composites that **import** their node functions from other packs
+      (e.g. the widget showcase wires ``table.*`` and ``sym.*`` nodes), and
+      honours aliased imports. A node type absent from the map is rejected — the
+      module doesn't import or define it.
+    * ``module`` (legacy) — assert every node type is *defined* in ``module`` and
+      call it by bare qualname. Kept for callers that only ever wire local nodes.
+
+    Because a node id is a local variable of the composite, an id equal to a
+    called function name would shadow that function (Python function-scoping) —
+    rejected with a rename hint rather than emitting broken code.
     """
     bound = graph if isinstance(graph, BoundGraph) else bind(graph, registry)
-
-    if module is not None:
-        for n in bound.nodes:
-            if n.spec["module"] != module:
-                raise EngineError(
-                    f"node {n.id!r} has type {n.type!r} from module "
-                    f"{n.spec['module']!r}; in-place wiring can only call "
-                    f"functions defined in {module!r}"
-                )
 
     node_ids = {n.id for n in bound.nodes}
     call_of: dict[str, str] = {}
     for n in bound.nodes:
-        qualname = n.spec["qualname"]
-        if qualname in node_ids:
+        if call_names is not None:
+            call = call_names.get(n.type)
+            if call is None:
+                raise EngineError(
+                    f"node {n.id!r} has type {n.type!r}, which the composite's "
+                    f"module neither imports nor defines — add an import for it "
+                    f"before wiring it in place"
+                )
+        elif module is not None and n.spec["module"] != module:
             raise EngineError(
-                f"a node is named {qualname!r}, which shadows the function it "
+                f"node {n.id!r} has type {n.type!r} from module "
+                f"{n.spec['module']!r}; in-place wiring can only call "
+                f"functions defined in {module!r}"
+            )
+        else:
+            call = n.spec["qualname"]
+        if call in node_ids:
+            raise EngineError(
+                f"a node is named {call!r}, which shadows the function it "
                 f"must call — rename that node (node id = variable name, "
                 f"ADR 0004 D3)"
             )
-        call_of[n.type] = qualname
+        call_of[n.type] = call
 
     lines = [f"{indent}{n.id} = {call_of[n.type]}({_arg_exprs(n)})" for n in bound.nodes]
     if bound.output is not None:
         onode, osocket = bound.output
         lines.append(f"{indent}return {_ref(onode, osocket)}")
     return lines or [f"{indent}pass"]
+
+
+def composite_call_names(tree: ast.Module, module_name: str) -> dict[str, str]:
+    """Map each node ``type_id`` to the local name a composite calls it by.
+
+    Combines the module's ``from pack import fn`` imports (local name, possibly
+    aliased) with its own top-level ``@node`` defs (called by bare name, resolved
+    to ``f"{module_name}.{name}"``). This is what lets :func:`wiring_lines` patch
+    a composite that imports its node functions from other packs (the showcase
+    graph) instead of defining them all locally.
+    """
+    names: dict[str, str] = {}
+    for local, type_id in _import_map(tree).items():
+        names.setdefault(type_id, local)
+    composite = find_composite(tree)
+    for stmt in tree.body:
+        if isinstance(stmt, ast.FunctionDef) and stmt is not composite:
+            names.setdefault(f"{module_name}.{stmt.name}", stmt.name)
+    return names
 
 
 # ======================================================================

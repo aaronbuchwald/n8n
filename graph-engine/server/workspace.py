@@ -28,7 +28,14 @@ import sys
 from pathlib import Path
 from typing import Any, Optional
 
-from engine import Graph, NodeRegistry, find_composite, from_composite, wiring_lines
+from engine import (
+    Graph,
+    NodeRegistry,
+    composite_call_names,
+    find_composite,
+    from_composite,
+    wiring_lines,
+)
 
 # The graph-engine tree — the default boundary for source writes.
 ENGINE_ROOT = Path(__file__).resolve().parents[1]
@@ -327,7 +334,8 @@ class Workspace:
         self._check_editable(path)
 
         text = path.read_text(encoding="utf-8")
-        composite = find_composite(ast.parse(text))
+        tree = ast.parse(text)
+        composite = find_composite(tree)
 
         body = composite.body
         has_doc = (
@@ -337,7 +345,11 @@ class Workspace:
         )
         wiring = body[1:] if has_doc else body
         indent = " " * (wiring[0].col_offset if wiring else composite.col_offset + 4)
-        lines = wiring_lines(graph, self.registry, module=self.module_name, indent=indent)
+        # Call each node by the name THIS module binds it to (imports from other
+        # packs + local defs), so a composite that wires cross-pack nodes (the
+        # showcase) round-trips in place — not only all-local composites.
+        call_names = composite_call_names(tree, self.module_name)
+        lines = wiring_lines(graph, self.registry, call_names=call_names, indent=indent)
 
         if wiring:
             start, end = wiring[0].lineno, max(s.end_lineno or s.lineno for s in wiring)

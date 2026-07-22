@@ -36,7 +36,7 @@ export default defineConfig({
   webServer: [
     {
       // `cwd` is relative to this config's directory (web/) → the graph-engine root.
-      command: `uv run --extra server python -m server --demo --host 127.0.0.1 --port ${API_PORT}`,
+      command: `uv run --extra sym --extra server python -m server --demo --host 127.0.0.1 --port ${API_PORT}`,
       cwd: '..',
       url: `http://127.0.0.1:${API_PORT}/api/specs`,
       reuseExistingServer: !process.env.CI,

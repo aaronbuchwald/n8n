@@ -1,8 +1,13 @@
 import { test, expect } from '@playwright/test';
 
-const NODE_TITLES = ['read_values', 'total', 'average', 'render_summary'];
+// The served demo is now the widget SHOWCASE (ADR 0005 integration): the table
+// chain (read_table → apply_recipe → table_summary) and the symbolic chain
+// (parse_expr → solve_for → … → render_math_card) composed by `dashboard`.
+const KEY_TITLES = ['read_table', 'apply_recipe', 'table_summary', 'parse_expr', 'dashboard'];
+const NODE_COUNT = 12;
+const EDGE_COUNT = 12;
 
-test('renders the graph fetched live from the API (not fixtures)', async ({ page }) => {
+test('renders the showcase graph fetched live from the API (not fixtures)', async ({ page }) => {
   // Prove the render is driven by the server: both endpoints must be hit over
   // HTTP and return 200 before the canvas populates.
   const specsResponse = page.waitForResponse(
@@ -16,62 +21,58 @@ test('renders the graph fetched live from the API (not fixtures)', async ({ page
   await specsResponse;
   await graphResponse;
 
-  // The topbar reflects the contract version returned by /api/specs.
   await expect(page.getByText(/contract v\d+\.\d+\.\d+/)).toBeVisible();
 
-  // The custom nodes mount inside the ReactFlow canvas.
   const canvas = page.getByTestId('flow-canvas');
   await expect(canvas).toBeVisible();
 
-  // All four node titles from the live graph are visible.
-  for (const title of NODE_TITLES) {
+  // The showcase's key node titles render.
+  for (const title of KEY_TITLES) {
     await expect(
       page.locator('[data-testid="node-title"]', { hasText: new RegExp(`^${title}$`) }),
     ).toBeVisible();
   }
 
-  // Four nodes total.
-  await expect(page.getByTestId('spec-node')).toHaveCount(4);
+  await expect(page.getByTestId('spec-node')).toHaveCount(NODE_COUNT);
 
-  // Edges are rendered: the graph has 4 edges, drawn as SVG paths.
   const edgePaths = page.locator('.react-flow__edge-path');
   await expect(edgePaths.first()).toBeVisible();
-  expect(await edgePaths.count()).toBe(4);
+  expect(await edgePaths.count()).toBe(EDGE_COUNT);
 
-  // The graph output node is marked.
+  // The graph output node (dashboard) is marked.
   await expect(page.getByTestId('output-badge')).toBeVisible();
 
-  // The canvas signals readiness once the measured layout is applied and the
-  // graph is framed (see GraphView's layout phases).
   await expect(page.locator('[data-testid="flow-canvas"][data-layout-ready="true"]')).toBeVisible({
     timeout: 10_000,
   });
 
-  // The MiniMap renders one rectangle per node only when node dimensions sync
-  // back through onNodesChange. Poll: the minimap re-renders a beat after
-  // measurement settles.
+  // The canvas is EDITABLE now: the shell mounts the commit provider, so each
+  // unwired literal input renders an editor chip (read-only would show a static
+  // value span with no button). Several literal inputs → several chips.
+  const chips = page.getByTestId('widget-chip');
+  await expect.poll(async () => chips.count(), { timeout: 10_000 }).toBeGreaterThan(3);
+
   const minimapNodes = page.locator('.react-flow__minimap-node');
-  await expect.poll(async () => minimapNodes.count(), { timeout: 10_000 }).toBe(4);
+  await expect.poll(async () => minimapNodes.count(), { timeout: 10_000 }).toBe(NODE_COUNT);
   await expect(minimapNodes.first()).toBeVisible();
 
   await page.screenshot({ path: 'tests/__screenshots__/graph.png', fullPage: false });
 
   // Nodes are draggable: onNodesChange must apply position changes.
-  const nodeEl = page.locator('.react-flow__node', { hasText: 'total' }).first();
+  const nodeEl = page.locator('.react-flow__node', { hasText: 'parse_expr' }).first();
   const box = await nodeEl.boundingBox();
   if (!box) throw new Error('node has no bounding box');
   const before = await nodeEl.evaluate((el) => (el as HTMLElement).style.transform);
-  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.move(box.x + box.width / 2, box.y + 20);
   await page.mouse.down();
-  await page.mouse.move(box.x + box.width / 2 + 90, box.y + box.height / 2 + 60, { steps: 8 });
+  await page.mouse.move(box.x + box.width / 2 + 90, box.y + 80, { steps: 8 });
   await page.mouse.up();
   await expect
     .poll(async () => nodeEl.evaluate((el) => (el as HTMLElement).style.transform))
     .not.toBe(before);
 });
 
-test('runs the graph and exports it to Python from the UI', async ({ page }) => {
-  // The graph must load before Run/Export are enabled.
+test('runs the showcase graph and exports it to Python from the UI', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByTestId('flow-canvas')).toBeVisible();
 
@@ -79,26 +80,25 @@ test('runs the graph and exports it to Python from the UI', async ({ page }) => 
   const exportButton = page.getByTestId('export-button');
   await expect(runButton).toBeEnabled();
 
-  // --- Run: POST /api/run, then the output socket value renders in the iframe.
+  // --- Run: POST /api/run, then the composed output card renders in the iframe.
   const runResponse = page.waitForResponse(
     (r) => r.url().includes('/api/run') && r.status() === 200,
   );
   await runButton.click();
   await runResponse;
 
-  // The declared output socket (render_summary.result) is an HTML card shown in
-  // the sandboxed iframe. Assert the computed numbers appear INSIDE the frame.
+  // The declared output socket (dashboard.result) is an HTML card in the
+  // sandboxed iframe, composing BOTH chains.
   const frame = page.frameLocator('[data-testid="run-result-frame"]');
-  await expect(frame.getByText('Readings summary')).toBeVisible();
-  await expect(frame.getByText('25', { exact: true })).toBeVisible();
+  await expect(frame.getByText('Sales by region')).toBeVisible();
+  await expect(frame.getByText('Quadratic roots')).toBeVisible();
 
-  // The iframe is fully sandboxed (no scripts / same-origin), never innerHTML.
   await expect(page.getByTestId('run-result-frame')).toHaveAttribute('sandbox', '');
 
-  // Per-node outputs are surfaced (the average node produced 25).
+  // Per-node outputs are surfaced (nodes appear by their graph id).
   const results = page.getByTestId('run-results');
-  await expect(results).toContainText('average');
-  await expect(results).toContainText('total');
+  await expect(results).toContainText('sales'); // apply_recipe node
+  await expect(results).toContainText('table_card'); // table_summary node
 
   // --- Export: POST /api/export, then the read-only Python panel shows.
   const exportResponse = page.waitForResponse(
@@ -109,10 +109,9 @@ test('runs the graph and exports it to Python from the UI', async ({ page }) => 
 
   const code = page.getByTestId('export-code');
   await expect(code).toBeVisible();
-  await expect(code).toContainText('from minimal import');
-  await expect(code).toContainText('render_summary(');
+  await expect(code).toContainText('read_table(');
+  await expect(code).toContainText('dashboard(');
 
-  // Both the graph and the exported Python are visible side-by-side.
   await expect(page.getByTestId('flow-canvas')).toBeVisible();
   await expect(page.getByTestId('export-panel')).toBeVisible();
 
@@ -120,14 +119,12 @@ test('runs the graph and exports it to Python from the UI', async ({ page }) => 
 });
 
 test('shows an error state when the API fails', async ({ page }) => {
-  // Force a server error on the specs endpoint before the app loads.
   await page.route('**/api/specs', (route) =>
     route.fulfill({ status: 500, contentType: 'application/json', body: '{"message":"boom"}' }),
   );
 
   await page.goto('/');
 
-  // A clear error message, not a blank screen or crashed canvas.
   const error = page.getByTestId('app-error');
   await expect(error).toBeVisible();
   await expect(error).toContainText(/load the graph/i);
