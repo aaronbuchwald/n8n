@@ -2,19 +2,20 @@
   description = "graph-engine dev shell — reproducible Python + Node + Playwright toolchain";
 
   # --- Pinned toolchain source ---------------------------------------------
-  # nixpkgs is pinned to the `nixos-unstable` channel branch. On the first
-  # `nix develop` (or `nix flake lock`) Nix resolves this branch to an EXACT
-  # commit + narHash and records it in flake.lock, which is what makes the
-  # environment reproducible from then on. We deliberately track a channel ref
-  # rather than hard-coding a bare commit SHA in this file: this repo was
-  # authored in a build environment WITHOUT nix, so a specific SHA could not be
-  # fetched/verified here, and an unverifiable SHA would hard-fail on lock. See
-  # docs/NIX.md for how to pin to an exact rev and how to update the lock.
+  # nixpkgs is tracked via the `nixos-unstable` CHANNEL TARBALL from
+  # channels.nixos.org rather than `github:NixOS/nixpkgs/...`. The github: form
+  # resolves the branch through api.github.com, which is blocked in
+  # GitHub-gated environments (e.g. Claude Code's sandbox returns HTTP 403
+  # "GitHub access not enabled for this session"). The channel tarball is served
+  # from channels.nixos.org → releases.nixos.org, needs no GitHub API, and works
+  # both there and on a normal workstation. On the first `nix develop`/`nix flake
+  # lock`, Nix resolves it to an exact tarball + narHash in flake.lock, which is
+  # what makes the environment reproducible from then on.
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    # To pin to an exact revision instead (fully reproducible, no lock needed),
-    # replace the line above with e.g.:
-    #   nixpkgs.url = "github:NixOS/nixpkgs/<40-char-commit-sha>";
+    nixpkgs.url = "https://channels.nixos.org/nixos-unstable/nixexprs.tar.xz";
+    # Alternatives (pick per environment):
+    #   github:NixOS/nixpkgs/nixos-unstable          # normal workstation
+    #   github:NixOS/nixpkgs/<40-char-commit-sha>    # exact-rev pin, no lock
   };
 
   outputs =
