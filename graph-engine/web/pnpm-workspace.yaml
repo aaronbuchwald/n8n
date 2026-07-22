@@ -4,6 +4,14 @@
 packages:
   - '.'
 
+# The surrounding n8n monorepo sets `minimumReleaseAge: 4320` (a 3-day
+# supply-chain quarantine on its real dependency tree). pnpm 11 inherits that
+# from the parent workspace even though this app is a separate root, which
+# rejects freshly-published vite/browserslist transitives here. This is an
+# isolated demo with a committed lockfile, not the shipped product, so opt it
+# out explicitly — the parent policy still governs the actual n8n packages.
+minimumReleaseAge: 0
+
 # esbuild ships a prebuilt platform binary via a postinstall script; allow it.
 # pnpm renamed this setting between majors: pnpm 11 reads `allowBuilds` (a map)
 # and dropped `onlyBuiltDependencies`; pnpm 10 reads `onlyBuiltDependencies` (a
