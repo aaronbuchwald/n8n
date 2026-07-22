@@ -22,7 +22,7 @@ dev = [
 # `engine` + `demo_graph` come from ".", the example `demolib`/`members.csv`
 # from the sibling demo. That sibling path is the ONE cross-reference to the
 # pre-existing code; everything else here is self-contained.
-pythonpath = [".", "../nodezator-structural-demo"]
+pythonpath = [".", "examples/minimal", "../nodezator-structural-demo"]
 testpaths = ["tests"]
 
 [tool.uv]
