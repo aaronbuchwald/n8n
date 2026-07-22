@@ -39,7 +39,7 @@ def topological_sort(nodes: Iterable[T], edges: Iterable[tuple[T, T]]) -> list[T
         if source not in id_set or target not in id_set:
             raise GraphError(f"dependency {source!r}->{target!r} references an unknown node")
         if source == target:
-            raise CycleError(f"self-dependency on {source!r}")
+            raise CycleError(f"self-dependency on {source!r}", node_ids=[str(source)])
         if (source, target) in seen_pairs:
             continue
         seen_pairs.add((source, target))
@@ -58,7 +58,7 @@ def topological_sort(nodes: Iterable[T], edges: Iterable[tuple[T, T]]) -> list[T
 
     if len(order) != len(ids):
         stuck = sorted(str(nid) for nid in id_set - set(order))
-        raise CycleError(f"graph has a cycle involving: {', '.join(stuck)}")
+        raise CycleError(f"graph has a cycle involving: {', '.join(stuck)}", node_ids=stuck)
     return order
 
 

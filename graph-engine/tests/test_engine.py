@@ -114,50 +114,95 @@ def test_same_short_name_different_module_coexist():
 
 
 def test_bind_unknown_type():
-    with pytest.raises(UnknownNodeType):
+    with pytest.raises(UnknownNodeType) as exc:
         bind(Graph().add("a", "nope"), _registry())
+    assert exc.value.node_id == "a"  # structured: the offending graph node
 
 
 def test_bind_bad_source_socket():
     g = Graph().add("a", f"{__name__}.inc").add("b", f"{__name__}.inc")
     g.connect("a", "nonesuch", "b", "x")
-    with pytest.raises(BindError, match="output"):
+    with pytest.raises(BindError, match="output") as exc:
         bind(g, _registry())
+    # Bad sourceOutput badges the source node + the full edge.
+    assert exc.value.node_id == "a"
+    assert exc.value.edge == {
+        "source": "a", "sourceOutput": "nonesuch", "target": "b", "targetInput": "x",
+    }
 
 
 def test_bind_bad_target_input():
     g = Graph().add("a", f"{__name__}.inc").add("b", f"{__name__}.inc")
     g.connect("a", "result", "b", "nonesuch")
-    with pytest.raises(BindError, match="parameter"):
+    with pytest.raises(BindError, match="parameter") as exc:
         bind(g, _registry())
+    # Bad targetInput badges the target node + the full edge.
+    assert exc.value.node_id == "b"
+    assert exc.value.edge == {
+        "source": "a", "sourceOutput": "result", "target": "b", "targetInput": "nonesuch",
+    }
+
+
+def test_bind_edge_unknown_node():
+    g = Graph().add("a", f"{__name__}.inc")
+    g.connect("a", "result", "ghost", "x")  # target does not exist
+    with pytest.raises(BindError, match="unknown node") as exc:
+        bind(g, _registry())
+    assert exc.value.node_id == "ghost"
+    assert exc.value.edge["target"] == "ghost"
 
 
 def test_bind_duplicate_input_edge():
     g = Graph().add("a", f"{__name__}.inc").add("b", f"{__name__}.inc").add("c", f"{__name__}.inc")
     g.connect("a", "result", "c", "x")
     g.connect("b", "result", "c", "x")
-    with pytest.raises(BindError, match="more than one edge"):
+    with pytest.raises(BindError, match="more than one edge") as exc:
         bind(g, _registry())
+    # The second (offending) edge into c is badged, with c as the node.
+    assert exc.value.node_id == "c"
+    assert exc.value.edge == {
+        "source": "b", "sourceOutput": "result", "target": "c", "targetInput": "x",
+    }
 
 
 def test_bind_missing_required_input():
     g = Graph().add("s", f"{__name__}.add")  # add(a, b) both required
-    with pytest.raises(BindError, match="required"):
+    with pytest.raises(BindError, match="required") as exc:
         bind(g, _registry())
+    assert exc.value.node_id == "s"
+    assert exc.value.edge is None  # node-scoped, not edge-scoped
 
 
 def test_bind_non_serialisable_literal():
     g = Graph().add("a", f"{__name__}.inc", inputs={"x": object()})
-    with pytest.raises(BindError, match="serialisable"):
+    with pytest.raises(BindError, match="serialisable") as exc:
         bind(g, _registry())
+    assert exc.value.node_id == "a"
+
+
+def test_bind_unknown_literal_param():
+    g = Graph().add("a", f"{__name__}.inc", inputs={"nope": 1})
+    with pytest.raises(BindError, match="not a") as exc:
+        bind(g, _registry())
+    assert exc.value.node_id == "a"
+
+
+def test_bind_cycle_carries_node_ids():
+    g = Graph().add("a", f"{__name__}.inc").add("b", f"{__name__}.inc")
+    g.connect("a", "result", "b", "x")
+    g.connect("b", "result", "a", "x")
+    with pytest.raises(CycleError) as exc:
+        bind(g, _registry())
+    assert set(exc.value.node_ids) == {"a", "b"}
 
 
 def test_bind_reports_before_running():
     # A bad socket must raise at bind, not during execution.
     g = Graph().add("a", f"{__name__}.inc", inputs={"x": 1}).add("b", f"{__name__}.inc")
     g.connect("a", "ghost", "b", "x")
-    with pytest.raises(BindError):
+    with pytest.raises(BindError) as exc:
         run(g, _registry())
+    assert exc.value.node_id == "a"
 
 
 # -- run -------------------------------------------------------------------

@@ -20,8 +20,8 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-from .errors import BindError
-from .graph import Graph
+from .errors import BindError, UnknownNodeType
+from .graph import Edge, Graph
 from .ordering import topological_order
 from .registry import DEFAULT_REGISTRY, NodeRegistry, RegisteredNode
 
@@ -55,6 +55,12 @@ class BoundGraph:
     output: Optional[tuple[BoundNode, str]] = None
 
 
+def _edge_dict(edge: Edge) -> dict:
+    """The edge as portable ``{source, sourceOutput, target, targetInput}`` — the
+    same wire shape the graph JSON uses — so an error can badge the exact edge."""
+    return edge.to_dict()
+
+
 def _ensure_json(node_id: str, param: str, value: Any) -> None:
     try:
         json.dumps(value)
@@ -62,7 +68,8 @@ def _ensure_json(node_id: str, param: str, value: Any) -> None:
         raise BindError(
             f"node {node_id!r} input {param!r} has a non-serialisable literal "
             f"{value!r} ({type(value).__name__}); pass a JSON value or wire it "
-            f"from a node"
+            f"from a node",
+            node_id=node_id,
         ) from None
 
 
@@ -81,42 +88,59 @@ def bind(graph: Graph, registry: Optional[NodeRegistry] = None) -> BoundGraph:
     # -- pass 1: resolve node types, validate literals --------------------
     bound_by_id: dict[str, BoundNode] = {}
     for node in graph.nodes:
-        entry = registry.get(node.type)  # UnknownNodeType if absent
+        try:
+            entry = registry.get(node.type)  # UnknownNodeType if absent
+        except UnknownNodeType as exc:
+            # Enrich with the graph node id — the registry only knows the type.
+            exc.node_id = node.id
+            raise
         input_names = {i["name"] for i in entry.spec["inputs"]}
         for param, value in node.inputs.items():
             if param not in input_names:
                 raise BindError(
                     f"node {node.id!r} sets input {param!r}, which is not a "
-                    f"parameter of {node.type!r}"
+                    f"parameter of {node.type!r}",
+                    node_id=node.id,
                 )
             _ensure_json(node.id, param, value)
         bound_by_id[node.id] = BoundNode(id=node.id, entry=entry, literals=dict(node.inputs))
 
     # -- pass 2: resolve + validate edges ---------------------------------
     for edge in graph.edges:
+        edge_ctx = _edge_dict(edge)
         source = bound_by_id.get(edge.source)
         target = bound_by_id.get(edge.target)
         if source is None or target is None:
+            # Badge whichever endpoint is missing (source first if both are).
+            missing = edge.source if source is None else edge.target
             raise BindError(
-                f"edge {edge.source!r}->{edge.target!r} references an unknown node"
+                f"edge {edge.source!r}->{edge.target!r} references an unknown node",
+                node_id=missing,
+                edge=edge_ctx,
             )
         source_sockets = {o["name"] for o in source.spec["outputs"]}
         if edge.source_output not in source_sockets:
             raise BindError(
                 f"edge from {edge.source!r} reads output {edge.source_output!r}, "
                 f"which is not an output of {source.type!r} "
-                f"(has: {', '.join(sorted(source_sockets))})"
+                f"(has: {', '.join(sorted(source_sockets))})",
+                node_id=edge.source,
+                edge=edge_ctx,
             )
         target_inputs = {i["name"] for i in target.spec["inputs"]}
         if edge.target_input not in target_inputs:
             raise BindError(
                 f"edge into {edge.target!r} feeds input {edge.target_input!r}, "
-                f"which is not a parameter of {target.type!r}"
+                f"which is not a parameter of {target.type!r}",
+                node_id=edge.target,
+                edge=edge_ctx,
             )
         if edge.target_input in target.wired:
             raise BindError(
                 f"input {edge.target_input!r} of node {edge.target!r} is wired "
-                f"by more than one edge"
+                f"by more than one edge",
+                node_id=edge.target,
+                edge=edge_ctx,
             )
         target.wired[edge.target_input] = (source, edge.source_output)
         # An edge wins over a widget literal for the same input.
@@ -131,7 +155,8 @@ def bind(graph: Graph, registry: Optional[NodeRegistry] = None) -> BoundGraph:
             if name not in bound.wired and name not in bound.literals:
                 raise BindError(
                     f"required input {name!r} of node {bound.id!r} "
-                    f"({bound.type}) is neither wired nor given a value"
+                    f"({bound.type}) is neither wired nor given a value",
+                    node_id=bound.id,
                 )
 
     # -- pass 4: order + resolve the output socket ------------------------
@@ -143,9 +168,14 @@ def bind(graph: Graph, registry: Optional[NodeRegistry] = None) -> BoundGraph:
         onode = bound_by_id.get(graph.output.get("node"))
         socket = graph.output.get("socket")
         if onode is None:
-            raise BindError(f"graph output references unknown node {graph.output.get('node')!r}")
+            raise BindError(
+                f"graph output references unknown node {graph.output.get('node')!r}"
+            )
         if socket not in {o["name"] for o in onode.spec["outputs"]}:
-            raise BindError(f"graph output socket {socket!r} is not an output of {onode.type!r}")
+            raise BindError(
+                f"graph output socket {socket!r} is not an output of {onode.type!r}",
+                node_id=onode.id,
+            )
         output = (onode, socket)
 
     return BoundGraph(nodes=ordered, by_id=bound_by_id, registry=registry, output=output)

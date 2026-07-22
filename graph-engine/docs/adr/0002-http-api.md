@@ -22,8 +22,18 @@ GET/PUT /api/source/{spec_id}    -> 501 (reserved for stream E)
 ```
 
 - **`bind` is the validate endpoint** — the UI calls it on every drag-to-connect.
-  Errors are `{code, message, nodeId?}`; `nodeId` is present when the exception
-  exposes one (e.g. `NodeExecutionError`).
+  Errors are `{code, message, nodeId?, edge?, nodeIds?}`. The message stays
+  human-readable; the structured fields let the UI badge the exact node/edge
+  without parsing the text:
+  - `nodeId` — the single offending node. Present for every node-scoped bind
+    failure (unknown type, unknown/non-serialisable literal, bad `sourceOutput`
+    → source id, bad `targetInput`/duplicate input edge → target id, missing
+    required input, bad graph-output socket) and for runtime `NodeExecutionError`.
+    Absent only for whole-graph errors (e.g. output referencing an unknown node).
+  - `edge` — the offending connection `{source, sourceOutput, target,
+    targetInput}`, present on edge-scoped bind errors (bad socket/input,
+    duplicate input edge, edge to an unknown node).
+  - `nodeIds` — the ids caught in a cycle, present on `CycleError`.
 - **Values** are JSON with a `{"$repr","$type"}` fallback + size cap for
   non-JSON returns (`server/serialize.py`) — the cheap form of ADR 0001's
   "JSON values + opaque handles". Large/opaque values become previews.
@@ -43,6 +53,4 @@ network, and do not run untrusted graphs, until the sandbox exists.**
 
 ## Deferred
 
-- Structured per-node bind errors (today the `nodeId` is in the message text for
-  bind failures; only runtime `NodeExecutionError` carries it structurally).
 - Graph GET/PUT persistence, source editing (stream E), streaming, auth.

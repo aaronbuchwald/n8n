@@ -50,13 +50,90 @@ def test_validate_ok(client):
     assert r.status_code == 200 and r.json() == {"ok": True}
 
 
-def test_validate_reports_bad_socket_with_nodeless_error(client):
+def test_validate_reports_bad_socket_with_node_and_edge(client):
     g = _graph()
     g["edges"][0]["sourceOutput"] = "ghost"
     r = client.post("/api/graphs/validate", json={"graph": g})
     assert r.status_code == 422
+    err = r.json()["errors"][0]
     assert r.json()["ok"] is False
-    assert "output" in r.json()["errors"][0]["message"]
+    assert "output" in err["message"]
+    # Bad sourceOutput → badge the source node + the offending edge.
+    assert err["nodeId"] == "src"
+    assert err["edge"] == {
+        "source": "src", "sourceOutput": "ghost", "target": "avg", "targetInput": "values",
+    }
+
+
+def test_validate_unknown_type_carries_node_id(client):
+    g = _graph()
+    g["nodes"][0]["type"] = "calc.nope"  # not registered
+    r = client.post("/api/graphs/validate", json={"graph": g})
+    assert r.status_code == 422
+    err = r.json()["errors"][0]
+    assert err["code"] == "UnknownNodeType"
+    assert err["nodeId"] == "src"
+
+
+def test_validate_bad_target_input_carries_node_and_edge(client):
+    g = _graph()
+    g["edges"][0]["targetInput"] = "ghost"
+    r = client.post("/api/graphs/validate", json={"graph": g})
+    assert r.status_code == 422
+    err = r.json()["errors"][0]
+    assert err["nodeId"] == "avg"  # target node
+    assert err["edge"]["targetInput"] == "ghost"
+
+
+def test_validate_duplicate_input_edge_carries_node_and_edge(client):
+    g = _graph()
+    # A second edge feeding the same input of avg.
+    g["nodes"].append({"id": "src2", "type": "calc.make", "inputs": {"x": 1}})
+    g["edges"].append(
+        {"source": "src2", "sourceOutput": "result", "target": "avg", "targetInput": "values"}
+    )
+    r = client.post("/api/graphs/validate", json={"graph": g})
+    assert r.status_code == 422
+    err = r.json()["errors"][0]
+    assert "more than one edge" in err["message"]
+    assert err["nodeId"] == "avg"
+    assert err["edge"]["source"] == "src2"
+
+
+def test_validate_missing_required_input_carries_node_id(client):
+    # A lone node whose required 'values' input is neither wired nor set.
+    g = {
+        "version": "0.2.0",
+        "nodes": [{"id": "lonely", "type": "calc.average", "inputs": {}}],
+        "edges": [],
+        "output": None,
+    }
+    r = client.post("/api/graphs/validate", json={"graph": g})
+    assert r.status_code == 422
+    err = r.json()["errors"][0]
+    assert "required" in err["message"]
+    assert err["nodeId"] == "lonely"
+    assert "edge" not in err  # node-scoped error omits edge
+
+
+def test_validate_cycle_carries_node_ids(client):
+    g = {
+        "version": "0.2.0",
+        "nodes": [
+            {"id": "a", "type": "calc.total", "inputs": {}},
+            {"id": "b", "type": "calc.total", "inputs": {}},
+        ],
+        "edges": [
+            {"source": "a", "sourceOutput": "result", "target": "b", "targetInput": "values"},
+            {"source": "b", "sourceOutput": "result", "target": "a", "targetInput": "values"},
+        ],
+        "output": None,
+    }
+    r = client.post("/api/graphs/validate", json={"graph": g})
+    assert r.status_code == 422
+    err = r.json()["errors"][0]
+    assert err["code"] == "CycleError"
+    assert set(err["nodeIds"]) == {"a", "b"}
 
 
 def test_run_returns_outputs(client):

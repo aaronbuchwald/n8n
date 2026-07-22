@@ -24,11 +24,26 @@ from .serialize import to_jsonable
 
 
 def _error_payload(exc: Exception) -> dict:
-    """Structured error; carries a nodeId when the exception exposes one."""
-    node_id = getattr(exc, "node_id", None)
+    """Structured error: ``{code, message, nodeId?, edge?, nodeIds?}``.
+
+    The optional fields appear only when the exception exposes them, so the
+    common ``{code, message}`` shape is unchanged:
+
+    * ``nodeId`` — a single offending node (bind errors, ``NodeExecutionError``).
+    * ``edge`` — the offending connection ``{source, sourceOutput, target,
+      targetInput}`` for edge-scoped bind errors.
+    * ``nodeIds`` — the ids caught in a cycle (``CycleError``).
+    """
     payload: dict[str, Any] = {"code": type(exc).__name__, "message": str(exc)}
+    node_id = getattr(exc, "node_id", None)
     if node_id is not None:
         payload["nodeId"] = node_id
+    edge = getattr(exc, "edge", None)
+    if edge is not None:
+        payload["edge"] = edge
+    node_ids = getattr(exc, "node_ids", None)
+    if node_ids:
+        payload["nodeIds"] = node_ids
     return payload
 
 
