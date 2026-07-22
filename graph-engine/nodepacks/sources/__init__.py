@@ -22,6 +22,12 @@ from engine import node
 
 # In-process fixtures for the mock API — no network, ever. Keyed by dataset name
 # so a graph can pick a series the way it would pick an API endpoint.
+#
+# NOTE: the CSV↔mock-API "source swap" yields identical output only because
+# "readings" below mirrors the values shipped in examples/readings/readings.csv.
+# This parity is a fixture convenience, not an enforced invariant — editing the
+# CSV without updating this list breaks it (guarded by the swap test against the
+# shipped fixture). A real API would of course return its own data.
 _MOCK_DATASETS: dict[str, list[float]] = {
     "readings": [10.0, 20.0, 30.0, 40.0],
     "empty": [],
