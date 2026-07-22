@@ -1,0 +1,9 @@
+region,amount,qty
+north,120,3
+south,80,1
+north,45,2
+east,200,5
+south,150,4
+north,60,1
+east,90,2
+west,30,1
