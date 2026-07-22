@@ -1,0 +1,4 @@
+name,force_kN,width_mm,thickness_mm,fy_MPa
+M1-tie,100,50,10,250
+M2-strut,150,50,10,250
+M3-hanger,80,60,12,355
