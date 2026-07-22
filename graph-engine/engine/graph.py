@@ -12,7 +12,7 @@ Two ways to build one:
 * **In code** with the fluent builder::
 
       g = Graph()
-      g.add("csv", "pkg.read_csv", inputs={"path": "members.csv"})
+      g.add("csv", "pkg.read_csv", inputs={"path": "readings.csv"})
       g.add("pick", "pkg.select", inputs={"index": 0})
       g.connect("csv", "result", "pick", "rows")
 
