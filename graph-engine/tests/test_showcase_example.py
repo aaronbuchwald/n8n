@@ -235,9 +235,11 @@ def test_showcase_widget_commit_keeps_path_relative_and_run_still_works(showcase
     saved_read_table = next(n for n in saved["nodes"] if n["type"] == "table.read_table")
     assert saved_read_table["inputs"]["path"] == "showcase.csv"
     assert client.get("/api/graph").json() == saved
-    # ...and in what actually landed on disk.
+    # ...and in what actually landed on disk. Statement-level write-back (ADR 0004
+    # A1) preserves the unchanged read_table line verbatim, so assert the relative
+    # filename survives (quote-agnostic) and the sandbox's absolute path never does.
     text = module_file.read_text(encoding="utf-8")
-    assert "path='showcase.csv'" in text
+    assert "showcase.csv" in text
     assert str(tmp_path) not in text  # the sandbox's absolute dir never lands in source
 
     # And /api/run still works end to end, thanks to the run-time-only override.
