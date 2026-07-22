@@ -12,13 +12,16 @@
 //   registerWidget('table-recipe', lazyEditor(() => import('./table')));
 
 import { CheckboxEditor, NumberEditor, TextEditor } from './builtins';
-import { registerWidget } from './registry';
+import { registerWidget, lazyEditor } from './registry';
 
 // Core kinds (A-D6: flat names). These mirror engine/spec.py's type-derived
 // widgets, so every str/int/float/bool input has a working editor out of the box.
 registerWidget('text', TextEditor);
 registerWidget('number', NumberEditor);
 registerWidget('checkbox', CheckboxEditor);
+
+// Stream B: math widget (ADR 0005 B) — SymPy expressions with KaTeX preview.
+registerWidget('math', lazyEditor(() => import('./math/MathEditor').then(m => ({ default: m.MathEditor }))));
 
 // Public API for the shell and downstream streams.
 export {
