@@ -1,0 +1,30 @@
+[project]
+name = "graph-engine"
+version = "0.1.0"
+description = "Headless, UI-agnostic graph engine (Phase 0): node_spec, Graph, run, to_python"
+readme = "README.md"
+requires-python = ">=3.10"
+# The engine package itself is pure standard library. These deps are only for
+# the demo bridge + tests, which wrap the example functions in the sibling
+# `nodezator-structural-demo/demolib` (imported from source — see below).
+dependencies = [
+    "forallpeople>=2.6.0",
+    "handcalcs>=1.6.0",
+]
+
+[project.optional-dependencies]
+# `uv sync --extra dev` — run the test suite.
+dev = [
+    "pytest>=8.0",
+]
+
+[tool.pytest.ini_options]
+# `engine` + `demo_graph` come from ".", the example `demolib`/`members.csv`
+# from the sibling demo. That sibling path is the ONE cross-reference to the
+# pre-existing code; everything else here is self-contained.
+pythonpath = [".", "../nodezator-structural-demo"]
+testpaths = ["tests"]
+
+[tool.uv]
+# Imported from source; nothing to build/install as a wheel.
+package = false

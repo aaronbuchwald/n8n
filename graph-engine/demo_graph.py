@@ -17,7 +17,16 @@ frozen JSON schemas + example artifacts under ``engine/schemas/``.
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
+
+# The example callables live in the pre-existing demo next door. Add it to the
+# path so `demolib` resolves — the single cross-reference from this otherwise
+# self-contained engine directory back to the original code.
+HERE = Path(__file__).resolve().parent
+DEMO_DIR = HERE.parent / "nodezator-structural-demo"
+if str(DEMO_DIR) not in sys.path:
+    sys.path.insert(0, str(DEMO_DIR))
 
 from demolib.data import read_members_csv, select_member, unpack_member
 from demolib.mechanics import axial_stress, capacity_margin
@@ -25,8 +34,7 @@ from demolib.report import assert_utilisation_below_one, render_stress_check
 
 from engine import Graph, NodeRegistry
 
-HERE = Path(__file__).resolve().parent
-CSV_PATH = HERE / "members.csv"
+CSV_PATH = DEMO_DIR / "members.csv"
 
 
 def build_registry() -> NodeRegistry:

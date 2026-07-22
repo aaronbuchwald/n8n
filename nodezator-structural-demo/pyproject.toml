@@ -20,15 +20,6 @@ export = [
 app = [
     "nodezator>=1.5.0",
 ]
-# `uv sync --extra dev` — test the headless engine (Phase 0).
-dev = [
-    "pytest>=8.0",
-]
-
-[tool.pytest.ini_options]
-# demolib/ and engine/ are imported from source (this project isn't packaged).
-pythonpath = ["."]
-testpaths = ["tests"]
 
 [tool.uv]
 # Dependency-only project: don't try to build/install this repo as a wheel.
