@@ -61,8 +61,9 @@ def run(graph: Graph, registry: Optional[NodeRegistry] = None) -> ExecutionResul
         # Start from widget literals, then let connected edges override.
         kwargs: dict[str, Any] = dict(node.inputs)
         for edge in graph.incoming(node_id):
-            source_outputs = outputs[edge.source]
-            if edge.source_output not in source_outputs:
+            source_outputs = outputs[edge.source] # doesn't this mean that we will always take the source outputs by stringified key
+            # how would this deal with collisions? it seems like real instances that link a full node type directly would be much better.
+            if edge.source_output not in source_outputs: # this type of error should be detectable as missing before running, not during
                 raise GraphError(
                     f"node {node_id!r} input {edge.target_input!r} is wired to "
                     f"{edge.source!r}.{edge.source_output!r}, which is not an "
@@ -70,7 +71,7 @@ def run(graph: Graph, registry: Optional[NodeRegistry] = None) -> ExecutionResul
                 )
             kwargs[edge.target_input] = source_outputs[edge.source_output]
 
-        result = entry.fn(**kwargs)
+        result = entry.fn(**kwargs) # do we only support kwargs and not args here? That seems wrong.
         returns[node_id] = result
 
         if is_multi_output(spec):
@@ -79,7 +80,10 @@ def run(graph: Graph, registry: Optional[NodeRegistry] = None) -> ExecutionResul
                     f"node {node_id!r} ({node.type}) declares multiple outputs "
                     f"but returned {type(result).__name__}, not a dict"
                 )
-            outputs[node_id] = {
+            outputs[node_id] = { # it seems you can only read an output via one edge.source name above
+                # but you can't read a nested property of the output, which is not great. This makes it
+                # unclear to me how if you are returning multiple outputs, you'd connect just one of those
+                # outputs to a successive node?
                 out["name"]: result[out["name"]] for out in spec["outputs"]
             }
         else:

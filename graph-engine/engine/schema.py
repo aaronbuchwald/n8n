@@ -22,6 +22,10 @@ from .graph import SCHEMA_VERSION
 # Frozen JSON Schema documents
 # --------------------------------------------------------------------------
 
+# given this schema, don't we lose track of the body of the functions and only have the inputs/outputs?
+# if in the UI we are actually going to preserve the ability to run a python entrypoint in a node directly
+# then we may want the ability to support inter-process communication with standard serialization format (support cross-language boudnaries)
+# and include the full code body annotated as "python able to run in env X ie. docker image with specific uv defined env"
 NODE_SPEC_SCHEMA: dict = {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "https://n8n.io/nodezator-engine/node-spec.schema.json",

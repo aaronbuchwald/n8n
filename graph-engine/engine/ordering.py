@@ -31,6 +31,8 @@ def topological_order(graph: Graph) -> list[str]:
 
     # Collapse parallel edges (e.g. several unpacked fields feeding one node)
     # to a single dependency so they don't inflate indegree.
+    # TODO: human review and ensure there's sufficient testing for topological sort
+    # ideally over a generic type, so that it's not directly linked to the engine.
     unique_pairs = {(e.source, e.target) for e in graph.edges}
     indegree = {nid: 0 for nid in ids}
     successors: dict[str, list[str]] = {nid: [] for nid in ids}
