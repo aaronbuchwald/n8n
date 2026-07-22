@@ -89,12 +89,14 @@ can't be branched on). This is a feature — it's what keeps the mapping clean.
 | Bijective (identity round-trip) | Deliberately excluded / lossy |
 |---|---|
 | nodes ⟷ composite assignments | **layout** (a view; sidecar only) |
-| node id ⟷ variable name | **formatting/comments of wiring lines** (normalized on emit; bodies preserved) |
+| node id ⟷ variable name | **formatting/comments of a *changed* wiring line** (that one statement is normalized on emit; unchanged statements and their surrounding comments/blank lines are preserved — see Amendment A1) |
 | edges ⟷ argument references | **non-dataflow Python** (control flow — unsupported in the composite by design) |
 | widget values ⟷ literal arguments | |
 
 So precisely: **the graph is bijective with the dataflow-wiring composite,
-modulo layout and wiring-line formatting.**
+modulo layout and the formatting of the individual wiring statements that a
+given save actually rewrites** (see Amendment A1 — the earlier, stricter reading
+was "modulo all wiring-line formatting").
 
 ## Consequences (new work this unlocks/requires)
 
@@ -119,3 +121,57 @@ modulo layout and wiring-line formatting.**
    *(Recommend: AST parse for round-trip; keep tracing for programmatic build.)*
 4. **Layout in a sidecar** (D6) vs. positions embedded in the graph JSON only.
    *(Either works; sidecar keeps the graph JSON = pure projection.)*
+
+## Amendment A1 — statement-level write-back (2026-07)
+
+*Refines D5. Prompted by review 0005, finding #5: a one-literal edit rewrote the
+whole `@main` body, collapsing 34 hand-written lines (comments, a multi-line
+recipe dict) into 12 generated ones — silent data loss for a tool whose promise
+is "the graph edits your source".*
+
+**The problem with the original D5 implementation.** D5 said "emit/patch only the
+wiring lines", and the first implementation honoured that at the granularity of
+the **whole wiring block**: every save regenerated *all* the composite's
+assignment lines and spliced them over the body span. Because node bodies were
+untouched, the ADR's honesty table only warned about "formatting/comments of
+wiring lines". But in practice a user's comments, blank lines and multi-line
+literals live *between and inside* the wiring statements, so any save — even one
+that changed a single title literal — normalized them all away.
+
+**The refinement.** Write-back is now **statement-level**, matching D5's intent
+more literally:
+
+- **Value / edge / output edit (node set unchanged — the common case).** Only the
+  individual assignment statements whose *parsed meaning* changed are re-emitted
+  (one canonical line each) and spliced in place by AST line span. Statements are
+  compared by meaning (`from_composite`), not by text, so re-quoting or
+  reformatting a literal to the same value is a no-op. **Every unchanged
+  statement, and all comments / blank lines / multi-line literals around it,
+  survive byte-for-byte.** The only normalization is confined to the exact
+  statement(s) the user changed — and normalizing a line you just edited is
+  expected, not data loss.
+
+- **Structural change (nodes added/removed, or the `return` appearing/
+  disappearing).** In-place patching cannot place new lines or reclaim removed
+  ones without guessing which comments belong where, so this still falls back to
+  regenerating the whole wiring block (the normalized projection D5 permits).
+  This is **no longer silent**: the server logs a warning naming the file and
+  saying the wiring block's comments/blank lines were not preserved.
+
+**Restated bijection contract.** The graph is bijective with the dataflow-wiring
+composite, **modulo layout and the formatting of the specific wiring statements a
+save rewrites**. A pure widget/literal edit preserves everything else in the
+`@main` body; a structural edit normalizes the wiring block and says so. Node
+bodies, imports, the composite signature and its docstring are untouched in all
+cases (unchanged from D5).
+
+**Implementation.** `server/writeback.py` (`compute_writeback`) plans the splice;
+`server/workspace.py::save_graph` applies it and logs the fallback. Stdlib only —
+`ast` line spans + text splicing, no CST dependency. Fidelity proof and the
+structural-fallback warning are covered by `tests/test_writeback_fidelity.py`.
+
+**Not yet addressed (future work).** Full-fidelity structural edits (preserving a
+surviving node's leading comment when nodes are added/removed/reordered) would
+need a comment-anchoring model — e.g. CST-based editing (`libcst`) or attaching
+inter-statement trivia to the following statement. Deferred; the warning keeps
+the current behaviour honest until then.

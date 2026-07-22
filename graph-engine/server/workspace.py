@@ -23,22 +23,20 @@ from __future__ import annotations
 import ast
 import importlib
 import json
+import logging
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Optional
 
-from engine import (
-    Graph,
-    NodeRegistry,
-    composite_call_names,
-    find_composite,
-    from_composite,
-    wiring_lines,
-)
+from engine import Graph, NodeRegistry, from_composite
+
+from .writeback import compute_writeback
 
 # The graph-engine tree — the default boundary for source writes.
 ENGINE_ROOT = Path(__file__).resolve().parents[1]
+
+logger = logging.getLogger(__name__)
 
 
 class SourceEditError(Exception):
@@ -322,43 +320,38 @@ class Workspace:
     # -- graph persistence (PUT /api/graph) -------------------------------
 
     def save_graph(self, graph: Graph) -> dict[str, Any]:
-        """Rewrite the composite's wiring lines from ``graph`` (ADR 0004 D5).
+        """Rewrite the composite's wiring from ``graph`` (ADR 0004 D5).
 
-        The composite's decorator, signature and docstring are kept; only the
-        wiring statements are replaced, with lines freshly emitted from the
-        graph. Positions are persisted to the layout sidecar, never to the
-        Python. Returns the graph re-parsed from the rewritten module — the
-        round-trip proof that what was saved is what will be served.
+        Only the wiring statements that actually changed are re-emitted, spliced
+        in place by AST line span so every surrounding comment, blank line and
+        multi-line literal in the ``@main`` body survives byte-for-byte (see
+        :mod:`server.writeback`). A structural change (nodes added/removed, the
+        return appearing/disappearing) falls back to regenerating the whole
+        wiring block — the normalized projection ADR 0004 D5 permits — and is
+        logged so the normalization is never silent. Positions go to the layout
+        sidecar, never the Python. Returns the graph re-parsed from the rewritten
+        module — the round-trip proof that what was saved is what will be served.
         """
         path = self.module_file()
         self._check_editable(path)
 
         text = path.read_text(encoding="utf-8")
-        tree = ast.parse(text)
-        composite = find_composite(tree)
+        result = compute_writeback(text, graph, self.registry, self.module_name)
 
-        body = composite.body
-        has_doc = (
-            isinstance(body[0], ast.Expr)
-            and isinstance(body[0].value, ast.Constant)
-            and isinstance(body[0].value.value, str)
-        )
-        wiring = body[1:] if has_doc else body
-        indent = " " * (wiring[0].col_offset if wiring else composite.col_offset + 4)
-        # Call each node by the name THIS module binds it to (imports from other
-        # packs + local defs), so a composite that wires cross-pack nodes (the
-        # showcase) round-trips in place — not only all-local composites.
-        call_names = composite_call_names(tree, self.module_name)
-        lines = wiring_lines(graph, self.registry, call_names=call_names, indent=indent)
+        if result.strategy == "regenerated" and result.dropped_comments:
+            logger.warning(
+                "PUT /api/graph: %s changed the composite's node set, so the "
+                "@main body was regenerated and its hand-written comments/blank "
+                "lines in the wiring block were not preserved (ADR 0004 D5 "
+                "normalization). Pure value/edge edits preserve formatting; "
+                "structural edits normalize the wiring block.",
+                self._repo_relative(path),
+            )
 
-        if wiring:
-            start, end = wiring[0].lineno, max(s.end_lineno or s.lineno for s in wiring)
-            new_text = _splice_lines(text, start, end, lines)
-        else:  # docstring-only body → insert after it
-            insert_at = (body[0].end_lineno or body[0].lineno) + 1
-            new_text = _splice_lines(text, insert_at, insert_at - 1, lines)
-
-        self._write_and_reload(path, new_text, previous=text, module=self.module_name)
+        if result.text != text:
+            self._write_and_reload(
+                path, result.text, previous=text, module=self.module_name
+            )
         self._save_layout(graph)
         return self.parse_graph()
 
