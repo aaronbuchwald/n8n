@@ -7,17 +7,46 @@ whatever has already been registered in-process.
 ``--demo`` (the default) loads the bundled *minimal* example so the app has a
 real palette **and** a sample graph to render at ``GET /api/graph``. Pass
 ``--no-demo`` for an empty registry, or ``--library`` to load your own types.
+
+**Enter to open:** when stdin is a TTY, the server prints a hint and — on the
+first Enter — opens the app view (``http://{host}:{port}/``) in your browser.
+Build the web first (``cd web && pnpm build``) so ``/`` serves the SPA rather
+than 404. Use ``--no-open`` to disable, or ``--open-url URL`` to point at a web
+dev server on another port (e.g. ``pnpm dev``).
 """
 
 from __future__ import annotations
 
 import argparse
 import importlib
+import sys
+import threading
+import webbrowser
 
 import uvicorn
 
-from .app import create_app
+from .app import WEB_DIST, create_app
 from .demo import load_minimal_graph
+
+
+def view_url(host: str, port: int) -> str:
+    """The single same-origin URL that serves the app view."""
+    return f"http://{host}:{port}/"
+
+
+def _wait_for_enter_then_open(url: str) -> None:
+    """Block on stdin; open ``url`` in the browser on the first empty line.
+
+    Runs in a daemon thread. Never crashes the server: any error (EOF, a closed
+    stdin) just ends the loop quietly.
+    """
+    try:
+        for line in sys.stdin:
+            if line.strip() == "":
+                webbrowser.open(url)
+                return
+    except Exception:
+        return
 
 
 def main() -> None:
@@ -31,12 +60,37 @@ def main() -> None:
     )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument(
+        "--open",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="press Enter in the terminal to open the app view in your browser (default: on when interactive)",
+    )
+    parser.add_argument(
+        "--open-url",
+        default=None,
+        help="URL to open on Enter (default: http://{host}:{port}/); e.g. a web dev server started with pnpm dev",
+    )
     args = parser.parse_args()
 
     for module in args.library:
         importlib.import_module(module)
 
     sample_graph = load_minimal_graph() if args.demo else None
+
+    url = args.open_url or view_url(args.host, args.port)
+
+    # Enter-to-open only when interactive; skip for pipes/CI/tests so we never
+    # block on a stdin that will never see a keystroke.
+    if args.open and sys.stdin.isatty():
+        if WEB_DIST.is_dir():
+            print(f"➜ Press Enter to open the app in your browser ({url})")
+        else:
+            print(
+                f"➜ Press Enter to open the app in your browser ({url}) — "
+                "build the web first (`cd web && pnpm build`) or `/` will 404"
+            )
+        threading.Thread(target=_wait_for_enter_then_open, args=(url,), daemon=True).start()
 
     uvicorn.run(create_app(sample_graph=sample_graph), host=args.host, port=args.port)
 

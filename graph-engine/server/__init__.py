@@ -10,6 +10,11 @@ core:
     POST /api/export                -> to_python()
     GET/PUT /api/source/{spec_id}   -> 501 (reserved for stream E)
 
+If the web bundle has been built (``cd web && pnpm build``), it is served at
+``/`` same-origin with ``/api/*``. Run ``uv run --extra server python -m server
+--demo`` and press **Enter** in the terminal to open the app view in your
+browser.
+
 The graph payload is the engine's existing graph JSON — no new format. Values
 are JSON-serialised with a ``{"$repr","$type"}`` fallback for non-JSON returns.
 
