@@ -46,6 +46,7 @@ from typing import Any, Callable, Optional
 from .errors import TracingError
 from .graph import Graph
 from .registry import DEFAULT_REGISTRY, NodeRegistry
+from .spec import Widget
 
 # One trace at a time per thread. ``None`` means "eager" (calls execute).
 _state = threading.local()
@@ -169,6 +170,7 @@ def node(
     name: Optional[str] = None,
     title: Optional[str] = None,
     outputs: Optional[list] = None,
+    widgets: Optional[dict[str, Widget]] = None,
     registry: Optional[NodeRegistry] = None,
     replace: bool = False,
 ) -> Any:
@@ -176,12 +178,19 @@ def node(
 
     The type id is ``module.qualname`` (collision-proof); ``outputs=[...]``
     declares named output sockets (default: one ``result`` socket).
+    ``widgets={"param": Widget(...)}`` declares editing-widget contracts on named
+    inputs (ADR 0005 A-D2), threaded into each input spec's ``widget`` field.
     """
 
     def wrap(target: Callable[..., Any]) -> NodePrimitive:
         reg = registry or DEFAULT_REGISTRY
         entry = reg.register(
-            target, name=name, title=title, outputs=outputs, replace=replace
+            target,
+            name=name,
+            title=title,
+            outputs=outputs,
+            widgets=widgets,
+            replace=replace,
         )
         return NodePrimitive(target, entry)
 

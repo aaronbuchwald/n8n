@@ -59,6 +59,11 @@ NODE_SPEC_SCHEMA: dict = {
                                 "properties": {
                                     "kind": {"type": "string", "description": "Open vocabulary; core: number|text|checkbox."},
                                     "subtype": {"type": "string"},
+                                    "config": {
+                                        "type": "object",
+                                        "additionalProperties": True,
+                                        "description": "Optional, JSON-serialisable, editor-specific options (ADR 0005 A-D3). Absent for type-derived widgets.",
+                                    },
                                 },
                             },
                         ]
@@ -198,10 +203,27 @@ def validate_node_spec(spec: Any) -> dict:
     for inp in spec["inputs"]:
         for key in ("name", "type", "kind", "required", "default", "widget"):
             _require(key in inp, f"input {inp.get('name')!r} missing key {key!r}")
+        _validate_widget(inp.get("name"), inp["widget"])
     _require(isinstance(spec["outputs"], list) and spec["outputs"], "node spec needs >=1 output")
     for out in spec["outputs"]:
         _require("name" in out and "type" in out, "each output needs 'name' and 'type'")
     return spec
+
+
+def _validate_widget(input_name: Any, widget: Any) -> None:
+    """Validate an input's ``widget`` field (ADR 0005 A-D3): ``null`` or an object
+    with a string ``kind`` and an optional object ``config``. Additive-tolerant —
+    unknown widget keys (e.g. the derived ``subtype``) are left untouched.
+    """
+    if widget is None:
+        return
+    _require(isinstance(widget, dict), f"input {input_name!r} widget must be an object or null")
+    _require(isinstance(widget.get("kind"), str), f"input {input_name!r} widget needs a string 'kind'")
+    if "config" in widget:
+        _require(
+            isinstance(widget["config"], dict),
+            f"input {input_name!r} widget 'config' must be an object",
+        )
 
 
 def validate_graph(graph: Any) -> dict:
