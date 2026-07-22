@@ -38,6 +38,20 @@ offline bundle). Defects, priority order — the **B1 fix pack** = items 1–6:
 | 10 | Low | Fixture drift unguarded (manual copies of `engine/schemas/`) | obsoleted by B2 (`/api/specs`); until then diff-check |
 | 11–12 | Low | a11y (`aria-label`, tooltip-only docstrings, 10px text); `spec` typed non-null while guarded at runtime | add labels; make `spec: NodeSpec \| null` |
 
+## UI quality pass (in progress — Fable)
+
+Raised from a hands-on review of the live UI. These gate any positive first
+impression and so gate the symbolic-math pull-forward below.
+
+| # | Sev | Item | Approach |
+|---|---|---|---|
+| U1 | High | **Default auto-layout is unacceptable** (single node shown on load, poor arrangement) | Layered/Sugiyama L→R layout in a dedicated `layout.ts`; layer by longest path, crossing-minimization sweep, spacing from **measured** node sizes; re-layout + `fitView` after `useNodesInitialized`. |
+| U2 | High | **Node content overflows the card background** (long literal values, e.g. a file path, spill outside the border) | `min-width:0` on flex rows + clamp/ellipsis with full value on `title` (or clean wrap); audit every card row at realistic content lengths. |
+| U3 | Med | **No per-node run inspection** — can't see a node's inputs/outputs from a run | Click-to-inspect a node; resolve inputs from literals + upstream run outputs (derivable from the run response, no new endpoint); show inputs+outputs with `previewType`/`previewValue`, truncated. |
+
+Delivered as one coherent redesign (they all rewrite the node-card + layout
+surface); parallel patches would collide and look bolted-on.
+
 ## Dependency / critical path
 
 ```mermaid
