@@ -51,7 +51,7 @@ from .errors import (
 )
 from .execute import ExecutionResult, run
 from .emit import to_python
-from .composite import from_composite, to_composite
+from .composite import find_composite, from_composite, to_composite, wiring_lines
 from .graph import Edge, Graph, Node
 from .ordering import topological_order, topological_sort
 from .registry import DEFAULT_REGISTRY, NodeRegistry, RegisteredNode
@@ -75,6 +75,8 @@ __all__ = [
     "to_python",
     "to_composite",
     "from_composite",
+    "wiring_lines",
+    "find_composite",
     # authoring (decorators + tracing)
     "node",
     "graph",

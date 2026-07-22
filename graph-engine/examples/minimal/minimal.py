@@ -59,13 +59,18 @@ def render_summary(total: float, average: float) -> str:
 
 
 # -- the graph, as ordinary Python -----------------------------------------
+# The body is ADR 0004's canonical straight-line form: one single-assignment
+# call per node, and each variable name is that node's id on the canvas.
 
 
 @main
 def readings_report(path: str = "readings.csv") -> str:
     """Read the file, reduce it two ways, and render the result."""
     values = read_values(path)
-    return render_summary(total(values), average(values))
+    t = total(values)
+    a = average(values)
+    summary = render_summary(total=t, average=a)
+    return summary
 
 
 # All the node types this example defines (for schema snapshots).

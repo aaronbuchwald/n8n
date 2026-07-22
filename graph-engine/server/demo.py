@@ -1,10 +1,12 @@
 """Demo wiring — give the app real data to serve.
 
 Importing ``examples/minimal/minimal.py`` registers its ``@node`` types on the
-default registry and its ``@main`` composite traces into a graph. We serve that
-graph (with an absolute CSV path, via ``build_graph()``, so ``/api/run`` works
-regardless of the process's working directory) as the sample graph. The example
-lives outside the installed packages, so we add its directory to ``sys.path``.
+default registry. Per ADR 0004 D2/D4 the module is the source of truth, so the
+sample graph is the **AST parse** of its ``@main`` composite (node id =
+variable name) — the same projection ``PUT /api/graph`` writes back through.
+The ``read_values`` path literal is made absolute so ``/api/run`` works
+regardless of the process's working directory. The example lives outside the
+installed packages, so we add its directory to ``sys.path``.
 """
 
 from __future__ import annotations
@@ -12,14 +14,29 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+from engine import DEFAULT_REGISTRY
+
+from .workspace import Workspace
+
 _MINIMAL_DIR = Path(__file__).resolve().parents[1] / "examples" / "minimal"
 
 
-def load_minimal_graph() -> dict:
-    """Import the minimal example (registering ``minimal.*`` on the default
-    registry) and return its traced graph as engine graph JSON."""
+def make_minimal_workspace() -> Workspace:
+    """Import the minimal example and bind a workspace to its module."""
     if str(_MINIMAL_DIR) not in sys.path:
         sys.path.insert(0, str(_MINIMAL_DIR))
-    import minimal  # noqa: E402  — import side effect registers minimal.* @node types
+    import minimal  # noqa: F401  — import side effect registers minimal.* @node types
 
-    return minimal.build_graph().to_dict()
+    return Workspace(DEFAULT_REGISTRY, "minimal")
+
+
+def load_minimal_graph(workspace: Workspace | None = None) -> dict:
+    """Parse the minimal module's composite into engine graph JSON."""
+    ws = workspace or make_minimal_workspace()
+    doc = ws.parse_graph()
+    for node in doc["nodes"]:
+        # Absolute CSV path so the demo runs from any cwd (demo-only override;
+        # a graph save will persist whatever literal is in the graph).
+        if node["type"] == "minimal.read_values" and "path" in node["inputs"]:
+            node["inputs"]["path"] = str(_MINIMAL_DIR / "readings.csv")
+    return doc

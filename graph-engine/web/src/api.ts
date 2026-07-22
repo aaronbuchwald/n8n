@@ -1,4 +1,4 @@
-import type { GraphDoc, GraphOutput, NodeSpecs } from './types';
+import type { GraphDoc, GraphOutput, NodeSpec, NodeSpecs } from './types';
 
 // The engine over HTTP (ADR 0002). In dev/preview these are same-origin `/api/*`
 // paths that Vite proxies to the FastAPI server (see vite.config.ts).
@@ -117,4 +117,83 @@ export async function fetchLiveGraph(): Promise<LiveGraph> {
     getJson<GraphDoc>('/api/graph'),
   ]);
   return { version: specsRes.version, specs: specsRes.specs, graph };
+}
+
+// --- source-tree editing (stream E / ADR 0004 D2) --------------------------
+// The Python module is the source of truth; these calls read and write the
+// REAL .py files on the currently checked-out git branch.
+
+export interface WorkspaceModule {
+  module: string;
+  path: string; // repo-relative path of the edited .py file
+}
+
+export interface WorkspaceInfo {
+  branch: string | null; // null when detached or not a git checkout
+  detached: boolean;
+  commit: string | null;
+  modules: WorkspaceModule[];
+}
+
+export interface SourceInfo {
+  specId: string;
+  module: string;
+  qualname: string;
+  path: string;
+  startLine: number;
+  endLine: number;
+  source: string;
+}
+
+export interface SaveSourceResult extends SourceInfo {
+  spec: NodeSpec; // re-introspected after the module reload
+  graphErrors: EngineErrorItem[]; // the served graph may stop binding after an edit
+}
+
+export interface SaveGraphResult {
+  graph: GraphDoc; // re-parsed from the rewritten module (the round-trip proof)
+}
+
+/** PUT a JSON payload; a non-2xx `{message}` (or `{detail}`) rejects with it. */
+async function putJson<T>(path: string, payload: unknown): Promise<T> {
+  let res: Response;
+  try {
+    res = await fetch(path, {
+      method: 'PUT',
+      headers: { accept: 'application/json', 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+  } catch {
+    throw new Error(`Could not reach the server at ${path}. Is it running?`);
+  }
+  const body: unknown = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    if (body && typeof body === 'object' && 'message' in body) {
+      const message = (body as { message: unknown }).message;
+      if (typeof message === 'string') throw new Error(message);
+    }
+    const [first] = errorsFromDetail(body, `${path} responded ${res.status} ${res.statusText}`);
+    throw new Error(first.message);
+  }
+  return body as T;
+}
+
+/** Current git branch + which module files edits land on (`GET /api/workspace`). */
+export async function fetchWorkspace(): Promise<WorkspaceInfo> {
+  return getJson<WorkspaceInfo>('/api/workspace');
+}
+
+/** The exact source of one @node function (`GET /api/source/{spec_id}`). */
+export async function fetchSource(specId: string): Promise<SourceInfo> {
+  return getJson<SourceInfo>(`/api/source/${encodeURIComponent(specId)}`);
+}
+
+/** Write an edited @node def back into its real .py file (`PUT /api/source/{spec_id}`). */
+export async function saveSource(specId: string, source: string): Promise<SaveSourceResult> {
+  return putJson<SaveSourceResult>(`/api/source/${encodeURIComponent(specId)}`, { source });
+}
+
+/** Rewrite the module's @main wiring from the graph (`PUT /api/graph`). */
+export async function saveGraph(graph: GraphDoc): Promise<SaveGraphResult> {
+  return putJson<SaveGraphResult>('/api/graph', { graph });
 }
