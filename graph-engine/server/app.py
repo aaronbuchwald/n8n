@@ -39,14 +39,31 @@ def _graph_from(body: dict) -> Graph:
     return Graph.from_dict(raw)
 
 
-def create_app(registry: Optional[NodeRegistry] = None) -> FastAPI:
-    """Build the app over ``registry`` (defaults to the process registry)."""
+def create_app(
+    registry: Optional[NodeRegistry] = None,
+    sample_graph: Optional[Any] = None,
+) -> FastAPI:
+    """Build the app over ``registry`` (defaults to the process registry).
+
+    ``sample_graph`` — an engine ``Graph`` or its JSON dict — is served by
+    ``GET /api/graph`` so a client has something to render. Its node ``type``s
+    must all exist in ``registry`` (``GET /api/specs``). ``None`` → the endpoint
+    replies 404.
+    """
     registry = registry or DEFAULT_REGISTRY
+    # Normalise to the engine graph JSON dict once; accept a Graph or a dict.
+    graph_doc: Optional[dict] = sample_graph.to_dict() if isinstance(sample_graph, Graph) else sample_graph
     app = FastAPI(title="graph-engine", version=SCHEMA_VERSION)
 
     @app.get("/api/specs")
     def get_specs() -> dict:
         return {"version": SCHEMA_VERSION, "specs": registry.specs()}
+
+    @app.get("/api/graph")
+    def get_graph() -> JSONResponse:
+        if graph_doc is None:
+            return JSONResponse(status_code=404, content={"message": "no sample graph is configured"})
+        return JSONResponse(status_code=200, content=graph_doc)
 
     @app.post("/api/graphs/validate")
     def validate(body: dict = Body(...)) -> JSONResponse:

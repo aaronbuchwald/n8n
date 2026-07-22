@@ -4,6 +4,7 @@ The five engine operations, verbatim over HTTP, so any UI drives the *same*
 core:
 
     GET  /api/specs                 -> registry.specs()   (the palette)
+    GET  /api/graph                 -> sample graph JSON  (or 404 if none configured)
     POST /api/graphs/validate       -> bind()             (validate-on-connect)
     POST /api/run                   -> run()
     POST /api/export                -> to_python()

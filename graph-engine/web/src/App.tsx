@@ -1,69 +1,68 @@
-import { useMemo } from 'react';
-import {
-  Background,
-  Controls,
-  MiniMap,
-  ReactFlow,
-  ReactFlowProvider,
-  useEdgesState,
-  useNodesState,
-  type NodeTypes,
-} from '@xyflow/react';
-import '@xyflow/react/dist/style.css';
+import { useEffect, useState } from 'react';
 
-import graphDoc from './fixtures/example.graph.json';
-import nodeSpecs from './fixtures/example.node-specs.json';
-import { buildFlow } from './buildGraph';
-import { SpecNode } from './components/SpecNode';
-import type { GraphDoc, NodeSpecs } from './types';
+import { fetchLiveGraph, type LiveGraph } from './api';
+import { GraphView } from './GraphView';
 
-const nodeTypes: NodeTypes = { specNode: SpecNode };
+type LoadState =
+  | { status: 'loading' }
+  | { status: 'error'; message: string }
+  | { status: 'ready'; data: LiveGraph };
 
 export default function App() {
-  const { nodes: initialNodes, edges: initialEdges } = useMemo(
-    () => buildFlow(graphDoc as GraphDoc, nodeSpecs as NodeSpecs),
-    [],
-  );
+  const [state, setState] = useState<LoadState>({ status: 'loading' });
 
-  // Controlled state so ReactFlow can sync node dimensions back (minimap) and
-  // apply drag position changes. Without change handlers both are inert.
-  const [nodes, , onNodesChange] = useNodesState(initialNodes);
-  const [edges, , onEdgesChange] = useEdgesState(initialEdges);
+  useEffect(() => {
+    let cancelled = false;
+    setState({ status: 'loading' });
+    fetchLiveGraph()
+      .then((data) => {
+        if (!cancelled) setState({ status: 'ready', data });
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          setState({ status: 'error', message: err instanceof Error ? err.message : String(err) });
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
-  const doc = graphDoc as GraphDoc;
+  const graph = state.status === 'ready' ? state.data.graph : null;
+  // Contract version comes from /api/specs (the palette contract), per ADR 0002.
+  const version = state.status === 'ready' ? state.data.version : null;
 
   return (
     <div className="ge-app">
       <header className="ge-topbar">
         <h1 className="ge-topbar__title">graph-engine</h1>
         <span className="ge-topbar__sub">
-          example graph · read-only · contract v{doc.version}
+          live graph · read-only
+          {version ? ` · contract v${version}` : ''}
         </span>
         <span className="ge-topbar__out" data-testid="graph-output-label">
-          output → {doc.output ? `${doc.output.node}.${doc.output.socket}` : 'none'}
+          output → {graph?.output ? `${graph.output.node}.${graph.output.socket}` : 'none'}
         </span>
       </header>
-      <div className="ge-canvas" data-testid="flow-canvas">
-        <ReactFlowProvider>
-          <ReactFlow
-            nodes={nodes}
-            edges={edges}
-            onNodesChange={onNodesChange}
-            onEdgesChange={onEdgesChange}
-            nodeTypes={nodeTypes}
-            colorMode="dark"
-            fitView
-            minZoom={0.1}
-            nodesConnectable={false}
-            edgesFocusable={false}
-            proOptions={{ hideAttribution: true }}
-          >
-            <Background />
-            <MiniMap pannable zoomable />
-            <Controls showInteractive={false} />
-          </ReactFlow>
-        </ReactFlowProvider>
-      </div>
+
+      {state.status === 'loading' && (
+        <div className="ge-status" data-testid="app-loading">
+          <span className="ge-status__spinner" aria-hidden="true" />
+          Loading graph from the server…
+        </div>
+      )}
+
+      {state.status === 'error' && (
+        <div className="ge-status ge-status--error" data-testid="app-error" role="alert">
+          <strong className="ge-status__title">Couldn’t load the graph</strong>
+          <span className="ge-status__detail">{state.message}</span>
+          <span className="ge-status__hint">
+            Check that the API server is running, then reload.
+          </span>
+        </div>
+      )}
+
+      {state.status === 'ready' && <GraphView graph={state.data.graph} specs={state.data.specs} />}
     </div>
   );
 }

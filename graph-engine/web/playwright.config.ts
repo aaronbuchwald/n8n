@@ -6,7 +6,8 @@ import { existsSync } from 'node:fs';
 const PREINSTALLED_CHROMIUM = '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
 const executablePath = existsSync(PREINSTALLED_CHROMIUM) ? PREINSTALLED_CHROMIUM : undefined;
 
-const PORT = 4173;
+const WEB_PORT = 4173;
+const API_PORT = 8000;
 
 export default defineConfig({
   testDir: './tests',
@@ -14,7 +15,7 @@ export default defineConfig({
   reporter: [['list']],
   timeout: 60_000,
   use: {
-    baseURL: `http://127.0.0.1:${PORT}`,
+    baseURL: `http://127.0.0.1:${WEB_PORT}`,
     trace: 'off',
     launchOptions: executablePath ? { executablePath } : {},
   },
@@ -24,12 +25,25 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'] },
     },
   ],
-  // Build then serve the production bundle offline; proves the bundle is
-  // fully self-contained (no CDN, no dev server).
-  webServer: {
-    command: 'pnpm build && pnpm preview',
-    url: `http://127.0.0.1:${PORT}`,
-    reuseExistingServer: !process.env.CI,
-    timeout: 120_000,
-  },
+  // Boot the LIVE stack the app renders from:
+  //  1. the FastAPI server with the minimal demo loaded (specs + sample graph),
+  //  2. the built web bundle via `vite preview`, whose `/api` proxy forwards to
+  //     the server (see vite.config.ts). This proves the render comes from the
+  //     server over HTTP, not baked-in fixtures.
+  webServer: [
+    {
+      // `cwd` is relative to this config's directory (web/) → the graph-engine root.
+      command: `uv run --extra server python -m server --demo --host 127.0.0.1 --port ${API_PORT}`,
+      cwd: '..',
+      url: `http://127.0.0.1:${API_PORT}/api/specs`,
+      reuseExistingServer: !process.env.CI,
+      timeout: 120_000,
+    },
+    {
+      command: 'pnpm build && pnpm preview',
+      url: `http://127.0.0.1:${WEB_PORT}`,
+      reuseExistingServer: !process.env.CI,
+      timeout: 120_000,
+    },
+  ],
 });

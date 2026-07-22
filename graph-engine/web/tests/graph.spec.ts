@@ -2,14 +2,28 @@ import { test, expect } from '@playwright/test';
 
 const NODE_TITLES = ['read_values', 'total', 'average', 'render_summary'];
 
-test('renders the example graph read-only in ReactFlow', async ({ page }) => {
+test('renders the graph fetched live from the API (not fixtures)', async ({ page }) => {
+  // Prove the render is driven by the server: both endpoints must be hit over
+  // HTTP and return 200 before the canvas populates.
+  const specsResponse = page.waitForResponse(
+    (r) => r.url().includes('/api/specs') && r.status() === 200,
+  );
+  const graphResponse = page.waitForResponse(
+    (r) => r.url().includes('/api/graph') && r.status() === 200,
+  );
+
   await page.goto('/');
+  await specsResponse;
+  await graphResponse;
+
+  // The topbar reflects the contract version returned by /api/specs.
+  await expect(page.getByText(/contract v\d+\.\d+\.\d+/)).toBeVisible();
 
   // The custom nodes mount inside the ReactFlow canvas.
   const canvas = page.getByTestId('flow-canvas');
   await expect(canvas).toBeVisible();
 
-  // All four node titles from the example graph are visible.
+  // All four node titles from the live graph are visible.
   for (const title of NODE_TITLES) {
     await expect(
       page.locator('[data-testid="node-title"]', { hasText: new RegExp(`^${title}$`) }),
@@ -19,7 +33,7 @@ test('renders the example graph read-only in ReactFlow', async ({ page }) => {
   // Four nodes total.
   await expect(page.getByTestId('spec-node')).toHaveCount(4);
 
-  // Edges are rendered: the example graph has 4 edges, drawn as SVG paths.
+  // Edges are rendered: the graph has 4 edges, drawn as SVG paths.
   const edgePaths = page.locator('.react-flow__edge-path');
   await expect(edgePaths.first()).toBeVisible();
   expect(await edgePaths.count()).toBe(4);
@@ -46,16 +60,15 @@ test('renders the example graph read-only in ReactFlow', async ({ page }) => {
   );
 
   // The MiniMap renders one rectangle per node only when node dimensions sync
-  // back through onNodesChange (the half-controlled bug rendered zero). Poll:
-  // the minimap re-renders a beat after measurement settles.
+  // back through onNodesChange. Poll: the minimap re-renders a beat after
+  // measurement settles.
   const minimapNodes = page.locator('.react-flow__minimap-node');
   await expect.poll(async () => minimapNodes.count(), { timeout: 10_000 }).toBe(4);
   await expect(minimapNodes.first()).toBeVisible();
 
   await page.screenshot({ path: 'tests/__screenshots__/graph.png', fullPage: false });
 
-  // Nodes are draggable: onNodesChange must apply position changes. Drag one
-  // node and assert its transform actually moves.
+  // Nodes are draggable: onNodesChange must apply position changes.
   const nodeEl = page.locator('.react-flow__node', { hasText: 'total' }).first();
   const box = await nodeEl.boundingBox();
   if (!box) throw new Error('node has no bounding box');
@@ -67,4 +80,19 @@ test('renders the example graph read-only in ReactFlow', async ({ page }) => {
   await expect
     .poll(async () => nodeEl.evaluate((el) => (el as HTMLElement).style.transform))
     .not.toBe(before);
+});
+
+test('shows an error state when the API fails', async ({ page }) => {
+  // Force a server error on the specs endpoint before the app loads.
+  await page.route('**/api/specs', (route) =>
+    route.fulfill({ status: 500, contentType: 'application/json', body: '{"message":"boom"}' }),
+  );
+
+  await page.goto('/');
+
+  // A clear error message, not a blank screen or crashed canvas.
+  const error = page.getByTestId('app-error');
+  await expect(error).toBeVisible();
+  await expect(error).toContainText(/load the graph/i);
+  await expect(page.getByTestId('flow-canvas')).toHaveCount(0);
 });

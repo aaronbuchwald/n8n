@@ -64,6 +64,56 @@ body,
   min-height: 0;
 }
 
+/* ---- loading / error states ---- */
+.ge-status {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 24px;
+  text-align: center;
+  color: var(--ge-muted);
+}
+
+.ge-status__spinner {
+  width: 22px;
+  height: 22px;
+  border: 3px solid var(--ge-node-border);
+  border-top-color: var(--ge-accent);
+  border-radius: 50%;
+  animation: ge-spin 0.8s linear infinite;
+}
+
+@keyframes ge-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.ge-status--error {
+  color: var(--ge-text);
+}
+
+.ge-status__title {
+  font-size: 1.05rem;
+  color: #f2726b;
+}
+
+.ge-status__detail {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85rem;
+  color: var(--ge-muted);
+  max-width: 40rem;
+  word-break: break-word;
+}
+
+.ge-status__hint {
+  font-size: 0.85rem;
+  color: var(--ge-muted);
+}
+
 /* ---- custom node ---- */
 .ge-node {
   min-width: 220px;
