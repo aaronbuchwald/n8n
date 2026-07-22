@@ -25,6 +25,11 @@ import type { GraphDoc, NodeSpecs, SpecNodeData } from './types';
 
 const nodeTypes: NodeTypes = { specNode: SpecNode };
 
+// One framing for every "fit the graph" path (initial frame, canvas resize,
+// the Controls fit button), so they all settle on the same view. Padding is
+// deliberately slim: every point of fit zoom is legibility on a big graph.
+const FIT_VIEW = { padding: 0.1, maxZoom: 1.05 };
+
 function sameSet(a: Set<string>, b: Set<string>): boolean {
   return a.size === b.size && [...a].every((x) => b.has(x));
 }
@@ -54,6 +59,12 @@ function structureKeyOf(nodes: { id: string }[], edges: { id: string }[]): strin
 // horizontally and take soft right-angle turns between layers.
 const defaultEdgeOptions = { type: 'smoothstep' as const, pathOptions: { borderRadius: 14 } };
 
+export interface FocusRequest {
+  nodeId: string;
+  /** Distinguishes repeated requests for the same node. */
+  token: number;
+}
+
 interface GraphViewProps {
   graph: GraphDoc;
   specs: NodeSpecs;
@@ -61,12 +72,26 @@ interface GraphViewProps {
   runOutputs: Record<string, SocketValues> | null;
   // The node the latest run failed at, if any.
   errorNodeId: string | null;
+  // Selection is owned by the caller so panels outside the canvas (results
+  // rows, the app-level Escape handler) can drive it too.
+  selectedNodeId: string | null;
+  onSelectNode: (nodeId: string | null) => void;
+  // A request (e.g. from a run-results row) to select + centre a node.
+  focusRequest: FocusRequest | null;
 }
 
 // mount → nodes measured → final layout applied → graph framed → visible.
 type LayoutPhase = 'measuring' | 'framing' | 'ready';
 
-function GraphCanvas({ graph, specs, runOutputs, errorNodeId }: GraphViewProps) {
+function GraphCanvas({
+  graph,
+  specs,
+  runOutputs,
+  errorNodeId,
+  selectedNodeId,
+  onSelectNode,
+  focusRequest,
+}: GraphViewProps) {
   const { nodes: initialNodes, edges: initialEdges } = useMemo(
     () => buildFlow(graph, specs),
     [graph, specs],
@@ -78,8 +103,9 @@ function GraphCanvas({ graph, specs, runOutputs, errorNodeId }: GraphViewProps) 
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
 
   const nodesInitialized = useNodesInitialized();
-  const { fitView } = useReactFlow();
+  const { fitView, getZoom } = useReactFlow();
   const [phase, setPhase] = useState<LayoutPhase>('measuring');
+  const canvasRef = useRef<HTMLDivElement>(null);
 
   // When the served graph changes after a widget commit + quiet reload, fold the
   // freshly derived node DATA (bound literals, wiring, output flag) onto the
@@ -116,12 +142,16 @@ function GraphCanvas({ graph, specs, runOutputs, errorNodeId }: GraphViewProps) 
   }, [structureKey, initialNodes, initialEdges, setNodes, setEdges]);
 
   // The initial layout uses estimated node sizes. Once ReactFlow has measured
-  // the real DOM sizes, re-run the layout with them, then frame the whole
-  // graph. The canvas stays invisible (CSS keyed on data-layout-ready) until
-  // framing is done, so the user never sees the pre-measurement arrangement.
+  // the real DOM sizes, re-run the layout with them — targeting the actual
+  // canvas aspect so row wrapping keeps the fitted zoom readable — then frame
+  // the whole graph. The canvas stays invisible (CSS keyed on
+  // data-layout-ready) until framing is done, so the user never sees the
+  // pre-measurement arrangement.
   useEffect(() => {
     if (phase !== 'measuring' || !nodesInitialized) return;
-    setNodes((current) => layoutFlowNodes(current, initialEdges));
+    const el = canvasRef.current;
+    const aspect = el && el.clientHeight > 0 ? el.clientWidth / el.clientHeight : undefined;
+    setNodes((current) => layoutFlowNodes(current, initialEdges, aspect));
     setPhase('framing');
   }, [phase, nodesInitialized, setNodes, initialEdges]);
 
@@ -132,7 +162,7 @@ function GraphCanvas({ graph, specs, runOutputs, errorNodeId }: GraphViewProps) 
     let raf2 = 0;
     const raf1 = requestAnimationFrame(() => {
       raf2 = requestAnimationFrame(() => {
-        void fitView({ padding: 0.15, maxZoom: 1.05 }).then(() => setPhase('ready'));
+        void fitView(FIT_VIEW).then(() => setPhase('ready'));
       });
     });
     return () => {
@@ -143,7 +173,6 @@ function GraphCanvas({ graph, specs, runOutputs, errorNodeId }: GraphViewProps) 
 
   // Keep the graph framed when the canvas itself resizes (e.g. the run-results
   // panel opening below it, or the export dock beside it).
-  const canvasRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (phase !== 'ready' || !canvasRef.current) return;
     let first = true;
@@ -152,11 +181,55 @@ function GraphCanvas({ graph, specs, runOutputs, errorNodeId }: GraphViewProps) 
         first = false; // ignore the initial observe callback
         return;
       }
-      requestAnimationFrame(() => void fitView({ padding: 0.15, maxZoom: 1.05 }));
+      requestAnimationFrame(() => void fitView(FIT_VIEW));
     });
     observer.observe(canvasRef.current);
     return () => observer.disconnect();
   }, [phase, fitView]);
+
+  // When a widget editor opens somewhere on the canvas, make sure it is
+  // legible: at fit zoom on a wide graph an editor renders far too small to
+  // use. Detection is DOM-level (a [data-testid="widget-slot"] appearing, or
+  // focus landing inside one) so it needs no signal from the widget files.
+  useEffect(() => {
+    const el = canvasRef.current;
+    if (!el) return;
+    const zoomed = new WeakSet<Element>();
+    const zoomToSlot = (slot: Element) => {
+      if (zoomed.has(slot)) return;
+      zoomed.add(slot);
+      const nodeEl = slot.closest('.react-flow__node');
+      const id = nodeEl?.getAttribute('data-id');
+      if (!id) return;
+      // Already readable — don't yank the viewport out from under the user.
+      if (getZoom() >= 0.85) return;
+      void fitView({ nodes: [{ id }], padding: 0.4, maxZoom: 1, duration: 250 });
+    };
+    const scan = (target: Element) => {
+      if (target.matches('[data-testid="widget-slot"]')) zoomToSlot(target);
+      for (const slot of target.querySelectorAll('[data-testid="widget-slot"]')) {
+        zoomToSlot(slot);
+      }
+    };
+    const observer = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        for (const added of mutation.addedNodes) {
+          if (added instanceof Element) scan(added);
+        }
+      }
+    });
+    observer.observe(el, { childList: true, subtree: true });
+    const onFocusIn = (event: FocusEvent) => {
+      if (!(event.target instanceof Element)) return;
+      const slot = event.target.closest('[data-testid="widget-slot"]');
+      if (slot) zoomToSlot(slot);
+    };
+    el.addEventListener('focusin', onFocusIn);
+    return () => {
+      observer.disconnect();
+      el.removeEventListener('focusin', onFocusIn);
+    };
+  }, [fitView, getZoom]);
 
   // Fold the latest run's outputs + error into each node's data (positions and
   // measured dimensions are preserved — we only patch the result fields).
@@ -172,15 +245,38 @@ function GraphCanvas({ graph, specs, runOutputs, errorNodeId }: GraphViewProps) 
   }, [runOutputs, errorNodeId, setNodes]);
 
   // Clicking a node opens the inspector for it; clicking the pane closes it.
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const onNodeClick: NodeMouseHandler = useCallback((_event, node) => {
-    setSelectedId(node.id);
-  }, []);
-  const onPaneClick = useCallback(() => setSelectedId(null), []);
+  // A click that lands on a widget chip/editor is editing, not inspecting —
+  // let it through without also sliding the inspector over the canvas.
+  const onNodeClick: NodeMouseHandler = useCallback(
+    (event, node) => {
+      if (
+        event.target instanceof Element &&
+        event.target.closest('[data-testid="widget-chip"], [data-testid="widget-slot"]')
+      ) {
+        return;
+      }
+      onSelectNode(node.id);
+    },
+    [onSelectNode],
+  );
+  const onPaneClick = useCallback(() => onSelectNode(null), [onSelectNode]);
+
+  // An outside surface (a run-results row) asked to focus a node: mark it
+  // selected on the canvas and bring it into view at a readable zoom.
+  useEffect(() => {
+    if (!focusRequest) return;
+    const { nodeId } = focusRequest;
+    setNodes((current) =>
+      current.map((n) =>
+        n.selected === (n.id === nodeId) ? n : { ...n, selected: n.id === nodeId },
+      ),
+    );
+    void fitView({ nodes: [{ id: nodeId }], padding: 0.5, maxZoom: 1, duration: 300 });
+  }, [focusRequest, fitView, setNodes]);
 
   const inspected = useMemo(
-    () => (selectedId ? inspectNode(graph, specs, selectedId, runOutputs) : null),
-    [graph, specs, selectedId, runOutputs],
+    () => (selectedNodeId ? inspectNode(graph, specs, selectedNodeId, runOutputs) : null),
+    [graph, specs, selectedNodeId, runOutputs],
   );
 
   return (
@@ -207,14 +303,15 @@ function GraphCanvas({ graph, specs, runOutputs, errorNodeId }: GraphViewProps) 
       >
         <Background variant={BackgroundVariant.Dots} gap={28} size={1.4} />
         <MiniMap pannable zoomable />
-        <Controls showInteractive={false} />
+        {/* Same fit options as the app's own framing, so both fits agree. */}
+        <Controls showInteractive={false} fitViewOptions={FIT_VIEW} />
         {phase === 'ready' && !inspected && (
           <Panel position="top-left" className="ge-hint">
             Select a node to inspect its inputs &amp; outputs
           </Panel>
         )}
       </ReactFlow>
-      {inspected && <NodeInspector node={inspected} onClose={() => setSelectedId(null)} />}
+      {inspected && <NodeInspector node={inspected} onClose={() => onSelectNode(null)} />}
     </div>
   );
 }

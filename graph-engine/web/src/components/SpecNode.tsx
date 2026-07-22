@@ -1,12 +1,12 @@
 import { Handle, Position, type NodeProps, type Node } from '@xyflow/react';
 import type { SpecNodeData } from '../types';
 import { inHandle, outHandle } from '../buildGraph';
-import { previewValue } from '../preview';
+import { previewChip, previewValue } from '../preview';
 import { WidgetSlot } from '../widgets/WidgetSlot';
 
-// A compact per-socket result overlay shown on a node after a run. Truncated so
-// a long value (e.g. a big list) doesn't blow out the card; click the node to
-// see everything in the inspector.
+// A compact per-socket result overlay shown on a node after a run. Structured
+// values summarize by shape ("html · 1.2 KB") instead of dumping raw markup;
+// click the node to see everything in the inspector.
 function ResultChips({ result }: { result: Record<string, unknown> }) {
   const entries = Object.entries(result);
   if (entries.length === 0) return null;
@@ -17,8 +17,8 @@ function ResultChips({ result }: { result: Record<string, unknown> }) {
           <span className="ge-node__result-socket" title={socket}>
             {socket}
           </span>
-          <span className="ge-node__result-value" title={previewValue(value)}>
-            {previewValue(value)}
+          <span className="ge-node__result-value" title={previewValue(value).slice(0, 400)}>
+            {previewChip(value)}
           </span>
         </div>
       ))}
@@ -103,6 +103,13 @@ export function SpecNode({ data }: NodeProps<SpecNode>) {
         <span className="ge-node__title" data-testid="node-title" title={spec.title}>
           {spec.title}
         </span>
+        {/* The graph id is the key the inspector and run-results rows use;
+            surfacing it here gives all three surfaces one visible shared key. */}
+        {id !== spec.title && (
+          <span className="ge-node__id" data-testid="node-id" title={`graph id: ${id}`}>
+            {id}
+          </span>
+        )}
         {isOutput && (
           <span className="ge-node__badge" data-testid="output-badge" title="Graph output socket">
             output

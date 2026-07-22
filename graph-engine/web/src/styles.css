@@ -337,6 +337,19 @@ body,
   font-family: var(--ge-mono);
 }
 
+/* The node's graph id — the key the inspector and results rows refer to. */
+.ge-node__id {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  font-family: var(--ge-mono);
+  color: var(--ge-faint);
+}
+
 .ge-node__badge {
   flex: none;
   font-size: 9px;
@@ -350,16 +363,22 @@ body,
 }
 
 .ge-node__doc {
-  padding: 7px 12px;
+  /* Clamp to two lines; the full docstring lives in the title tooltip and the
+     inspector. -webkit-line-clamp only draws the ellipsis — overflow still
+     clips at the PADDING edge, so a padding-bottom would let a half-cut third
+     line peek through. Instead: no bottom padding (the clip lands exactly on
+     line two), a transparent border for the breathing room, and the 1px
+     separator drawn as a box-shadow just outside the border box. */
+  padding: 7px 12px 0;
   color: var(--ge-muted);
   font-size: 11px;
   line-height: 1.4;
-  border-bottom: 1px solid var(--ge-node-border);
-  /* Clamp to two lines; the full docstring lives in the title tooltip and the
-     inspector. */
+  border-bottom: 7px solid transparent;
+  box-shadow: 0 1px 0 var(--ge-node-border);
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
+  max-height: calc(2.8em + 14px);
   overflow: hidden;
   overflow-wrap: anywhere;
 }
@@ -640,6 +659,11 @@ body,
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.ge-inspector__title-name {
+  color: var(--ge-muted);
+  font-weight: 600;
 }
 
 .ge-inspector__typename {
@@ -954,11 +978,24 @@ body,
   gap: 8px;
 }
 
+/* A real button: clicking a row focuses that node on the canvas. */
 .ge-results__node {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
   border: 1px solid var(--ge-node-border);
   border-radius: 8px;
   padding: 6px 10px;
   background: var(--ge-node-bg);
+  transition: border-color 0.12s ease;
+}
+
+.ge-results__node:hover,
+.ge-results__node:focus-visible {
+  border-color: var(--ge-accent);
 }
 
 .ge-results__node-id {
@@ -969,6 +1006,12 @@ body,
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* The spec title next to the graph id — the label the node cards show. */
+.ge-results__node-title {
+  color: var(--ge-muted);
+  font-weight: 600;
 }
 
 .ge-results__socket {
