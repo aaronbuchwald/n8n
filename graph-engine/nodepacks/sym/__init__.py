@@ -27,7 +27,7 @@ import linecache
 import re
 import textwrap
 
-from engine import node
+from engine import node, Widget
 
 # -- SymPy: expressions, solving, numeric evaluation ------------------------
 
@@ -48,7 +48,7 @@ def _sympify(expression):
     return expression
 
 
-@node
+@node(widgets={"text": Widget("math", syntax="sympy")})
 def parse_expr(text: str = "x") -> object:
     """Parse ``text`` into a SymPy expression (or equation).
 

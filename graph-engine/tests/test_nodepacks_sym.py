@@ -79,6 +79,15 @@ def test_every_node_has_a_registered_spec():
     assert [o["name"] for o in typeset["outputs"]] == ["latex", "results"]
 
 
+def test_parse_expr_declares_math_widget():
+    """parse_expr's 'text' input declares the math widget (ADR 0005 B)."""
+    parse_expr_spec = next(n.spec for n in sym.NODES if n.spec["id"] == "sym.parse_expr")
+    text_input = next(inp for inp in parse_expr_spec["inputs"] if inp["name"] == "text")
+    assert text_input["widget"] is not None
+    assert text_input["widget"]["kind"] == "math"
+    assert text_input["widget"].get("config", {}).get("syntax") == "sympy"
+
+
 # -- dependency-free nodes ---------------------------------------------------
 
 
