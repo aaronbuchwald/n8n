@@ -1,0 +1,9 @@
+# Nix / direnv
+.direnv/
+result
+result-*
+
+# uv / Python virtualenv
+.venv/
+__pycache__/
+*.pyc
