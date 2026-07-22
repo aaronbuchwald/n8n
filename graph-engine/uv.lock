@@ -107,10 +107,22 @@ version = "0.1.0"
 source = { editable = "." }
 
 [package.optional-dependencies]
+demo = [
+    { name = "fastapi" },
+    { name = "forallpeople" },
+    { name = "handcalcs" },
+    { name = "latex2mathml" },
+    { name = "sympy" },
+    { name = "uvicorn" },
+]
 dev = [
     { name = "fastapi" },
+    { name = "forallpeople" },
+    { name = "handcalcs" },
     { name = "httpx" },
+    { name = "latex2mathml" },
     { name = "pytest" },
+    { name = "sympy" },
     { name = "uvicorn" },
 ]
 server = [
@@ -128,16 +140,21 @@ sym = [
 requires-dist = [
     { name = "fastapi", marker = "extra == 'dev'", specifier = ">=0.110" },
     { name = "fastapi", marker = "extra == 'server'", specifier = ">=0.110" },
+    { name = "forallpeople", marker = "extra == 'dev'", specifier = ">=2.6,<3" },
     { name = "forallpeople", marker = "extra == 'sym'", specifier = ">=2.6,<3" },
+    { name = "graph-engine", extras = ["server", "sym"], marker = "extra == 'demo'" },
+    { name = "handcalcs", marker = "extra == 'dev'", specifier = ">=1.9,<2" },
     { name = "handcalcs", marker = "extra == 'sym'", specifier = ">=1.9,<2" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27" },
+    { name = "latex2mathml", marker = "extra == 'dev'", specifier = ">=3.77,<4" },
     { name = "latex2mathml", marker = "extra == 'sym'", specifier = ">=3.77,<4" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
+    { name = "sympy", marker = "extra == 'dev'", specifier = ">=1.13,<2" },
     { name = "sympy", marker = "extra == 'sym'", specifier = ">=1.13,<2" },
     { name = "uvicorn", marker = "extra == 'dev'", specifier = ">=0.29" },
     { name = "uvicorn", marker = "extra == 'server'", specifier = ">=0.29" },
 ]
-provides-extras = ["server", "sym", "dev"]
+provides-extras = ["server", "sym", "demo", "dev"]
 
 [[package]]
 name = "h11"

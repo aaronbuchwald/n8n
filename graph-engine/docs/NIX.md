@@ -165,7 +165,7 @@ pnpm typecheck      # tsc -b --noEmit
 
 ```bash
 cd graph-engine
-uv run --extra server python -m server --demo
+uv run --extra demo python -m server --demo
 # → serves specs + sample graph + the built SPA at http://127.0.0.1:8000/
 ```
 

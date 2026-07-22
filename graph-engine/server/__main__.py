@@ -1,4 +1,7 @@
-"""Run the server:  uv run --extra server python -m server [--library pkg.mod] [--port 8000]
+"""Run the server:  uv run --extra demo python -m server [--library pkg.mod] [--port 8000]
+
+(``--extra demo`` covers the default showcase; ``--extra server`` is enough only
+with ``--no-demo`` or a dep-free ``--library``.)
 
 ``--library`` imports a module so its ``@node`` registrations populate the
 default registry (the fuller loader is stream A3). Without it, the palette is
@@ -8,8 +11,11 @@ whatever has already been registered in-process.
 real palette **and** a sample graph that surfaces every editable widget kind
 (math, table-recipe, text, number) at ``GET /api/graph``. Pass ``--no-demo`` for
 an empty registry, or ``--library`` to load your own types. Running the showcase
-needs the ``sym`` extra (SymPy et al.):
-``uv run --extra sym --extra server python -m server --demo``.
+executes ``sym.*`` nodes, so it needs those deps — use the ``demo`` extra, which
+bundles the server + sym deps in one:
+``uv run --extra demo python -m server --demo``.
+(Without the sym deps the server still starts and lists specs — lazy imports —
+but a run fails with ``ModuleNotFoundError: No module named 'sympy'``.)
 
 **Enter to open:** when stdin is a TTY, the server prints a hint and — on the
 first Enter — opens the app view (``http://{host}:{port}/``) in your browser.
