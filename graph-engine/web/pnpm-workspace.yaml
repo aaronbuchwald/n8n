@@ -5,5 +5,12 @@ packages:
   - '.'
 
 # esbuild ships a prebuilt platform binary via a postinstall script; allow it.
+# pnpm renamed this setting between majors: pnpm 11 reads `allowBuilds` (a map)
+# and dropped `onlyBuiltDependencies`; pnpm 10 reads `onlyBuiltDependencies` (a
+# list). Both keys are declared so the build works on either major without a
+# `pnpm approve-builds` prompt. pnpm 11 also defaults `strictDepBuilds: true`,
+# which turns an un-allowed build script into a hard error, so this is required.
+allowBuilds:
+  esbuild: true
 onlyBuiltDependencies:
   - esbuild
