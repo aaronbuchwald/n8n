@@ -17,19 +17,12 @@ Pure standard library. Run directly to execute + print the exported Python::
 from __future__ import annotations
 
 import csv
-import sys
 from pathlib import Path
+
+from engine import main, node
 
 HERE = Path(__file__).resolve().parent
 CSV_PATH = HERE / "readings.csv"
-
-# Make the engine importable when this file is run directly (package at the
-# graph-engine/ root, two levels up).
-_ENGINE_ROOT = HERE.parents[1]
-if str(_ENGINE_ROOT) not in sys.path:
-    sys.path.insert(0, str(_ENGINE_ROOT))
-
-from engine import main, node
 
 
 # -- nodes -----------------------------------------------------------------

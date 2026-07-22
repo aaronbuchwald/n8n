@@ -13,12 +13,16 @@ dev = [
     "pytest>=8.0",
 ]
 
-[tool.pytest.ini_options]
-# `engine` from ".", the minimal example module from "examples/minimal".
-# Fully self-contained — no reference to any other project.
-pythonpath = [".", "examples/minimal"]
-testpaths = ["tests"]
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
-[tool.uv]
-# Imported from source; nothing to build/install as a wheel.
-package = false
+[tool.hatch.build.targets.wheel]
+# The engine is a real, installable package, so `import engine` works anywhere
+# (examples, server, node packs) without any sys.path manipulation.
+packages = ["engine"]
+
+[tool.pytest.ini_options]
+# `engine` is installed into the venv; only the example module needs a path.
+pythonpath = ["examples/minimal"]
+testpaths = ["tests"]
