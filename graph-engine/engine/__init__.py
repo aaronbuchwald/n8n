@@ -8,6 +8,8 @@ Entry points:
   reference-linked :class:`~engine.bind.BoundGraph` (the one string→object step).
 * :func:`run` — execute a graph (binds it first).
 * :func:`to_python` — emit a flat, runnable Python script from a graph.
+* :func:`to_composite` / :func:`from_composite` — the Graph ⟷ authoring-module
+  bijection (ADR 0004): emit/parse the ``@main`` wiring composite.
 
 Graphs are authored as ordinary Python with the decorator + tracing layer
 (:func:`node`, :func:`graph`/:func:`main`) — calling a node inside a composite
@@ -49,6 +51,7 @@ from .errors import (
 )
 from .execute import ExecutionResult, run
 from .emit import to_python
+from .composite import from_composite, to_composite
 from .graph import Edge, Graph, Node
 from .ordering import topological_order, topological_sort
 from .registry import DEFAULT_REGISTRY, NodeRegistry, RegisteredNode
@@ -70,6 +73,8 @@ __all__ = [
     "bind",
     "run",
     "to_python",
+    "to_composite",
+    "from_composite",
     # authoring (decorators + tracing)
     "node",
     "graph",
