@@ -1,23 +1,25 @@
-"""``run(graph)`` — execute a graph by a topological sweep.
+"""``run(graph)`` — bind a graph, then execute it in dependency order.
 
-For each node in dependency order we gather its inputs (widget literals for
-unconnected sockets, upstream values for connected ones), call the node's
-callable, and store its outputs. Multi-output nodes return a ``dict`` keyed by
-their socket names; single-output nodes contribute their whole return value on
-the ``output`` socket. Parents always resolve before children, so every input
-is available when a node runs — the same guarantee Nodezator's lazy retry gives.
+``run`` first :func:`~engine.bind.bind`s the graph (all structural errors surface
+there, before anything executes), then sweeps the bound nodes in topological
+order. For each node it gathers inputs by reference — widget literals plus the
+resolved value of each wired upstream socket — invokes the callable respecting
+its parameter kinds (positional-only params are passed positionally), and stores
+its outputs. A failure inside a node's code is wrapped in
+:class:`~engine.errors.NodeExecutionError` carrying the node id.
 """
 
 from __future__ import annotations
 
+import inspect
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
-from .errors import GraphError
+from .bind import BoundGraph, BoundNode, bind
+from .errors import GraphError, NodeExecutionError
 from .graph import Graph
-from .ordering import topological_order
-from .registry import DEFAULT_REGISTRY, NodeRegistry
-from .spec import is_multi_output
+from .registry import NodeRegistry
+from .spec import DEFAULT_OUTPUT, is_multi_output
 
 
 @dataclass
@@ -34,59 +36,79 @@ class ExecutionResult:
     returns: dict[str, Any]
     order: list[str]
 
-    def value(self, node_id: str, socket: str = "output") -> Any:
+    def value(self, node_id: str, socket: str = DEFAULT_OUTPUT) -> Any:
         """Convenience accessor for a single output socket's value."""
         return self.outputs[node_id][socket]
 
 
-def run(graph: Graph, registry: Optional[NodeRegistry] = None) -> ExecutionResult:
-    """Execute ``graph`` and return an :class:`ExecutionResult`.
+def _invoke(fn: Any, provided: dict[str, Any]) -> Any:
+    """Call ``fn`` with ``provided`` values, honouring parameter kinds.
 
-    Args:
-        graph: the graph to run.
-        registry: node-type registry; defaults to
-            :data:`engine.registry.DEFAULT_REGISTRY`.
+    Positional-only params are passed positionally (filling gaps with their
+    defaults); everything else is passed by keyword.
     """
-    registry = registry or DEFAULT_REGISTRY
-    order = topological_order(graph)
+    params = list(inspect.signature(fn).parameters.values())
+    pos_only = [p for p in params if p.kind == p.POSITIONAL_ONLY]
+
+    args: list[Any] = []
+    if pos_only:
+        supplied = [i for i, p in enumerate(pos_only) if p.name in provided]
+        last = max(supplied) if supplied else -1
+        for i in range(last + 1):
+            p = pos_only[i]
+            args.append(provided[p.name] if p.name in provided else p.default)
+
+    kwargs = {
+        p.name: provided[p.name]
+        for p in params
+        if p.kind != p.POSITIONAL_ONLY and p.name in provided
+    }
+    return fn(*args, **kwargs)
+
+
+def _store_outputs(bound: BoundNode, result: Any, outputs: dict[str, dict[str, Any]]) -> None:
+    spec = bound.spec
+    if is_multi_output(spec):
+        if not isinstance(result, dict):
+            raise GraphError(
+                f"node {bound.id!r} ({bound.type}) declares outputs "
+                f"{[o['name'] for o in spec['outputs']]} but returned "
+                f"{type(result).__name__}, not a dict keyed by those names"
+            )
+        socket_values = {}
+        for out in spec["outputs"]:
+            if out["name"] not in result:
+                raise GraphError(
+                    f"node {bound.id!r} ({bound.type}) is missing declared output "
+                    f"{out['name']!r} in its returned dict"
+                )
+            socket_values[out["name"]] = result[out["name"]]
+        outputs[bound.id] = socket_values
+    else:
+        outputs[bound.id] = {spec["outputs"][0]["name"]: result}
+
+
+def run(
+    graph: Union[Graph, BoundGraph],
+    registry: Optional[NodeRegistry] = None,
+) -> ExecutionResult:
+    """Execute ``graph`` (a :class:`Graph` or a pre-:func:`bind`ed graph)."""
+    bound = graph if isinstance(graph, BoundGraph) else bind(graph, registry)
 
     outputs: dict[str, dict[str, Any]] = {}
     returns: dict[str, Any] = {}
 
-    for node_id in order:
-        node = graph.node(node_id)
-        entry = registry.get(node.type)
-        spec = entry.spec
+    for node in bound.nodes:
+        provided = dict(node.literals)
+        for param, (source, socket) in node.wired.items():
+            provided[param] = outputs[source.id][socket]
 
-        # Start from widget literals, then let connected edges override.
-        kwargs: dict[str, Any] = dict(node.inputs)
-        for edge in graph.incoming(node_id):
-            source_outputs = outputs[edge.source] # doesn't this mean that we will always take the source outputs by stringified key
-            # how would this deal with collisions? it seems like real instances that link a full node type directly would be much better.
-            if edge.source_output not in source_outputs: # this type of error should be detectable as missing before running, not during
-                raise GraphError(
-                    f"node {node_id!r} input {edge.target_input!r} is wired to "
-                    f"{edge.source!r}.{edge.source_output!r}, which is not an "
-                    f"output of that node"
-                )
-            kwargs[edge.target_input] = source_outputs[edge.source_output]
+        try:
+            result = _invoke(node.entry.fn, provided)
+        except Exception as exc:  # noqa: BLE001 - re-raised as NodeExecutionError
+            raise NodeExecutionError(node.id, node.type, exc) from exc
 
-        result = entry.fn(**kwargs) # do we only support kwargs and not args here? That seems wrong.
-        returns[node_id] = result
+        returns[node.id] = result
+        _store_outputs(node, result, outputs)
 
-        if is_multi_output(spec):
-            if not isinstance(result, dict):
-                raise GraphError(
-                    f"node {node_id!r} ({node.type}) declares multiple outputs "
-                    f"but returned {type(result).__name__}, not a dict"
-                )
-            outputs[node_id] = { # it seems you can only read an output via one edge.source name above
-                # but you can't read a nested property of the output, which is not great. This makes it
-                # unclear to me how if you are returning multiple outputs, you'd connect just one of those
-                # outputs to a successive node?
-                out["name"]: result[out["name"]] for out in spec["outputs"]
-            }
-        else:
-            outputs[node_id] = {spec["outputs"][0]["name"]: result}
-
-    return ExecutionResult(outputs=outputs, returns=returns, order=order)
+    return ExecutionResult(outputs=outputs, returns=returns, order=[n.id for n in bound.nodes])

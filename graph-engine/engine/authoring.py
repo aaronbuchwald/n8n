@@ -23,13 +23,13 @@ graph:
 
 Two node flavours, one model:
 
-* **primitive** (``@node``) — an opaque callable. Under a trace it records a
-  single node and returns a :class:`NodeHandle`; called normally it just runs.
+* **primitive** (``@node``) — an opaque callable, registered by its
+  collision-proof ``module.qualname`` id. Under a trace it records a single node
+  and returns a :class:`NodeHandle`; called normally it just runs.
 * **composite** (``@graph`` / ``@main``) — its body is other nodes. Under a
-  trace it is **inlined** (its body runs, recording the child nodes), so the
-  resulting :class:`~engine.graph.Graph` contains only primitives — `run` and
-  `to_python` never see a composite. ``@main`` is just ``@graph(entry=True)``:
-  the entry flag marks the default view, nothing more.
+  trace it is **inlined**, so the resulting :class:`~engine.graph.Graph`
+  contains only primitives. ``@main`` is ``@graph(entry=True)``: the entry flag
+  marks the default view, nothing more.
 
 Imperative logic (loops, branches, mutation) lives *inside* a primitive body;
 composites are pure wiring. Branching on a traced value raises
@@ -60,8 +60,7 @@ class NodeHandle:
 
     Attribute/item access selects a named output socket of a multi-output node
     (``fields.force_kN`` / ``fields["force_kN"]``). Using a handle where a real
-    value is needed (``if h:``, ``for x in h``) raises — that's the dataflow
-    boundary.
+    value is needed (``if h:``, ``for x in h``) raises — the dataflow boundary.
     """
 
     __slots__ = ("node_id", "socket")
@@ -100,21 +99,23 @@ class _TraceState:
         self.graph = Graph()
         self._counts: dict[str, int] = {}
 
-    def add_node(self, type_name: str, inputs: dict[str, Any]) -> str:
-        n = self._counts.get(type_name, 0) + 1
-        self._counts[type_name] = n
-        node_id = type_name if n == 1 else f"{type_name}_{n}"
-        self.graph.add(node_id, type_name, inputs=inputs)
+    def add_node(self, short_name: str, type_id: str, inputs: dict[str, Any]) -> str:
+        n = self._counts.get(short_name, 0) + 1
+        self._counts[short_name] = n
+        node_id = short_name if n == 1 else f"{short_name}_{n}"
+        self.graph.add(node_id, type_id, inputs=inputs)
         return node_id
 
 
 class NodePrimitive:
     """Wrapper returned by ``@node``. Records under trace, runs when eager."""
 
-    def __init__(self, fn: Callable[..., Any], name: str, spec: dict) -> None:
+    def __init__(self, fn: Callable[..., Any], entry) -> None:
         self.fn = fn
-        self.name = name
-        self.spec = spec
+        self.entry = entry
+        self.id = entry.id
+        self.name = entry.name
+        self.spec = entry.spec
         functools.update_wrapper(self, fn)
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
@@ -131,15 +132,14 @@ class NodePrimitive:
             else:
                 literals[pname] = value
 
-        node_id = state.add_node(self.name, literals)
+        node_id = state.add_node(self.name, self.id, literals)
         for pname, handle in edges:
-            source_socket = handle.socket
-            if source_socket is None:
+            if handle.socket is None:
                 raise TracingError(
                     f"node {handle.node_id!r} has multiple outputs — pick one "
                     f"(e.g. handle.<socket>) before wiring it into {self.name!r}"
                 )
-            state.graph.connect(handle.node_id, source_socket, node_id, pname)
+            state.graph.connect(handle.node_id, handle.socket, node_id, pname)
 
         outputs = self.spec["outputs"]
         socket = outputs[0]["name"] if len(outputs) == 1 else None
@@ -155,8 +155,7 @@ class Composite:
         functools.update_wrapper(self, fn)
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
-        # Whether eager or nested inside another trace, run the body: eager it
-        # computes for real; under a trace the child node calls record + inline.
+        # Eager it computes for real; under a trace the child calls record.
         return self.fn(*args, **kwargs)
 
     def to_graph(self, **inputs: Any) -> Graph:
@@ -170,40 +169,27 @@ def node(
     name: Optional[str] = None,
     title: Optional[str] = None,
     outputs: Optional[list] = None,
-    third_party_import: Optional[str] = None,
-    stdlib_import: Optional[str] = None,
     registry: Optional[NodeRegistry] = None,
+    replace: bool = False,
 ) -> Any:
     """Decorate a function as a primitive node type (registers + introspects).
 
-    If ``third_party_import`` is omitted it defaults to
-    ``from <module> import <name>`` so exported Python resolves the callable.
+    The type id is ``module.qualname`` (collision-proof); ``outputs=[...]``
+    declares named output sockets (default: one ``result`` socket).
     """
 
     def wrap(target: Callable[..., Any]) -> NodePrimitive:
         reg = registry or DEFAULT_REGISTRY
-        resolved = name or target.__name__
-        import_line = third_party_import
-        if import_line is None and stdlib_import is None:
-            import_line = f"from {target.__module__} import {target.__name__}"
-        reg.register(
-            target,
-            name=resolved,
-            title=title,
-            outputs=outputs,
-            third_party_import=import_line,
-            stdlib_import=stdlib_import,
+        entry = reg.register(
+            target, name=name, title=title, outputs=outputs, replace=replace
         )
-        return NodePrimitive(target, resolved, reg.spec(resolved))
+        return NodePrimitive(target, entry)
 
     return wrap if fn is None else wrap(fn)
 
 
 def graph(fn: Optional[Callable[..., Any]] = None, *, entry: bool = False) -> Any:
-    """Decorate a composition function as a composite node.
-
-    A composite's body wires other nodes; :meth:`Composite.to_graph` traces it.
-    """
+    """Decorate a composition function as a composite node."""
 
     def wrap(target: Callable[..., Any]) -> Composite:
         return Composite(target, entry=entry)
@@ -219,10 +205,11 @@ def main(fn: Optional[Callable[..., Any]] = None) -> Any:
 def trace(composite: Composite, **inputs: Any) -> Graph:
     """Run ``composite``'s body under trace and return the built graph.
 
-    The returned graph carries a non-serialised ``output_id`` attribute naming
-    the node whose value the composite returned (``None`` if it returned a
-    non-handle). Nested composites are inlined, so the graph is all primitives.
+    The graph's ``output`` records which socket the composite returned. Nested
+    composites are inlined, so the graph is all primitives. Save/restore of the
+    trace state makes tracing reentrant (a composite may build a subgraph).
     """
+    previous = _current()
     state = _TraceState()
     _state.current = state
     try:
@@ -231,8 +218,9 @@ def trace(composite: Composite, **inputs: Any) -> Graph:
         bound.apply_defaults()
         result = composite.fn(*bound.args, **bound.kwargs)
     finally:
-        _state.current = None
+        _state.current = previous
 
     built = state.graph
-    built.output_id = result.node_id if isinstance(result, NodeHandle) else None
+    if isinstance(result, NodeHandle) and result.socket is not None:
+        built.output = {"node": result.node_id, "socket": result.socket}
     return built

@@ -3,14 +3,17 @@
 This is the introspection half of Nodezator's model, extracted so any front-end
 (pygame today, ReactFlow later) can render a node from data alone:
 
-* **parameters -> input sockets** (with a widget derived from type + default),
-* **return annotation -> output socket(s)** (a list-of-dicts annotation means
-  *multiple named outputs*, exactly like Nodezator),
-* **docstring -> the node's on-canvas documentation**.
+* **parameters -> input sockets** (with a widget derived from type + default,
+  and the parameter *kind* recorded so positional-only params still work),
+* **return value -> output socket(s)** — one ``result`` socket by default; pass
+  ``outputs=[...]`` to declare several named sockets (the function then returns a
+  dict keyed by those names),
+* **docstring -> the node's on-canvas documentation**,
+* **module + qualname -> a structured, collision-proof identity** (two functions
+  named ``total`` from different packages get distinct ids).
 
-The result is a JSON-serialisable ``dict`` conforming to the frozen node-spec
-schema in :mod:`engine.schema`. It carries no framework objects, so it survives
-a round-trip through JSON untouched.
+The result is a JSON-serialisable ``dict`` conforming to the node-spec schema in
+:mod:`engine.schema`.
 """
 
 from __future__ import annotations
@@ -18,9 +21,10 @@ from __future__ import annotations
 import inspect
 from typing import Any, Callable, Optional
 
-# The single, default output-socket name used when a function has one plain
-# return value (no list-of-dicts multi-output annotation).
-DEFAULT_OUTPUT = "output"
+from .errors import EngineError
+
+# Default output-socket name when a function has one plain return value.
+DEFAULT_OUTPUT = "result"
 
 # Python scalar types that render as an editable widget when a socket is left
 # unconnected. Anything else (list, dict, custom classes) must be wired.
@@ -31,15 +35,18 @@ _WIDGET_BY_TYPE = {
     "bool": {"kind": "checkbox"},
 }
 
+# Parameter kinds we expose as input sockets, mapped to their spec label.
+_KIND_LABEL = {
+    inspect.Parameter.POSITIONAL_ONLY: "positionalOnly",
+    inspect.Parameter.POSITIONAL_OR_KEYWORD: "positionalOrKeyword",
+    inspect.Parameter.KEYWORD_ONLY: "keywordOnly",
+}
+
 _JSON_SCALARS = (str, int, float, bool, type(None))
 
 
 def _type_name(annotation: Any) -> Optional[str]:
-    """Best-effort, JSON-safe name for a type annotation.
-
-    Handles real types (``float`` -> ``"float"``), string forward-refs
-    (``"si.Physical"`` -> ``"si.Physical"``) and the ``empty`` sentinels.
-    """
+    """Best-effort, JSON-safe name for a type annotation."""
     if annotation is inspect.Parameter.empty or annotation is inspect.Signature.empty:
         return None
     if isinstance(annotation, str):
@@ -50,11 +57,6 @@ def _type_name(annotation: Any) -> Optional[str]:
 
 
 def _jsonify_default(value: Any) -> tuple[Any, Optional[str]]:
-    """Split a default into (json_value, repr_fallback).
-
-    JSON scalars pass through as-is; anything else is represented by its
-    ``repr()`` so the spec stays serialisable without losing information.
-    """
     if isinstance(value, _JSON_SCALARS):
         return value, None
     return None, repr(value)
@@ -76,6 +78,7 @@ def _input_spec(param: inspect.Parameter) -> dict:
     entry: dict[str, Any] = {
         "name": param.name,
         "type": type_name or "Any",
+        "kind": _KIND_LABEL[param.kind],
         "required": required,
         "default": default,
         "widget": _widget_for(type_name),
@@ -85,24 +88,26 @@ def _input_spec(param: inspect.Parameter) -> dict:
     return entry
 
 
-def _outputs_from_return(return_annotation: Any) -> list[dict]:
-    """Derive output sockets from a return annotation.
+def _output_specs(outputs: Optional[list], return_annotation: Any) -> list[dict]:
+    """Derive output sockets.
 
-    A ``list`` annotation (list-of-dicts, each with a ``name``) declares
-    multiple named outputs — Nodezator's multi-output convention. Anything else
-    is a single output socket named :data:`DEFAULT_OUTPUT`.
+    With ``outputs`` given: those named sockets (a multi-socket node returns a
+    dict keyed by the names). Without: a single :data:`DEFAULT_OUTPUT` socket
+    carrying the whole return value — no special-casing of dict returns, and no
+    magic from the return annotation.
     """
-    if isinstance(return_annotation, list):
-        outputs = []
-        for item in return_annotation:
-            if not isinstance(item, dict) or "name" not in item:
-                raise ValueError(
-                    "multi-output return annotation must be a list of dicts "
-                    "each carrying a 'name' key"
+    if outputs is not None:
+        result = []
+        for item in outputs:
+            if isinstance(item, str):
+                result.append({"name": item, "type": "Any"})
+            else:
+                result.append(
+                    {"name": item["name"], "type": _type_name(item.get("type")) or "Any"}
                 )
-            item_type = _type_name(item["type"]) if "type" in item else None
-            outputs.append({"name": item["name"], "type": item_type or "Any"})
-        return outputs
+        if not result:
+            raise EngineError("outputs=[] is not valid; omit it for a single output")
+        return result
     return [{"name": DEFAULT_OUTPUT, "type": _type_name(return_annotation) or "Any"}]
 
 
@@ -112,62 +117,50 @@ def node_spec(
     name: Optional[str] = None,
     title: Optional[str] = None,
     outputs: Optional[list] = None,
-    imports: Optional[dict] = None,
+    module: Optional[str] = None,
+    qualname: Optional[str] = None,
 ) -> dict:
     """Introspect ``fn`` into a node spec (see module docstring).
 
     Args:
-        fn: the callable a node wraps (Nodezator's ``main_callable``).
-        name: registry key for the node type; defaults to ``fn.__name__``.
+        fn: the callable a node wraps.
+        name: short display name; defaults to ``fn.__name__``.
         title: human label; defaults to ``name``.
-        outputs: explicit output sockets, overriding return-annotation
-            inference. Use for functions that return a ``dict`` but declare a
-            plain ``-> dict`` (e.g. ``render_stress_check``): pass
-            ``["latex", "utilisation", "summary"]`` or a list of
-            ``{"name": ..., "type": ...}`` dicts to expose the keys as sockets.
-        imports: ``{"stdlib": str|None, "thirdParty": str|None}`` import lines
-            injected into exported Python so the generated script resolves the
-            callable (Nodezator's ``third_party_import_text``).
+        outputs: explicit output sockets (names or ``{"name","type"}`` dicts);
+            >1 makes a multi-output node whose callable returns a keyed dict.
+        module / qualname: override the identity (defaults to ``fn.__module__`` /
+            ``fn.__qualname__``); together they form the collision-proof id.
 
-    Returns:
-        A JSON-serialisable node-spec ``dict`` (frozen schema in
-        :mod:`engine.schema`).
+    Raises:
+        EngineError: the callable uses ``*args``/``**kwargs`` (not addressable as
+            named sockets).
     """
     signature = inspect.signature(fn)
-    resolved_name = name or fn.__name__
+    short_name = name or fn.__name__
+    module = module or fn.__module__
+    qualname = qualname or fn.__qualname__
 
-    inputs = [
-        _input_spec(param)
-        for param in signature.parameters.values()
-        if param.kind
-        in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
-    ]
+    inputs = []
+    for param in signature.parameters.values():
+        if param.kind in (param.VAR_POSITIONAL, param.VAR_KEYWORD):
+            raise EngineError(
+                f"{short_name!r} uses *args/**kwargs, which cannot be named "
+                f"input sockets; wrap it in a fixed-signature function"
+            )
+        inputs.append(_input_spec(param))
 
-    if outputs is not None:
-        output_specs = [
-            {"name": o, "type": "Any"}
-            if isinstance(o, str)
-            else {"name": o["name"], "type": _type_name(o.get("type")) if "type" in o else "Any"}
-            for o in outputs
-        ]
-    else:
-        output_specs = _outputs_from_return(signature.return_annotation)
-
-    imports = imports or {}
     return {
-        "name": resolved_name,
-        "title": title or resolved_name,
-        "callName": fn.__name__,
+        "id": f"{module}.{qualname}",
+        "name": short_name,
+        "title": title or short_name,
+        "module": module,
+        "qualname": qualname,
         "doc": inspect.getdoc(fn) or "",
         "inputs": inputs,
-        "outputs": output_specs,
-        "imports": {
-            "stdlib": imports.get("stdlib"),
-            "thirdParty": imports.get("thirdParty"),
-        },
+        "outputs": _output_specs(outputs, signature.return_annotation),
     }
 
 
 def is_multi_output(spec: dict) -> bool:
-    """True when a node has >1 output socket, i.e. it returns a keyed dict."""
+    """True when a node has >1 output socket (its callable returns a keyed dict)."""
     return len(spec["outputs"]) > 1

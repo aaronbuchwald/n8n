@@ -1,10 +1,15 @@
-"""``NodeRegistry`` — maps node-type names to callables + their specs.
+"""``NodeRegistry`` — maps node-type **ids** to callables + their specs.
 
-A :class:`~engine.graph.Graph` stores only *type names* (plain data). To run or
-export it, something must resolve each name to the real callable and its
-:func:`~engine.spec.node_spec`. That binding lives here, kept separate from the
-graph so the same graph JSON can be driven by different registries (e.g. a mock
-RFEM node swapped for the real one — a one-line registration change).
+A node type's canonical id is its ``module.qualname`` (from
+:func:`engine.spec.node_spec`), not its bare name. So two functions both called
+``total`` in different packages register as ``pkg_a.total`` and ``pkg_b.total``
+and coexist — no silent clobber, no bogus collision error. Only registering the
+*same* id twice with a *different* callable is an error (opt out with
+``replace=True`` for notebook/REPL reloads).
+
+A :class:`~engine.graph.Graph` stores only ids (plain data); the registry is
+what resolves an id to the real callable + spec, kept separate so the same graph
+can be driven by different registries.
 """
 
 from __future__ import annotations
@@ -12,24 +17,25 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
-from .errors import UnknownNodeType
+from .errors import DuplicateNodeType, UnknownNodeType
 from .spec import node_spec
 
 
 @dataclass(frozen=True)
 class RegisteredNode:
-    """A node type: its name, the callable, and the introspected spec."""
+    """A node type: canonical id, short name, the callable, and its spec."""
 
+    id: str
     name: str
     fn: Callable[..., Any]
     spec: dict
 
 
 class NodeRegistry:
-    """A collection of node types keyed by name."""
+    """A collection of node types keyed by canonical id."""
 
     def __init__(self) -> None:
-        self._entries: dict[str, RegisteredNode] = {}
+        self._by_id: dict[str, RegisteredNode] = {}
 
     def register(
         self,
@@ -38,58 +44,64 @@ class NodeRegistry:
         name: Optional[str] = None,
         title: Optional[str] = None,
         outputs: Optional[list] = None,
-        third_party_import: Optional[str] = None,
-        stdlib_import: Optional[str] = None,
-    ) -> Callable[..., Any]:
-        """Register ``fn`` as a node type and return it (usable as a decorator).
+        module: Optional[str] = None,
+        qualname: Optional[str] = None,
+        replace: bool = False,
+    ) -> RegisteredNode:
+        """Register ``fn`` as a node type; return its :class:`RegisteredNode`.
 
-        ``outputs`` overrides output-socket inference for functions that return a
-        keyed ``dict`` but only declare ``-> dict`` (see :func:`engine.spec.node_spec`).
-        ``third_party_import`` / ``stdlib_import`` are the import lines emitted
-        into exported Python so the generated script is self-contained.
+        Raises:
+            DuplicateNodeType: the id is already bound to a *different* callable
+                and ``replace`` is false.
         """
-        resolved = name or fn.__name__
         spec = node_spec(
-            fn,
-            name=resolved,
-            title=title,
-            outputs=outputs,
-            imports={"stdlib": stdlib_import, "thirdParty": third_party_import},
+            fn, name=name, title=title, outputs=outputs, module=module, qualname=qualname
         )
-        self._entries[resolved] = RegisteredNode(name=resolved, fn=fn, spec=spec)
-        return fn
+        node_id = spec["id"]
+        existing = self._by_id.get(node_id)
+        if existing is not None and existing.fn is not fn and not replace:
+            raise DuplicateNodeType(
+                f"node type {node_id!r} is already registered to a different "
+                f"callable; pass replace=True to override"
+            )
+        entry = RegisteredNode(id=node_id, name=spec["name"], fn=fn, spec=spec)
+        self._by_id[node_id] = entry
+        return entry
 
-    def __contains__(self, name: str) -> bool:
-        return name in self._entries
+    def __contains__(self, node_id: str) -> bool:
+        return node_id in self._by_id
 
-    def get(self, name: str) -> RegisteredNode:
+    def get(self, node_id: str) -> RegisteredNode:
         try:
-            return self._entries[name]
+            return self._by_id[node_id]
         except KeyError:
-            raise UnknownNodeType(f"node type {name!r} is not registered") from None
+            raise UnknownNodeType(f"node type {node_id!r} is not registered") from None
 
-    def callable(self, name: str) -> Callable[..., Any]:
-        return self.get(name).fn
+    def callable(self, node_id: str) -> Callable[..., Any]:
+        return self.get(node_id).fn
 
-    def spec(self, name: str) -> dict:
-        return self.get(name).spec
+    def spec(self, node_id: str) -> dict:
+        return self.get(node_id).spec
 
     def specs(self) -> dict[str, dict]:
-        """All specs keyed by name — the palette a UI renders from."""
-        return {name: entry.spec for name, entry in self._entries.items()}
+        """All specs keyed by id — the palette a UI renders from."""
+        return {node_id: entry.spec for node_id, entry in self._by_id.items()}
 
-    def names(self) -> list[str]:
-        return list(self._entries)
+    def ids(self) -> list[str]:
+        return list(self._by_id)
+
+    def by_short_name(self, name: str) -> RegisteredNode:
+        """Look a type up by short name; error if it's ambiguous (UI helper)."""
+        matches = [e for e in self._by_id.values() if e.name == name]
+        if not matches:
+            raise UnknownNodeType(f"no node type named {name!r}")
+        if len(matches) > 1:
+            ids = ", ".join(sorted(e.id for e in matches))
+            raise UnknownNodeType(f"node name {name!r} is ambiguous — use a full id: {ids}")
+        return matches[0]
 
 
-# A process-wide default so ``run(graph)`` / ``to_python(graph)`` work without
-# threading a registry through every call. Explicit registries are still
-# preferred for isolation (tests, multiple node packs).
+# Process-wide default so ``run(graph)`` / ``to_python(graph)`` work without
+# threading a registry through every call. Explicit registries are preferred for
+# isolation (tests, multiple node packs).
 DEFAULT_REGISTRY = NodeRegistry()
-
-
-def register(fn: Callable[..., Any] = None, **kwargs) -> Callable[..., Any]:
-    """Register a node type on :data:`DEFAULT_REGISTRY` (decorator-friendly)."""
-    if fn is None:
-        return lambda f: DEFAULT_REGISTRY.register(f, **kwargs)
-    return DEFAULT_REGISTRY.register(fn, **kwargs)

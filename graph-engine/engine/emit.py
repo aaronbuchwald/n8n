@@ -1,108 +1,113 @@
 """``to_python(graph)`` — emit a flat, runnable Python script from a graph.
 
-This is Nodezator's "Export as Python" as a headless function. It walks the
-graph in dependency order and, for each node, writes one assignment::
+Nodezator's "Export as Python" as a headless function. It binds the graph, walks
+it in dependency order, and writes one assignment per node::
 
-    _<node_id> = call_name(arg=<upstream var or literal>, ...)
+    _<node_id> = <fn>(arg=<upstream var or literal>, ...)
 
 * a **connected** input becomes a reference to the upstream node's variable
-  (``_src`` for a single output, ``_src["socket"]`` for a named one),
+  (``_src`` for a single output, ``_src['socket']`` for a named one),
 * an **unconnected** input with a widget value becomes a ``repr()`` literal,
-* imports declared on each node spec are collected, de-duplicated and emitted at
-  the top so the script is self-contained and *calls the original functions*.
+* **positional-only** params are emitted positionally,
+* imports are collected and **aliased on collision**: two nodes named ``total``
+  from different modules import as ``total`` / ``total_2`` and call the alias, so
+  the generated script never clobbers a name.
 
-The output is ordinary Python: run it and you reproduce the graph's computation
-without the engine or any UI. That is the round-trip guarantee.
+Run the output and you reproduce the graph's computation without the engine.
 """
 
 from __future__ import annotations
 
 import keyword
 import re
-from typing import Any, Optional
+from typing import Optional, Union
 
+from .bind import BoundGraph, BoundNode, bind
 from .graph import Graph
-from .ordering import topological_order
-from .registry import DEFAULT_REGISTRY, NodeRegistry
+from .registry import NodeRegistry
 from .spec import is_multi_output
 
 _SAFE = re.compile(r"\W")
 
 
 def _var(node_id: str) -> str:
-    """A valid Python identifier for a node's output variable."""
     cleaned = _SAFE.sub("_", node_id)
     if not cleaned or cleaned[0].isdigit() or keyword.iskeyword(cleaned):
         cleaned = f"n_{cleaned}"
     return f"_{cleaned}"
 
 
-def _reference(graph: Graph, registry: NodeRegistry, edge) -> str:
-    """Render a reference to the value flowing along ``edge``."""
-    source_node = graph.node(edge.source)
-    source_spec = registry.spec(source_node.type)
-    var = _var(edge.source)
-    if is_multi_output(source_spec):
-        return f'{var}[{edge.source_output!r}]'
-    return var
+def _aliases(bound: BoundGraph) -> tuple[dict[str, str], list[str]]:
+    """Assign each used node type a unique local alias; build import lines."""
+    used: dict[str, dict] = {}
+    for node in bound.nodes:
+        used.setdefault(node.type, node.spec)
+
+    alias_of: dict[str, str] = {}
+    taken: set[str] = set()
+    imports: list[str] = []
+    for type_id, spec in used.items():
+        base = spec["qualname"]
+        alias, n = base, 1
+        while alias in taken:
+            n += 1
+            alias = f"{base}_{n}"
+        taken.add(alias)
+        alias_of[type_id] = alias
+        suffix = "" if alias == base else f" as {alias}"
+        imports.append(f"from {spec['module']} import {base}{suffix}")
+    return alias_of, imports
+
+
+def _render_value(bound: BoundNode, param: str) -> str:
+    if param in bound.wired:
+        source, socket = bound.wired[param]
+        var = _var(source.id)
+        return f"{var}[{socket!r}]" if is_multi_output(source.spec) else var
+    return repr(bound.literals[param])
+
+
+def _arg_exprs(bound: BoundNode) -> str:
+    inputs = bound.spec["inputs"]
+    provided = set(bound.wired) | set(bound.literals)
+    parts: list[str] = []
+
+    # positional-only prefix: contiguous run, gaps filled with defaults
+    pos_only = [i for i in inputs if i["kind"] == "positionalOnly"]
+    if pos_only:
+        supplied = [k for k, i in enumerate(pos_only) if i["name"] in provided]
+        last = max(supplied) if supplied else -1
+        for k in range(last + 1):
+            inp = pos_only[k]
+            if inp["name"] in provided:
+                parts.append(_render_value(bound, inp["name"]))
+            else:
+                parts.append(inp.get("defaultRepr") or repr(inp["default"]))
+
+    for inp in inputs:
+        if inp["kind"] == "positionalOnly":
+            continue
+        if inp["name"] in provided:
+            parts.append(f"{inp['name']}={_render_value(bound, inp['name'])}")
+    return ", ".join(parts)
 
 
 def to_python(
-    graph: Graph,
+    graph: Union[Graph, BoundGraph],
     registry: Optional[NodeRegistry] = None,
     *,
     header: bool = True,
 ) -> str:
-    """Emit a runnable Python script for ``graph``.
+    """Emit a runnable Python script for ``graph`` (a Graph or a bound graph)."""
+    bound = graph if isinstance(graph, BoundGraph) else bind(graph, registry)
 
-    Args:
-        graph: the graph to export.
-        registry: node-type registry; defaults to
-            :data:`engine.registry.DEFAULT_REGISTRY`.
-        header: prepend a short generated-by comment.
-    """
-    registry = registry or DEFAULT_REGISTRY
-    order = topological_order(graph)
-
-    # Map each target input to the edge feeding it, per node.
-    stdlib_imports: list[str] = []
-    third_party_imports: list[str] = []
-    body: list[str] = []
-
-    for node_id in order:
-        node = graph.node(node_id)
-        spec = registry.spec(node.type)
-
-        imports = spec.get("imports") or {}
-        for line, bucket in (
-            (imports.get("stdlib"), stdlib_imports),
-            (imports.get("thirdParty"), third_party_imports),
-        ):
-            if line and line not in bucket:
-                bucket.append(line)
-
-        connected = {e.target_input: e for e in graph.incoming(node_id)}
-
-        args: list[str] = []
-        for inp in spec["inputs"]:
-            pname = inp["name"]
-            if pname in connected:
-                args.append(f"{pname}={_reference(graph, registry, connected[pname])}")
-            elif pname in node.inputs:
-                args.append(f"{pname}={node.inputs[pname]!r}")
-            # else: rely on the function's own default.
-
-        body.append(f"{_var(node_id)} = {spec['callName']}({', '.join(args)})")
+    alias_of, imports = _aliases(bound)
+    body = [f"{_var(n.id)} = {alias_of[n.type]}({_arg_exprs(n)})" for n in bound.nodes]
 
     lines: list[str] = []
     if header:
-        lines.append("# Generated by engine.to_python — a flat script equivalent to the graph.")
-        lines.append("")
-    if stdlib_imports:
-        lines.extend(stdlib_imports)
-        lines.append("")
-    if third_party_imports:
-        lines.extend(third_party_imports)
-        lines.append("")
-    lines.extend(body)
+        lines += ["# Generated by engine.to_python — a flat script equivalent to the graph.", ""]
+    if imports:
+        lines += imports + [""]
+    lines += body
     return "\n".join(lines) + "\n"

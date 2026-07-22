@@ -21,8 +21,33 @@ class UnknownNodeType(GraphError):
     """A graph node references a type that isn't in the registry."""
 
 
+class BindError(GraphError):
+    """Binding a graph to a registry failed validation (bad socket/param/edge).
+
+    Raised by :func:`engine.bind.bind` *before* any node runs, so structural
+    mistakes surface as static errors an editor can show, not mid-execution.
+    """
+
+
+class DuplicateNodeType(EngineError):
+    """A node type id was registered twice with a different callable."""
+
+
 class CycleError(GraphError):
     """The graph contains a cycle and cannot be ordered/executed."""
+
+
+class NodeExecutionError(EngineError):
+    """A node's callable raised while the graph was running.
+
+    Carries the offending ``node_id`` so a UI can highlight it; the original
+    exception is available as ``__cause__``.
+    """
+
+    def __init__(self, node_id: str, node_type: str, cause: BaseException) -> None:
+        self.node_id = node_id
+        self.node_type = node_type
+        super().__init__(f"node {node_id!r} ({node_type}) raised {type(cause).__name__}: {cause}")
 
 
 class TracingError(EngineError):
@@ -31,13 +56,4 @@ class TracingError(EngineError):
     Raised when a ``@graph`` composite tries to branch/iterate on the output of
     another node during tracing. Composites are pure dataflow wiring; imperative
     logic (loops, branches, mutation) belongs inside a ``@node`` body.
-    """
-
-
-class WaitingParentError(EngineError):
-    """Raised while resolving a node whose parent output isn't ready yet.
-
-    Mirrors Nodezator's ``WaitingParentException``: the lazy sweep catches it
-    and retries the node on a later pass. The clean topological executor uses a
-    real ordering instead, but the type is kept as the documented contract.
     """

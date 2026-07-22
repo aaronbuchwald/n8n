@@ -1,13 +1,16 @@
 {
-  "read_values": {
+  "minimal.read_values": {
+    "id": "minimal.read_values",
     "name": "read_values",
     "title": "read_values",
-    "callName": "read_values",
+    "module": "minimal",
+    "qualname": "read_values",
     "doc": "Read a one-column CSV (header ``value``) into a list of floats.",
     "inputs": [
       {
         "name": "path",
         "type": "str",
+        "kind": "positionalOrKeyword",
         "required": false,
         "default": "readings.csv",
         "widget": {
@@ -17,24 +20,23 @@
     ],
     "outputs": [
       {
-        "name": "output",
+        "name": "result",
         "type": "list"
       }
-    ],
-    "imports": {
-      "stdlib": null,
-      "thirdParty": "from minimal import read_values"
-    }
+    ]
   },
-  "total": {
+  "minimal.total": {
+    "id": "minimal.total",
     "name": "total",
     "title": "total",
-    "callName": "total",
+    "module": "minimal",
+    "qualname": "total",
     "doc": "Sum the values.",
     "inputs": [
       {
         "name": "values",
         "type": "list",
+        "kind": "positionalOrKeyword",
         "required": true,
         "default": null,
         "widget": null
@@ -42,24 +44,23 @@
     ],
     "outputs": [
       {
-        "name": "output",
+        "name": "result",
         "type": "float"
       }
-    ],
-    "imports": {
-      "stdlib": null,
-      "thirdParty": "from minimal import total"
-    }
+    ]
   },
-  "average": {
+  "minimal.average": {
+    "id": "minimal.average",
     "name": "average",
     "title": "average",
-    "callName": "average",
+    "module": "minimal",
+    "qualname": "average",
     "doc": "Mean of the values.",
     "inputs": [
       {
         "name": "values",
         "type": "list",
+        "kind": "positionalOrKeyword",
         "required": true,
         "default": null,
         "widget": null
@@ -67,24 +68,23 @@
     ],
     "outputs": [
       {
-        "name": "output",
+        "name": "result",
         "type": "float"
       }
-    ],
-    "imports": {
-      "stdlib": null,
-      "thirdParty": "from minimal import average"
-    }
+    ]
   },
-  "render_summary": {
+  "minimal.render_summary": {
+    "id": "minimal.render_summary",
     "name": "render_summary",
     "title": "render_summary",
-    "callName": "render_summary",
+    "module": "minimal",
+    "qualname": "render_summary",
     "doc": "Render a small, self-contained HTML card (inline CSS, no CDN).",
     "inputs": [
       {
         "name": "total",
         "type": "float",
+        "kind": "positionalOrKeyword",
         "required": true,
         "default": null,
         "widget": {
@@ -95,6 +95,7 @@
       {
         "name": "average",
         "type": "float",
+        "kind": "positionalOrKeyword",
         "required": true,
         "default": null,
         "widget": {
@@ -105,13 +106,9 @@
     ],
     "outputs": [
       {
-        "name": "output",
+        "name": "result",
         "type": "str"
       }
-    ],
-    "imports": {
-      "stdlib": null,
-      "thirdParty": "from minimal import render_summary"
-    }
+    ]
   }
 }

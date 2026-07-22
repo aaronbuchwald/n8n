@@ -88,7 +88,8 @@ def main_cli() -> None:
     from engine import run, to_python
 
     g = build_graph()
-    print(run(g).value(g.output_id))
+    out = g.output
+    print(run(g).value(out["node"], out["socket"]))
     print("\n----- to_python(graph) -----")
     print(to_python(g))
 

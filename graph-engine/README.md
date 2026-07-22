@@ -7,10 +7,11 @@ self-contained** (no runtime dependencies, no reference to any other project).
 
 | Path | Role |
 |---|---|
-| [`engine/`](engine/) | The headless core: `node_spec`, `Graph`, `run`, `to_python`, plus the decorator/tracing authoring layer (`node`, `graph`, `main`). **Pure standard library.** See [`engine/README.md`](engine/README.md). |
+| [`engine/`](engine/) | The headless core: `node_spec`, `Graph`, `bind`, `run`, `to_python`, plus the decorator/tracing authoring layer (`node`, `graph`, `main`). **Pure standard library.** See [`engine/README.md`](engine/README.md). |
 | `examples/minimal/` | The smallest end-to-end graph: read a file → two processors → a rendered HTML card. Authored with decorators. |
 | `freeze_schemas.py` | Writes the golden example snapshots to `engine/schemas/` (and the schema contract on demand, `--contract`). |
-| `tests/` | 15 tests: introspection, schema, run, tracing, and the graph→Python round-trip. |
+| `docs/adr/` | Architecture decision records (start with `0001` for the core design + deferrals). |
+| `tests/` | 33 tests: introspection, bind/validation, run, tracing, ordering, and the graph→Python round-trip. |
 
 ## Author a graph as ordinary Python
 
@@ -47,7 +48,7 @@ frozen JSON contract and `run`/`to_python` are unchanged. `main` is just
 cd graph-engine
 uv sync --extra dev
 uv run python examples/minimal/minimal.py   # run the graph + print exported Python
-uv run --extra dev pytest tests/ -q         # 15 passing
+uv run --extra dev pytest tests/ -q         # 33 passing
 uv run python freeze_schemas.py             # regenerate example snapshots
 ```
 
