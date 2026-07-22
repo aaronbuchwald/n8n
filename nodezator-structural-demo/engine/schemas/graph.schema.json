@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://n8n.io/nodezator-engine/graph.schema.json",
+  "title": "Graph",
+  "description": "A saved graph: node instances plus output->input connections.",
+  "type": "object",
+  "required": [
+    "version",
+    "nodes",
+    "edges"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "string",
+      "const": "0.1.0"
+    },
+    "nodes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "type"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique instance id within the graph."
+          },
+          "type": {
+            "type": "string",
+            "description": "Node-spec name in the registry."
+          },
+          "inputs": {
+            "type": "object",
+            "description": "Literal widget values for unconnected inputs (param -> value)."
+          },
+          "position": {
+            "description": "UI-only canvas coordinates; ignored by run/export.",
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "x",
+                  "y"
+                ],
+                "properties": {
+                  "x": {
+                    "type": "number"
+                  },
+                  "y": {
+                    "type": "number"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    "edges": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "source",
+          "sourceOutput",
+          "target",
+          "targetInput"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "source": {
+            "type": "string",
+            "description": "Source node id."
+          },
+          "sourceOutput": {
+            "type": "string",
+            "description": "Source output-socket name."
+          },
+          "target": {
+            "type": "string",
+            "description": "Target node id."
+          },
+          "targetInput": {
+            "type": "string",
+            "description": "Target input (parameter) name."
+          }
+        }
+      }
+    }
+  }
+}

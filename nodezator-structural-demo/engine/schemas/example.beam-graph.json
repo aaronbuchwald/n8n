@@ -1,0 +1,164 @@
+{
+  "version": "0.1.0",
+  "nodes": [
+    {
+      "id": "csv",
+      "type": "read_members_csv",
+      "inputs": {
+        "path": "/home/user/n8n/nodezator-structural-demo/members.csv"
+      },
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "pick",
+      "type": "select_member",
+      "inputs": {
+        "index": 0
+      },
+      "position": {
+        "x": 220,
+        "y": 0
+      }
+    },
+    {
+      "id": "unpack",
+      "type": "unpack_member",
+      "inputs": {},
+      "position": {
+        "x": 440,
+        "y": 0
+      }
+    },
+    {
+      "id": "stress",
+      "type": "axial_stress",
+      "inputs": {},
+      "position": {
+        "x": 680,
+        "y": -120
+      }
+    },
+    {
+      "id": "margin",
+      "type": "capacity_margin",
+      "inputs": {},
+      "position": {
+        "x": 680,
+        "y": 40
+      }
+    },
+    {
+      "id": "report",
+      "type": "render_stress_check",
+      "inputs": {},
+      "position": {
+        "x": 680,
+        "y": 200
+      }
+    },
+    {
+      "id": "check",
+      "type": "assert_utilisation_below_one",
+      "inputs": {},
+      "position": {
+        "x": 920,
+        "y": 200
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "csv",
+      "sourceOutput": "output",
+      "target": "pick",
+      "targetInput": "rows"
+    },
+    {
+      "source": "pick",
+      "sourceOutput": "output",
+      "target": "unpack",
+      "targetInput": "member"
+    },
+    {
+      "source": "unpack",
+      "sourceOutput": "force_kN",
+      "target": "stress",
+      "targetInput": "force_kN"
+    },
+    {
+      "source": "unpack",
+      "sourceOutput": "width_mm",
+      "target": "stress",
+      "targetInput": "width_mm"
+    },
+    {
+      "source": "unpack",
+      "sourceOutput": "thickness_mm",
+      "target": "stress",
+      "targetInput": "thickness_mm"
+    },
+    {
+      "source": "unpack",
+      "sourceOutput": "force_kN",
+      "target": "margin",
+      "targetInput": "force_kN"
+    },
+    {
+      "source": "unpack",
+      "sourceOutput": "force_kN",
+      "target": "report",
+      "targetInput": "force_kN"
+    },
+    {
+      "source": "unpack",
+      "sourceOutput": "width_mm",
+      "target": "margin",
+      "targetInput": "width_mm"
+    },
+    {
+      "source": "unpack",
+      "sourceOutput": "width_mm",
+      "target": "report",
+      "targetInput": "width_mm"
+    },
+    {
+      "source": "unpack",
+      "sourceOutput": "thickness_mm",
+      "target": "margin",
+      "targetInput": "thickness_mm"
+    },
+    {
+      "source": "unpack",
+      "sourceOutput": "thickness_mm",
+      "target": "report",
+      "targetInput": "thickness_mm"
+    },
+    {
+      "source": "unpack",
+      "sourceOutput": "fy_MPa",
+      "target": "margin",
+      "targetInput": "fy_MPa"
+    },
+    {
+      "source": "unpack",
+      "sourceOutput": "fy_MPa",
+      "target": "report",
+      "targetInput": "fy_MPa"
+    },
+    {
+      "source": "report",
+      "sourceOutput": "utilisation",
+      "target": "check",
+      "targetInput": "utilisation"
+    },
+    {
+      "source": "unpack",
+      "sourceOutput": "name",
+      "target": "check",
+      "targetInput": "label"
+    }
+  ]
+}

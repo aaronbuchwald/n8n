@@ -1,0 +1,149 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://n8n.io/nodezator-engine/node-spec.schema.json",
+  "title": "NodeSpec",
+  "description": "A UI-agnostic description of one node type, derived from a Python callable.",
+  "type": "object",
+  "required": [
+    "name",
+    "title",
+    "callName",
+    "doc",
+    "inputs",
+    "outputs",
+    "imports"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Registry key / node-type id."
+    },
+    "title": {
+      "type": "string",
+      "description": "Human-facing label."
+    },
+    "callName": {
+      "type": "string",
+      "description": "The callable's __name__, used verbatim in exported Python."
+    },
+    "doc": {
+      "type": "string",
+      "description": "Docstring \u2014 the node's on-canvas documentation."
+    },
+    "inputs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "type",
+          "required",
+          "default",
+          "widget"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "description": "Annotation name (e.g. 'float', 'si.Physical')."
+          },
+          "required": {
+            "type": "boolean",
+            "description": "True when the parameter has no default."
+          },
+          "default": {
+            "description": "Default widget value if a JSON scalar, else null (see defaultRepr).",
+            "type": [
+              "string",
+              "number",
+              "boolean",
+              "null"
+            ]
+          },
+          "defaultRepr": {
+            "type": "string",
+            "description": "repr() of a non-JSON-scalar default; present only then."
+          },
+          "widget": {
+            "description": "Editable control for an unconnected input, or null (must be wired).",
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "kind"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "enum": [
+                      "number",
+                      "text",
+                      "checkbox"
+                    ]
+                  },
+                  "subtype": {
+                    "enum": [
+                      "int",
+                      "float"
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    "outputs": {
+      "type": "array",
+      "minItems": 1,
+      "description": "One socket for a plain return; many for a keyed-dict / multi-output node.",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "type"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "imports": {
+      "type": "object",
+      "required": [
+        "stdlib",
+        "thirdParty"
+      ],
+      "additionalProperties": false,
+      "description": "Import lines injected into exported Python so it resolves the callable.",
+      "properties": {
+        "stdlib": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "thirdParty": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    }
+  }
+}

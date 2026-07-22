@@ -1,0 +1,324 @@
+{
+  "read_members_csv": {
+    "name": "read_members_csv",
+    "title": "read_members_csv",
+    "callName": "read_members_csv",
+    "doc": "Read a CSV with named columns into a list of row dicts.\n\nThe header row supplies the column names; every data row becomes a dict\nkeyed by those names. Numeric columns are coerced to ``float`` so the\ndownstream math nodes receive numbers, not strings.",
+    "inputs": [
+      {
+        "name": "path",
+        "type": "str",
+        "required": false,
+        "default": "members.csv",
+        "widget": {
+          "kind": "text"
+        }
+      }
+    ],
+    "outputs": [
+      {
+        "name": "output",
+        "type": "list"
+      }
+    ],
+    "imports": {
+      "stdlib": null,
+      "thirdParty": "from demolib.data import read_members_csv"
+    }
+  },
+  "select_member": {
+    "name": "select_member",
+    "title": "select_member",
+    "callName": "select_member",
+    "doc": "Select a single row from the list produced by ``read_members_csv``.\n\n``index`` is clamped into range so an out-of-bounds widget value can never\ncrash the graph \u2014 it just picks the nearest valid row.",
+    "inputs": [
+      {
+        "name": "rows",
+        "type": "list",
+        "required": true,
+        "default": null,
+        "widget": null
+      },
+      {
+        "name": "index",
+        "type": "int",
+        "required": false,
+        "default": 0,
+        "widget": {
+          "kind": "number",
+          "subtype": "int"
+        }
+      }
+    ],
+    "outputs": [
+      {
+        "name": "output",
+        "type": "dict"
+      }
+    ],
+    "imports": {
+      "stdlib": null,
+      "thirdParty": "from demolib.data import select_member"
+    }
+  },
+  "unpack_member": {
+    "name": "unpack_member",
+    "title": "unpack_member",
+    "callName": "unpack_member",
+    "doc": "Explode one member row into individual scalar output sockets.\n\nThis turns a single dict socket into five clean scalar sockets, so the math\nnodes downstream can each take a plain ``float`` (and render a numeric\nwidget when left unconnected).",
+    "inputs": [
+      {
+        "name": "member",
+        "type": "dict",
+        "required": true,
+        "default": null,
+        "widget": null
+      }
+    ],
+    "outputs": [
+      {
+        "name": "name",
+        "type": "Any"
+      },
+      {
+        "name": "force_kN",
+        "type": "Any"
+      },
+      {
+        "name": "width_mm",
+        "type": "Any"
+      },
+      {
+        "name": "thickness_mm",
+        "type": "Any"
+      },
+      {
+        "name": "fy_MPa",
+        "type": "Any"
+      }
+    ],
+    "imports": {
+      "stdlib": null,
+      "thirdParty": "from demolib.data import unpack_member"
+    }
+  },
+  "axial_stress": {
+    "name": "axial_stress",
+    "title": "axial_stress",
+    "callName": "axial_stress",
+    "doc": "Axial (normal) stress on a rectangular bar: sigma = P / A.\n\nInputs are plain numbers in engineering units; internally we attach real\nforallpeople units so the returned quantity is a true physical value\n(auto-displayed in MPa).",
+    "inputs": [
+      {
+        "name": "force_kN",
+        "type": "float",
+        "required": false,
+        "default": 100.0,
+        "widget": {
+          "kind": "number",
+          "subtype": "float"
+        }
+      },
+      {
+        "name": "width_mm",
+        "type": "float",
+        "required": false,
+        "default": 50.0,
+        "widget": {
+          "kind": "number",
+          "subtype": "float"
+        }
+      },
+      {
+        "name": "thickness_mm",
+        "type": "float",
+        "required": false,
+        "default": 10.0,
+        "widget": {
+          "kind": "number",
+          "subtype": "float"
+        }
+      }
+    ],
+    "outputs": [
+      {
+        "name": "output",
+        "type": "si.Physical"
+      }
+    ],
+    "imports": {
+      "stdlib": null,
+      "thirdParty": "from demolib.mechanics import axial_stress"
+    }
+  },
+  "capacity_margin": {
+    "name": "capacity_margin",
+    "title": "capacity_margin",
+    "callName": "capacity_margin",
+    "doc": "Ramp the load in fixed steps until the bar yields \u2014 the imperative node.\n\nBecause MPa == N/mm^2, we can keep the loop in plain numbers: stress in MPa\nis simply (force in N) / (area in mm^2). Returns how many whole steps the\nmember survives before reaching yield, the load at yield, and the\nutilisation at the *applied* force.",
+    "inputs": [
+      {
+        "name": "force_kN",
+        "type": "float",
+        "required": false,
+        "default": 100.0,
+        "widget": {
+          "kind": "number",
+          "subtype": "float"
+        }
+      },
+      {
+        "name": "width_mm",
+        "type": "float",
+        "required": false,
+        "default": 50.0,
+        "widget": {
+          "kind": "number",
+          "subtype": "float"
+        }
+      },
+      {
+        "name": "thickness_mm",
+        "type": "float",
+        "required": false,
+        "default": 10.0,
+        "widget": {
+          "kind": "number",
+          "subtype": "float"
+        }
+      },
+      {
+        "name": "fy_MPa",
+        "type": "float",
+        "required": false,
+        "default": 250.0,
+        "widget": {
+          "kind": "number",
+          "subtype": "float"
+        }
+      },
+      {
+        "name": "step_kN",
+        "type": "float",
+        "required": false,
+        "default": 10.0,
+        "widget": {
+          "kind": "number",
+          "subtype": "float"
+        }
+      }
+    ],
+    "outputs": [
+      {
+        "name": "output",
+        "type": "dict"
+      }
+    ],
+    "imports": {
+      "stdlib": null,
+      "thirdParty": "from demolib.mechanics import capacity_margin"
+    }
+  },
+  "render_stress_check": {
+    "name": "render_stress_check",
+    "title": "render_stress_check",
+    "callName": "render_stress_check",
+    "doc": "Produce typeset LaTeX for the stress check plus the utilisation number.\n\nReturns a dict with:\n  * ``latex``       \u2014 the handcalcs LaTeX (drop into MathJax / Jupyter).\n  * ``utilisation`` \u2014 the dimensionless ratio used by the assertion node.\n  * ``summary``     \u2014 a plain-text one-liner for quick viewing.",
+    "inputs": [
+      {
+        "name": "force_kN",
+        "type": "float",
+        "required": false,
+        "default": 100.0,
+        "widget": {
+          "kind": "number",
+          "subtype": "float"
+        }
+      },
+      {
+        "name": "width_mm",
+        "type": "float",
+        "required": false,
+        "default": 50.0,
+        "widget": {
+          "kind": "number",
+          "subtype": "float"
+        }
+      },
+      {
+        "name": "thickness_mm",
+        "type": "float",
+        "required": false,
+        "default": 10.0,
+        "widget": {
+          "kind": "number",
+          "subtype": "float"
+        }
+      },
+      {
+        "name": "fy_MPa",
+        "type": "float",
+        "required": false,
+        "default": 250.0,
+        "widget": {
+          "kind": "number",
+          "subtype": "float"
+        }
+      }
+    ],
+    "outputs": [
+      {
+        "name": "latex",
+        "type": "str"
+      },
+      {
+        "name": "utilisation",
+        "type": "float"
+      },
+      {
+        "name": "summary",
+        "type": "str"
+      }
+    ],
+    "imports": {
+      "stdlib": null,
+      "thirdParty": "from demolib.report import render_stress_check"
+    }
+  },
+  "assert_utilisation_below_one": {
+    "name": "assert_utilisation_below_one",
+    "title": "assert_utilisation_below_one",
+    "callName": "assert_utilisation_below_one",
+    "doc": "Acceptance check: assert the utilisation ratio f(x) < 1.\n\nRaises ``AssertionError`` (which surfaces as a node error in Nodezator) when\nthe member is overstressed; otherwise returns a pass message.",
+    "inputs": [
+      {
+        "name": "utilisation",
+        "type": "float",
+        "required": false,
+        "default": 0.8,
+        "widget": {
+          "kind": "number",
+          "subtype": "float"
+        }
+      },
+      {
+        "name": "label",
+        "type": "str",
+        "required": false,
+        "default": "member",
+        "widget": {
+          "kind": "text"
+        }
+      }
+    ],
+    "outputs": [
+      {
+        "name": "output",
+        "type": "str"
+      }
+    ],
+    "imports": {
+      "stdlib": null,
+      "thirdParty": "from demolib.report import assert_utilisation_below_one"
+    }
+  }
+}
