@@ -56,11 +56,17 @@ nothing in `demolib/` knows Nodezator exists.
 
 ## Run it without the app
 
+Managed with [uv](https://docs.astral.sh/uv/):
+
 ```bash
-pip install -r requirements.txt          # forallpeople + handcalcs (nodezator optional)
-python run_demo.py 0                      # member M1-tie  -> utilisation 0.80 -> PASS
-python run_demo.py 1                      # member M2-strut -> utilisation 1.20 -> FAIL (exits 1)
+uv sync                                   # installs forallpeople + handcalcs into .venv
+uv run python run_demo.py 0               # member M1-tie  -> utilisation 0.80 -> PASS
+uv run python run_demo.py 1               # member M2-strut -> utilisation 1.20 -> FAIL (exits 1)
 ```
+
+Optional extras: `uv sync --extra export` (Markdown/PDF export, below) and
+`uv sync --extra app` (the Nodezator GUI). Plain `pip install .` /
+`pip install .[export]` works too if you prefer pip.
 
 Console output for row 0:
 
@@ -128,6 +134,39 @@ The `third_party_import_text = "from demolib.… import …"` line in each
 `__main__.py` is what makes those exports self-contained — Nodezator injects it
 into the generated script so the callables resolve.
 
+## Export to Markdown / PDF — and back
+
+The rendered calculation is just a LaTeX **string** plus its scalar inputs, so
+exporting *forward* is easy:
+
+```bash
+uv sync --extra export
+uv run python export_report.py 0          # -> report.md  and  report.pdf
+```
+
+- **Markdown** (`report.md`) — zero extra tooling; the `$$…$$` block renders on
+  GitHub, in Jupyter, VS Code, Obsidian, etc.
+- **PDF** (`report.pdf`) — printed from the MathJax HTML by the pre-installed
+  Chromium (via Playwright). *Note:* MathJax is loaded from a CDN, so a fully
+  typeset PDF needs network at render time; offline (or in a locked-down
+  sandbox) the PDF still contains the raw LaTeX, readably. Bundle MathJax/KaTeX
+  locally if you need guaranteed offline typesetting.
+
+**The reverse direction is the interesting part.** A PDF is a *rendering* — the
+source LaTeX, the inputs, and the graph are not recoverable from the printed
+glyphs. So `export_report.py` **embeds the source** (inputs + LaTeX as a JSON
+attachment) inside the PDF. "Convert back" then means *extract the payload*, not
+reverse-engineer the page:
+
+```bash
+uv run python export_report.py --extract report.pdf
+# Recovered member : M1-tie  ...  Re-computed util. 0.8 -> MATCH
+```
+
+This mirrors the whole project's theme: the **source of truth is the Python**
+(and the graph); Markdown and PDF are downstream, lossy renders. Round-tripping
+works only when the source travels along inside the artifact.
+
 ## The two libraries, briefly
 
 - **[forallpeople](https://github.com/connorferster/forallpeople)** — attaches
@@ -142,6 +181,7 @@ into the generated script so the callables resolve.
 
 ## Requirements
 
-See [`requirements.txt`](requirements.txt). `forallpeople` and `handcalcs` are
-needed to run the logic; `nodezator` is only needed to open the graph visually.
-Python 3.10+.
+Declared in [`pyproject.toml`](pyproject.toml), locked in `uv.lock`. Core deps
+`forallpeople` + `handcalcs` run the logic; the `export` extra
+(`playwright`, `pypdf`) adds Markdown/PDF export; the `app` extra (`nodezator`)
+opens the graph visually. Python 3.10+.

@@ -39,7 +39,8 @@ def render_stress_check(
     f_y = fy_MPa * 1e6 * si.Pa
 
     rendered = _stress_equations(P, A, f_y)
-    # The handcalc decorator returns (latex, locals); stay tolerant of its shape.
+    # The handcalc decorator returns (latex_str, function_return_value); we only
+    # need the LaTeX. Stay tolerant of its shape across handcalcs versions.
     latex = rendered[0] if isinstance(rendered, tuple) else str(rendered)
 
     utilisation = float((P / A) / f_y)

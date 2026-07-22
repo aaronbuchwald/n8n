@@ -1,7 +1,0 @@
-# Runtime deps for the demo node logic.
-forallpeople>=2.6.0
-handcalcs>=1.6.0
-
-# The Nodezator app itself (only needed if you want to open the graph visually).
-# The demolib functions and run_demo.py do NOT need this.
-nodezator>=1.5.0
