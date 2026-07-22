@@ -58,6 +58,42 @@ printf 'experimental-features = nix-command flakes\n' >> ~/.config/nix/nix.conf
   daemon; on Apple Silicon you get `aarch64-darwin`, on Intel `x86_64-darwin`
   — both are declared in the flake's `systems`.
 
+### Restricted / GitHub-gated cloud environments (validated)
+
+This flake was installed and run end-to-end in a locked-down sandbox (no
+systemd, root-only, egress via a TLS-terminating proxy, GitHub API blocked).
+Three things differ from a normal workstation there:
+
+1. **Installer host may be blocked.** `nixos.org/nix/install` and
+   `install.determinate.systems` can be denied by egress policy, while
+   `releases.nixos.org` stays reachable. Install from a pinned release directly:
+   ```bash
+   sh <(curl -L https://releases.nixos.org/nix/nix-2.31.2/install) \
+     --no-daemon --yes --no-channel-add
+   ```
+2. **Root single-user install** (no systemd). Nix's default config expects a
+   `nixbld` build-users group that won't exist — disable it:
+   ```bash
+   mkdir -p /etc/nix
+   cat > /etc/nix/nix.conf <<'CONF'
+   experimental-features = nix-command flakes
+   sandbox = false
+   build-users-group =
+   CONF
+   # If the proxy re-terminates TLS, also trust its CA:
+   #   echo "ssl-cert-file = /path/to/ca-bundle.crt" >> /etc/nix/nix.conf
+   ```
+3. **`nixpkgs` via the channel tarball, not the GitHub API.** `github:` inputs
+   resolve through `api.github.com` (blocked → HTTP 403). This flake already
+   uses `https://channels.nixos.org/nixos-unstable/nixexprs.tar.xz`, which needs
+   no GitHub API and works both in gated sandboxes and on a workstation.
+
+With those, `nix flake lock` + `nix develop` resolve the whole closure
+(python 3.11.15 · node 22.x · pnpm 10.x · uv · chromium, ~5.3 GB) from
+`cache.nixos.org`. Chromium from nixpkgs is newer than the project's
+`@playwright/test` build — use the `PLAYWRIGHT_CHROMIUM_BIN` fallback (see
+[Playwright / Chromium](#playwright--chromium)).
+
 ---
 
 ## 2. Enter the environment
