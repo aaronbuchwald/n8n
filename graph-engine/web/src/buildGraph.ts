@@ -34,6 +34,8 @@ function estimateHeight(spec: NodeSpec | null): number {
 export function layoutFlowNodes(
   nodes: Node<SpecNodeData>[],
   edges: Edge[],
+  /** Viewport aspect (width/height) the layout's row wrapping should target. */
+  targetAspect?: number,
 ): Node<SpecNodeData>[] {
   const layoutEdges: LayoutEdge[] = edges.map((e) => ({ source: e.source, target: e.target }));
   const positions = computeLayout(
@@ -43,6 +45,7 @@ export function layoutFlowNodes(
       height: n.measured?.height ?? estimateHeight(n.data.spec),
     })),
     layoutEdges,
+    targetAspect !== undefined ? { targetAspect } : {},
   );
   return nodes.map((n) => {
     const p = positions.get(n.id);

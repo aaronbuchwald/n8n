@@ -102,7 +102,8 @@ test('clicking a node reveals its inputs and outputs, live after a run', async (
   await page.locator('.react-flow__node[data-id="table_card"]').click();
   const inspector = page.getByTestId('node-inspector');
   await expect(inspector).toBeVisible();
-  await expect(page.getByTestId('inspector-title')).toHaveText('table_summary');
+  // Labelled "id · title" so the inspector shares a key with cards and results.
+  await expect(page.getByTestId('inspector-title')).toHaveText('table_card · table_summary');
   await expect(inspector.getByTestId('inspector-no-run')).toBeVisible();
   const inputs = inspector.getByTestId('inspector-inputs');
   await expect(inputs).toContainText('table');
@@ -120,9 +121,10 @@ test('clicking a node reveals its inputs and outputs, live after a run', async (
   // The node now has a resolved run value (the no-run note is gone).
   await expect(inspector.getByTestId('inspector-no-run')).toHaveCount(0);
 
-  // Inspecting the literal-bound source node shows the full path value.
-  await page.locator('.react-flow__node[data-id="raw"]').click();
-  await expect(page.getByTestId('inspector-title')).toHaveText('read_table');
+  // Inspecting the literal-bound source node shows the full path value. Click
+  // the header: a click on a widget chip is editing, not inspecting (#8).
+  await page.locator('.react-flow__node[data-id="raw"] .ge-node__header').click();
+  await expect(page.getByTestId('inspector-title')).toHaveText('raw · read_table');
   await expect(page.getByTestId('inspector-inputs')).toContainText('showcase.csv');
 
   // Clicking the empty pane closes the inspector.

@@ -45,6 +45,15 @@ function ValueLine({ resolved }: { resolved: ResolvedValue | null }) {
   );
 }
 
+// The declared type, and — when a run value is present with a different
+// run-time type — both ("object · Add"), so the label's switch from static to
+// run-time meaning is visible instead of silent.
+function typeLabel(declared: string, resolved: ResolvedValue | null): string {
+  if (!resolved) return declared;
+  const runtime = previewType(resolved.value);
+  return runtime === declared ? declared : `${declared} · ${runtime}`;
+}
+
 function InputRow({ input }: { input: InspectedInput }) {
   const resolved = inputValue(input);
   return (
@@ -53,9 +62,7 @@ function InputRow({ input }: { input: InspectedInput }) {
         <span className="ge-inspector__socket" title={input.name}>
           {input.name}
         </span>
-        <span className="ge-inspector__socket-type">
-          {resolved ? previewType(resolved.value) : input.type}
-        </span>
+        <span className="ge-inspector__socket-type">{typeLabel(input.type, resolved)}</span>
         <span
           className={`ge-inspector__tag ge-inspector__tag--${input.source.kind}`}
           title={sourceLabel(input.source)}
@@ -82,8 +89,17 @@ export function NodeInspector({ node, onClose }: NodeInspectorProps) {
     >
       <div className="ge-inspector__head">
         <div className="ge-inspector__heading">
-          <span className="ge-inspector__title" data-testid="inspector-title" title={node.title}>
-            {node.title}
+          {/* "id · title" so the inspector shares a visible key with both the
+              node cards (title) and the run-results rows (id). */}
+          <span
+            className="ge-inspector__title"
+            data-testid="inspector-title"
+            title={node.title === node.id ? node.id : `${node.id} · ${node.title}`}
+          >
+            {node.id}
+            {node.title !== node.id && (
+              <span className="ge-inspector__title-name"> · {node.title}</span>
+            )}
           </span>
           <span className="ge-inspector__typename" title={node.typeName}>
             {node.typeName}
@@ -110,6 +126,11 @@ export function NodeInspector({ node, onClose }: NodeInspectorProps) {
             Run the graph to see the values that flow through this node.
           </p>
         )}
+        {node.hasRun && !node.executed && (
+          <p className="ge-inspector__note" data-testid="inspector-not-executed">
+            This node did not run — the latest run stopped before reaching it.
+          </p>
+        )}
 
         <section className="ge-inspector__section" data-testid="inspector-inputs">
           <h3 className="ge-inspector__label">Inputs</h3>
@@ -129,7 +150,7 @@ export function NodeInspector({ node, onClose }: NodeInspectorProps) {
                   {output.name}
                 </span>
                 <span className="ge-inspector__socket-type">
-                  {output.run ? previewType(output.run.value) : output.type}
+                  {typeLabel(output.type, output.run)}
                 </span>
               </div>
               <ValueLine resolved={output.run} />

@@ -1,14 +1,18 @@
 // Layered (Sugiyama-style) left-to-right auto-layout for a small DAG.
 //
 // The engine emits `position: null` for every node, so the viewer owns the
-// arrangement. Three classic phases, sized for graphs of 1 to ~a dozen nodes:
+// arrangement. Four phases, sized for graphs of 1 to ~a dozen nodes:
 //
-//  1. Layer assignment — longest path from any root (left → right).
+//  1. Layer assignment — longest path to any sink (right-aligned): a feeder
+//     node sits immediately left of its consumer instead of being pinned to
+//     column 0, which keeps every column busy and the graph short.
 //  2. Crossing reduction — median-ordering sweeps (forward on predecessors,
 //     backward on successors) to untangle edges between adjacent layers.
 //  3. Coordinate assignment — layers spaced by their widest node, nodes
-//     stacked with even gaps and relaxed toward the mean of their neighbours,
-//     every layer centred on a shared horizontal axis.
+//     stacked with even gaps and relaxed toward the mean of their neighbours.
+//  4. Row wrapping — a long chain would otherwise lay out as one wide ribbon
+//     and force fitView to an illegible zoom, so the layer sequence wraps into
+//     rows (like text) whenever that fills the viewport aspect clearly better.
 //
 // The math is pure and framework-free so it can run twice: once with estimated
 // sizes for the very first paint, and again with ReactFlow's *measured* node
@@ -35,10 +39,19 @@ export interface LayoutOptions {
   layerGap?: number;
   /** Vertical gap between nodes stacked in the same layer. */
   nodeGap?: number;
+  /** Vertical gap between wrapped rows of layers. */
+  rowGap?: number;
+  /**
+   * Aspect ratio (width / height) of the viewport the graph will be fitted
+   * into. Row wrapping targets this so the fitted zoom stays readable.
+   */
+  targetAspect?: number;
 }
 
-const DEFAULT_LAYER_GAP = 120;
-const DEFAULT_NODE_GAP = 56;
+const DEFAULT_LAYER_GAP = 100;
+const DEFAULT_NODE_GAP = 44;
+const DEFAULT_ROW_GAP = 96;
+const DEFAULT_TARGET_ASPECT = 16 / 9;
 
 /** Top-left positions for each node, keyed by node id. */
 export function computeLayout(
@@ -48,6 +61,8 @@ export function computeLayout(
 ): Map<string, LayoutPoint> {
   const layerGap = options.layerGap ?? DEFAULT_LAYER_GAP;
   const nodeGap = options.nodeGap ?? DEFAULT_NODE_GAP;
+  const rowGap = options.rowGap ?? DEFAULT_ROW_GAP;
+  const targetAspect = options.targetAspect ?? DEFAULT_TARGET_ASPECT;
 
   const result = new Map<string, LayoutPoint>();
   if (nodes.length === 0) return result;
@@ -70,22 +85,29 @@ export function computeLayout(
     succs.get(e.source)?.push(e.target);
   }
 
-  // ---- 1. layer assignment: longest path from any root --------------------
-  const layerOf = new Map<string, number>();
-  const computeLayer = (id: string, trail: Set<string>): number => {
-    const known = layerOf.get(id);
+  // ---- 1. layer assignment: longest path to any sink ----------------------
+  // Layering by distance-to-sink (instead of distance-from-source) pulls each
+  // feeder right next to the node that consumes it, so early columns don't
+  // collect every source while later columns sit half-empty.
+  const depthOf = new Map<string, number>();
+  const computeDepth = (id: string, trail: Set<string>): number => {
+    const known = depthOf.get(id);
     if (known !== undefined) return known;
     if (trail.has(id)) return 0; // cycle guard (the engine forbids cycles)
     trail.add(id);
-    const ps = preds.get(id) ?? [];
-    const layer = ps.length === 0 ? 0 : Math.max(...ps.map((p) => computeLayer(p, trail) + 1));
+    const ss = succs.get(id) ?? [];
+    const depth = ss.length === 0 ? 0 : Math.max(...ss.map((s) => computeDepth(s, trail) + 1));
     trail.delete(id);
-    layerOf.set(id, layer);
-    return layer;
+    depthOf.set(id, depth);
+    return depth;
   };
-  for (const n of nodes) computeLayer(n.id, new Set());
+  for (const n of nodes) computeDepth(n.id, new Set());
 
-  const layerCount = Math.max(...layerOf.values()) + 1;
+  const maxDepth = Math.max(...depthOf.values());
+  const layerOf = new Map<string, number>();
+  for (const n of nodes) layerOf.set(n.id, maxDepth - (depthOf.get(n.id) ?? 0));
+
+  const layerCount = maxDepth + 1;
   const layers: string[][] = Array.from({ length: layerCount }, () => []);
   for (const n of nodes) layers[layerOf.get(n.id) ?? 0].push(n.id);
 
@@ -123,17 +145,10 @@ export function computeLayout(
   }
 
   // ---- 3. coordinate assignment -------------------------------------------
-  // Horizontal: each layer is a column as wide as its widest node; nodes are
-  // centred within their column so left/right handles stay tidy.
+  // Horizontal: each layer is a column as wide as its widest node.
   const layerW = layers.map((layer) =>
     Math.max(...layer.map((id) => size.get(id)?.width ?? 0)),
   );
-  const layerX: number[] = [];
-  let x = 0;
-  for (let i = 0; i < layers.length; i++) {
-    layerX[i] = x;
-    x += layerW[i] + layerGap;
-  }
 
   // Vertical, first pass: stack each layer with even gaps, centred on y = 0.
   const centerY = new Map<string, number>();
@@ -177,15 +192,94 @@ export function computeLayout(
     for (let i = layers.length - 2; i >= 0; i--) relax(layers[i], (id) => succs.get(id) ?? []);
   }
 
-  layers.forEach((layer, i) => {
+  // ---- 4. row wrapping ------------------------------------------------------
+  // Vertical extent of each layer's stack (from the relaxed centres).
+  const layerBounds = layers.map((layer) => {
+    let top = Number.POSITIVE_INFINITY;
+    let bottom = Number.NEGATIVE_INFINITY;
     for (const id of layer) {
-      const n = size.get(id);
-      if (!n) continue;
-      result.set(id, {
-        x: layerX[i] + (layerW[i] - n.width) / 2,
-        y: (centerY.get(id) ?? 0) - n.height / 2,
-      });
+      const h = size.get(id)?.height ?? 0;
+      const c = centerY.get(id) ?? 0;
+      top = Math.min(top, c - h / 2);
+      bottom = Math.max(bottom, c + h / 2);
     }
+    return { top, bottom, height: bottom - top };
   });
+
+  // Contiguous partition of the layer sequence into ~k rows of similar width.
+  const partitionFor = (k: number): number[][] => {
+    const totalW =
+      layerW.reduce((sum, w) => sum + w, 0) + layerGap * (layers.length - 1);
+    const target = totalW / k;
+    const rows: number[][] = [];
+    let row: number[] = [];
+    let width = 0;
+    for (let i = 0; i < layers.length; i++) {
+      const grown = width + (row.length > 0 ? layerGap : 0) + layerW[i];
+      const rowsLeft = k - rows.length - 1;
+      const layersLeft = layers.length - i;
+      if (row.length > 0 && grown > target && rowsLeft > 0 && layersLeft > rowsLeft) {
+        rows.push(row);
+        row = [];
+        width = 0;
+      }
+      width += (row.length > 0 ? layerGap : 0) + layerW[i];
+      row.push(i);
+    }
+    if (row.length > 0) rows.push(row);
+    return rows;
+  };
+
+  // The zoom fitView would settle at, up to a shared constant: the limiting
+  // side of viewport(aspect × 1) over graph bounding box.
+  const fitZoomOf = (rows: number[][]): number => {
+    let w = 0;
+    let h = 0;
+    rows.forEach((row, r) => {
+      const rw =
+        row.reduce((sum, i) => sum + layerW[i], 0) + layerGap * (row.length - 1);
+      const rh = Math.max(...row.map((i) => layerBounds[i].height));
+      w = Math.max(w, rw);
+      h += rh + (r > 0 ? rowGap : 0);
+    });
+    return Math.min(targetAspect / w, 1 / h);
+  };
+
+  let rows = partitionFor(1);
+  let bestZoom = fitZoomOf(rows);
+  for (let k = 2; k <= Math.min(layers.length, 3); k++) {
+    const candidate = partitionFor(k);
+    if (candidate.length === rows.length) continue;
+    const zoom = fitZoomOf(candidate);
+    // Wrap only for a clear win, so small graphs keep the single-ribbon shape.
+    if (zoom > bestZoom * 1.15) {
+      rows = candidate;
+      bestZoom = zoom;
+    }
+  }
+
+  // ---- final positions ------------------------------------------------------
+  const rowWidth = (row: number[]) =>
+    row.reduce((sum, i) => sum + layerW[i], 0) + layerGap * (row.length - 1);
+  const maxRowWidth = Math.max(...rows.map(rowWidth));
+  let rowTop = 0;
+  for (const row of rows) {
+    const top = Math.min(...row.map((i) => layerBounds[i].top));
+    const bottom = Math.max(...row.map((i) => layerBounds[i].bottom));
+    // Centre shorter rows so a wrapped graph reads as one balanced block.
+    let x = (maxRowWidth - rowWidth(row)) / 2;
+    for (const i of row) {
+      for (const id of layers[i]) {
+        const n = size.get(id);
+        if (!n) continue;
+        result.set(id, {
+          x: x + (layerW[i] - n.width) / 2,
+          y: rowTop + ((centerY.get(id) ?? 0) - n.height / 2 - top),
+        });
+      }
+      x += layerW[i] + layerGap;
+    }
+    rowTop += bottom - top + rowGap;
+  }
   return result;
 }

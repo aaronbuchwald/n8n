@@ -46,6 +46,8 @@ export interface InspectedNode {
   missingSpec: boolean;
   /** True when a run has happened (even if it failed before this node). */
   hasRun: boolean;
+  /** True when the latest run actually reached this node and produced outputs. */
+  executed: boolean;
   inputs: InspectedInput[];
   outputs: InspectedOutput[];
 }
@@ -124,6 +126,7 @@ export function inspectNode(
     isOutput: graph.output?.node === gn.id,
     missingSpec: !spec,
     hasRun: runOutputs !== null,
+    executed: nodeRun !== null,
     inputs,
     outputs,
   };

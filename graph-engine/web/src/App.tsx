@@ -11,7 +11,7 @@ import { BranchBadge } from './components/BranchBadge';
 import { ExportPanel } from './components/ExportPanel';
 import { RunResultsPanel } from './components/RunResultsPanel';
 import { SourceEditor } from './components/SourceEditor';
-import { GraphView } from './GraphView';
+import { GraphView, type FocusRequest } from './GraphView';
 import { makeGraphCommitter, WidgetEditingProvider } from './widgets';
 
 type LoadState =
@@ -38,6 +38,17 @@ export default function App() {
   // A failed widget commit surfaces here as a transient banner (A-D5: PUT
   // /api/graph rejected). Auto-clears so it never lingers over the canvas.
   const [widgetError, setWidgetError] = useState<string | null>(null);
+  // The inspected node. Owned here (not in GraphView) so run-results rows can
+  // select it and the Escape handler below can close it.
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [focusRequest, setFocusRequest] = useState<FocusRequest | null>(null);
+
+  // A run-results row was clicked: open the inspector for that node and ask
+  // the canvas to centre it.
+  const onFocusNode = useCallback((nodeId: string) => {
+    setSelectedNodeId(nodeId);
+    setFocusRequest({ nodeId, token: Date.now() });
+  }, []);
 
   // `quiet` refreshes in place (no loading flash) — used after a source save
   // so the open editor panel isn't unmounted mid-edit.
@@ -75,6 +86,34 @@ export default function App() {
     const timer = window.setTimeout(() => setWidgetError(null), 6000);
     return () => window.clearTimeout(timer);
   }, [widgetError]);
+
+  // Escape dismisses the topmost open surface, one per press: inspector, then
+  // export dock, then run results. Widget editors handle their own keys (the
+  // slot is skipped here), and the source editor is deliberately exempt so a
+  // stray Escape can't discard an unsaved body edit.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
+      if (
+        event.target instanceof Element &&
+        event.target.closest('[data-testid="widget-slot"], .ge-source')
+      ) {
+        return;
+      }
+      if (selectedNodeId) {
+        setSelectedNodeId(null);
+      } else if (python !== null) {
+        setPython(null);
+      } else if (run) {
+        setRun(null);
+      } else {
+        return;
+      }
+      event.preventDefault();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [selectedNodeId, python, run]);
 
   const graph = state.status === 'ready' ? state.data.graph : null;
 
@@ -194,9 +233,20 @@ export default function App() {
                 specs={state.data.specs}
                 runOutputs={run?.outputs ?? null}
                 errorNodeId={errorNodeId}
+                selectedNodeId={selectedNodeId}
+                onSelectNode={setSelectedNodeId}
+                focusRequest={focusRequest}
               />
             </WidgetEditingProvider>
-            {run && <RunResultsPanel run={run} onClose={() => setRun(null)} />}
+            {run && (
+              <RunResultsPanel
+                run={run}
+                graph={state.data.graph}
+                specs={state.data.specs}
+                onFocusNode={onFocusNode}
+                onClose={() => setRun(null)}
+              />
+            )}
           </div>
           {python !== null && <ExportPanel python={python} onClose={() => setPython(null)} />}
           {editingSource && (
