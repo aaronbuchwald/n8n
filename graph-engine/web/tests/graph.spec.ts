@@ -44,5 +44,27 @@ test('renders the example graph read-only in ReactFlow', async ({ page }) => {
     null,
     { polling: 100, timeout: 5000 },
   );
+
+  // The MiniMap renders one rectangle per node only when node dimensions sync
+  // back through onNodesChange (the half-controlled bug rendered zero). Poll:
+  // the minimap re-renders a beat after measurement settles.
+  const minimapNodes = page.locator('.react-flow__minimap-node');
+  await expect.poll(async () => minimapNodes.count(), { timeout: 10_000 }).toBe(4);
+  await expect(minimapNodes.first()).toBeVisible();
+
   await page.screenshot({ path: 'tests/__screenshots__/graph.png', fullPage: false });
+
+  // Nodes are draggable: onNodesChange must apply position changes. Drag one
+  // node and assert its transform actually moves.
+  const nodeEl = page.locator('.react-flow__node', { hasText: 'total' }).first();
+  const box = await nodeEl.boundingBox();
+  if (!box) throw new Error('node has no bounding box');
+  const before = await nodeEl.evaluate((el) => (el as HTMLElement).style.transform);
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2 + 90, box.y + box.height / 2 + 60, { steps: 8 });
+  await page.mouse.up();
+  await expect
+    .poll(async () => nodeEl.evaluate((el) => (el as HTMLElement).style.transform))
+    .not.toBe(before);
 });

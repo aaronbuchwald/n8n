@@ -10,13 +10,52 @@ function formatValue(v: unknown): string {
 type SpecNode = Node<SpecNodeData, 'specNode'>;
 
 export function SpecNode({ data }: NodeProps<SpecNode>) {
-  const { spec, boundInputs, wiredInputs, isOutput } = data;
+  const { id, type, spec, boundInputs, wiredInputs, wiredOutputs, isOutput } = data;
 
   // A spec can be missing if the graph references a type with no matching spec.
+  // Render generic target/source handles (matching the ids its edges reference)
+  // so edges still connect, and surface the node's id + type for debugging.
   if (!spec) {
+    const targetNames = wiredInputs.size > 0 ? [...wiredInputs] : [null];
+    const sourceNames = wiredOutputs.size > 0 ? [...wiredOutputs] : [null];
     return (
-      <div className="ge-node ge-node--missing" data-testid="spec-node">
-        <div className="ge-node__title">unknown node</div>
+      <div className="ge-node ge-node--missing" data-testid="spec-node" data-node-title={id}>
+        <div className="ge-node__header">
+          <span className="ge-node__title" data-testid="node-title">
+            {id}
+          </span>
+        </div>
+        <div className="ge-node__doc ge-node__doc--missing">
+          unknown node type: <code>{type}</code>
+        </div>
+        <div className="ge-node__body">
+          <div className="ge-node__col ge-node__col--in">
+            {targetNames.map((name, i) => (
+              <div className="ge-socket ge-socket--in" key={`t${i}`}>
+                <Handle
+                  id={name ? inHandle(name) : undefined}
+                  type="target"
+                  position={Position.Left}
+                  className="ge-handle ge-handle--in"
+                />
+                {name && <span className="ge-socket__name">{name}</span>}
+              </div>
+            ))}
+          </div>
+          <div className="ge-node__col ge-node__col--out">
+            {sourceNames.map((name, i) => (
+              <div className="ge-socket ge-socket--out" key={`s${i}`}>
+                {name && <span className="ge-socket__name">{name}</span>}
+                <Handle
+                  id={name ? outHandle(name) : undefined}
+                  type="source"
+                  position={Position.Right}
+                  className="ge-handle ge-handle--out"
+                />
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
     );
   }

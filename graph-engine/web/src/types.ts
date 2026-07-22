@@ -62,11 +62,19 @@ export interface GraphDoc {
 
 // Data carried by each ReactFlow custom node.
 export interface SpecNodeData extends Record<string, unknown> {
-  spec: NodeSpec;
+  // The graph node's id and declared type, always present so a spec-less node
+  // can still identify itself.
+  id: string;
+  type: string;
+  // Null when the graph references a type that has no matching spec.
+  spec: NodeSpec | null;
   // The concrete literal value bound to each input in the graph (if any).
   boundInputs: Record<string, unknown>;
   // Input names that are fed by an edge (wired) rather than a literal widget value.
   wiredInputs: Set<string>;
+  // Output names this node feeds into an edge. Used to render matching source
+  // handles on a spec-less node so its outgoing edges still connect.
+  wiredOutputs: Set<string>;
   // True when this node produces the graph's final output socket.
   isOutput: boolean;
 }
