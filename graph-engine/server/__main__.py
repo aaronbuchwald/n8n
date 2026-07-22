@@ -85,6 +85,29 @@ def main() -> None:
     for module in args.library:
         importlib.import_module(module)
 
+    # Preflight: the bundled showcase runs sym.* nodes at /api/run. Their deps are
+    # lazy-imported, so without them the server starts and lists specs but a run
+    # fails deep in the browser with a bare ModuleNotFoundError. Catch it here and
+    # tell the user exactly how to fix it, instead.
+    if args.demo:
+        import importlib.util
+
+        missing = [
+            m
+            for m in ("sympy", "handcalcs", "forallpeople", "latex2mathml")
+            if importlib.util.find_spec(m) is None
+        ]
+        if missing:
+            print(
+                f"\n✗ The bundled --demo (showcase) runs symbolic-math nodes that need extra\n"
+                f"  deps, and these are missing: {', '.join(missing)}.\n\n"
+                f"  Re-run with the `demo` extra (bundles the server + sym deps):\n\n"
+                f"      uv run --extra demo python -m server --demo\n\n"
+                f"  (Use --no-demo to serve an empty registry without them.)\n",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
+
     workspace = make_showcase_workspace() if args.demo else None
     sample_graph = load_showcase_graph(workspace) if args.demo else None
 
