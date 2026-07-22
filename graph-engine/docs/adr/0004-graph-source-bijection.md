@@ -1,6 +1,11 @@
 # ADR 0004 — Graph ⟷ source bijection model
 
-Status: **proposed** (settle before B4 / source-editing) · Scope: `graph-engine/` · Relates to: ADR 0001
+Status: **accepted** (2026-07) · Scope: `graph-engine/` · Relates to: ADR 0001
+
+All four open confirmations were accepted as recommended: (1) the `.py` module is
+the source of truth, graph JSON a projection; (2) node id = the composite's
+variable name; (3) `code → graph` is an AST parse (tracing kept for programmatic
+build); (4) layout lives in a sidecar, excluded from the bijection.
 
 ## Context
 
