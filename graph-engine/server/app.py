@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import Body, FastAPI, HTTPException
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
+
+# The production web bundle, if it has been built (`cd web && pnpm build`).
+WEB_DIST = Path(__file__).resolve().parents[1] / "web" / "dist"
 
 from engine import (
     DEFAULT_REGISTRY,
@@ -57,6 +62,7 @@ def _graph_from(body: dict) -> Graph:
 def create_app(
     registry: Optional[NodeRegistry] = None,
     sample_graph: Optional[Any] = None,
+    web_dist: Optional[Path] = WEB_DIST,
 ) -> FastAPI:
     """Build the app over ``registry`` (defaults to the process registry).
 
@@ -64,6 +70,12 @@ def create_app(
     ``GET /api/graph`` so a client has something to render. Its node ``type``s
     must all exist in ``registry`` (``GET /api/specs``). ``None`` → the endpoint
     replies 404.
+
+    ``web_dist`` — if the directory exists, the built web app is mounted at
+    ``/`` (``html=True``) so the SPA is served **same-origin** with ``/api/*``
+    (the web already fetches relative ``/api/*``). It is mounted **last** so it
+    never shadows an ``/api`` route. Pass ``None`` (or point at a missing dir)
+    to skip the mount — e.g. when the web is served separately via ``pnpm dev``.
     """
     registry = registry or DEFAULT_REGISTRY
     # Normalise to the engine graph JSON dict once; accept a Graph or a dict.
@@ -123,5 +135,10 @@ def create_app(
     @app.put("/api/source/{spec_id}")
     def put_source(spec_id: str, body: dict = Body(default={})) -> JSONResponse:
         return JSONResponse(status_code=501, content={"message": "source editing is not implemented yet (stream E)"})
+
+    # Serve the built SPA at "/" — mounted LAST so /api/* routes win. Skipped
+    # gracefully when the bundle hasn't been built (opening "/" would 404).
+    if web_dist is not None and web_dist.is_dir():
+        app.mount("/", StaticFiles(directory=web_dist, html=True), name="web")
 
     return app

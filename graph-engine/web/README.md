@@ -47,6 +47,15 @@ cd graph-engine
 uv run --extra server python -m server --demo      # serves specs + sample graph on :8000
 ```
 
+**Single "view" URL + Enter-to-open.** Build the web first
+(`cd web && pnpm build`), then run `uv run --extra server python -m server
+--demo` and press **Enter** in the terminal to open the app view
+(`http://127.0.0.1:8000/`) in your browser. When `web/dist/` exists the server
+mounts it at `/` **same-origin** with `/api/*`, so no proxy is needed. Flags:
+`--no-open` disables Enter-to-open; `--open-url URL` overrides the target (point
+it at a `pnpm dev` server on another port). If the bundle isn't built, `/` 404s
+until you `pnpm build`.
+
 ## Same-origin `/api` (dev, preview, and prod)
 
 The browser calls **relative** `/api/*` paths, so the web and the API must share
