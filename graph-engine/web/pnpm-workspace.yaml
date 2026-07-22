@@ -1,0 +1,9 @@
+# Marks web/ as its OWN isolated pnpm workspace root so pnpm does not walk up
+# into the surrounding n8n monorepo. This app is intentionally NOT a member of
+# the n8n workspace — it is fully self-contained with its own package.json/lockfile.
+packages:
+  - '.'
+
+# esbuild ships a prebuilt platform binary via a postinstall script; allow it.
+onlyBuiltDependencies:
+  - esbuild

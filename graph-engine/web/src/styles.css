@@ -1,0 +1,224 @@
+:root {
+  --ge-bg: #0f1115;
+  --ge-panel: #1a1d24;
+  --ge-node-bg: #20242d;
+  --ge-node-border: #333a47;
+  --ge-accent: #5b8def;
+  --ge-output: #3fbf7f;
+  --ge-text: #e6e9ef;
+  --ge-muted: #8b93a3;
+  --ge-wired: #5b8def;
+  --ge-value: #d6a24a;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+  background: var(--ge-bg);
+  color: var(--ge-text);
+}
+
+.ge-app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.ge-topbar {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  padding: 10px 18px;
+  background: var(--ge-panel);
+  border-bottom: 1px solid var(--ge-node-border);
+}
+
+.ge-topbar__title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+}
+
+.ge-topbar__sub {
+  font-size: 12px;
+  color: var(--ge-muted);
+}
+
+.ge-topbar__out {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--ge-output);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.ge-canvas {
+  flex: 1;
+  min-height: 0;
+}
+
+/* ---- custom node ---- */
+.ge-node {
+  min-width: 220px;
+  max-width: 260px;
+  background: var(--ge-node-bg);
+  border: 1px solid var(--ge-node-border);
+  border-radius: 10px;
+  font-size: 12px;
+  color: var(--ge-text);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+  /* Visible so handle dots pinned to the left/right border aren't clipped. */
+  overflow: visible;
+}
+
+.ge-node--output {
+  border-color: var(--ge-output);
+  box-shadow: 0 0 0 1px var(--ge-output), 0 4px 14px rgba(0, 0, 0, 0.35);
+}
+
+.ge-node--missing {
+  border-style: dashed;
+  border-color: #b4553f;
+}
+
+.ge-node__doc--missing code {
+  color: #e8a0a0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.ge-node__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: linear-gradient(180deg, rgba(91, 141, 239, 0.16), transparent);
+  border-bottom: 1px solid var(--ge-node-border);
+  /* Keep top corners rounded now that the card is overflow:visible. */
+  border-radius: 10px 10px 0 0;
+}
+
+.ge-node__title {
+  font-weight: 700;
+  font-size: 13px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.ge-node__badge {
+  margin-left: auto;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: var(--ge-output);
+  color: #06231a;
+  font-weight: 700;
+}
+
+.ge-node__doc {
+  padding: 6px 10px;
+  color: var(--ge-muted);
+  font-size: 11px;
+  line-height: 1.35;
+  border-bottom: 1px solid var(--ge-node-border);
+}
+
+.ge-node__body {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  /* No horizontal padding: socket columns reach the card border so every
+     handle dot sits exactly on the left/right edge, independent of content. */
+  padding: 8px 0 10px;
+}
+
+.ge-node__col {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ge-node__col--in {
+  align-items: flex-start;
+}
+
+.ge-node__col--out {
+  align-items: flex-end;
+}
+
+.ge-socket {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 6px;
+  min-height: 20px;
+}
+
+.ge-socket--in {
+  padding-left: 12px;
+}
+
+.ge-socket--out {
+  padding-right: 12px;
+}
+
+.ge-socket__name {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-weight: 600;
+}
+
+.ge-socket__type {
+  color: var(--ge-muted);
+  font-size: 10px;
+}
+
+.ge-socket__state {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+.ge-socket__state--wired {
+  color: #cfe0ff;
+  background: rgba(91, 141, 239, 0.22);
+}
+
+.ge-socket__state--value {
+  color: #f0d9a8;
+  background: rgba(214, 162, 74, 0.18);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.ge-socket__state--widget {
+  color: var(--ge-muted);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.ge-socket__state--required {
+  color: #e8a0a0;
+  background: rgba(200, 80, 80, 0.16);
+}
+
+/* ---- handles ---- */
+.ge-handle {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  border: 2px solid var(--ge-node-bg);
+}
+
+.ge-handle--in {
+  background: var(--ge-accent);
+}
+
+.ge-handle--out {
+  background: var(--ge-output);
+}

@@ -1,0 +1,61 @@
+{
+  "version": "0.2.0",
+  "nodes": [
+    {
+      "id": "read_values",
+      "type": "minimal.read_values",
+      "inputs": {
+        "path": "readings.csv"
+      },
+      "position": null
+    },
+    {
+      "id": "total",
+      "type": "minimal.total",
+      "inputs": {},
+      "position": null
+    },
+    {
+      "id": "average",
+      "type": "minimal.average",
+      "inputs": {},
+      "position": null
+    },
+    {
+      "id": "render_summary",
+      "type": "minimal.render_summary",
+      "inputs": {},
+      "position": null
+    }
+  ],
+  "edges": [
+    {
+      "source": "read_values",
+      "sourceOutput": "result",
+      "target": "total",
+      "targetInput": "values"
+    },
+    {
+      "source": "read_values",
+      "sourceOutput": "result",
+      "target": "average",
+      "targetInput": "values"
+    },
+    {
+      "source": "total",
+      "sourceOutput": "result",
+      "target": "render_summary",
+      "targetInput": "total"
+    },
+    {
+      "source": "average",
+      "sourceOutput": "result",
+      "target": "render_summary",
+      "targetInput": "average"
+    }
+  ],
+  "output": {
+    "node": "render_summary",
+    "socket": "result"
+  }
+}
