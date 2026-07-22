@@ -1,5 +1,5 @@
 import type { Edge, Node } from '@xyflow/react';
-import type { GraphDoc, NodeSpecs, SpecNodeData } from './types';
+import type { GraphDoc, NodeSpec, NodeSpecs, SpecNodeData } from './types';
 
 // Handle ids are namespaced by direction so a socket that is both an input and
 // output name (e.g. "result") never collides.
@@ -28,6 +28,17 @@ export function buildFlow(
     set.add(e.targetInput);
   }
 
+  // Source outputs each node feeds into an edge, keyed by node id.
+  const wiredOutByNode = new Map<string, Set<string>>();
+  for (const e of graph.edges) {
+    let set = wiredOutByNode.get(e.source);
+    if (!set) {
+      set = new Set();
+      wiredOutByNode.set(e.source, set);
+    }
+    set.add(e.sourceOutput);
+  }
+
   // Longest-path depth from any root, for column placement.
   const depth = new Map<string, number>();
   const incoming = new Map<string, string[]>();
@@ -45,27 +56,48 @@ export function buildFlow(
   };
   for (const n of graph.nodes) computeDepth(n.id, new Set());
 
-  // Vertical index within a column.
-  const rowByColumn = new Map<number, number>();
   const COL_W = 320;
-  const ROW_H = 200;
+  // Card height is unbounded (socket count + doc length drive it), so a fixed
+  // row pitch overlaps tall nodes. Estimate each node's height and stack columns
+  // with a running per-column offset instead.
+  const COL_GAP = 40; // top margin + vertical gap between stacked cards
+  const HEADER_H = 40; // title/badge row
+  const SOCKET_H = 22; // per input/output row
+  const CHARS_PER_LINE = 34; // ~doc chars that fit on one wrapped line
+  const DOC_LINE_H = 15;
+  const BASE_PADDING = 24; // body padding above/below the socket columns
+
+  const estimateHeight = (spec: NodeSpec | undefined): number => {
+    if (!spec) return HEADER_H + BASE_PADDING + SOCKET_H; // id + type rows on the unknown card
+    const socketRows = Math.max(spec.inputs.length, spec.outputs.length, 1);
+    const docLen = spec.doc?.length ?? 0;
+    const docLines = docLen > 0 ? Math.ceil(docLen / CHARS_PER_LINE) : 0;
+    return HEADER_H + BASE_PADDING + socketRows * SOCKET_H + docLines * DOC_LINE_H;
+  };
+
+  // Running vertical offset (next free y) per column.
+  const yByColumn = new Map<number, number>();
 
   const nodes: Node<SpecNodeData>[] = graph.nodes.map((gn) => {
     const spec = specs[gn.type];
     const col = depth.get(gn.id) ?? 0;
-    const row = rowByColumn.get(col) ?? 0;
-    rowByColumn.set(col, row + 1);
+    const y = yByColumn.get(col) ?? COL_GAP;
+    const height = estimateHeight(spec);
+    yByColumn.set(col, y + height + COL_GAP);
 
-    const position = gn.position ?? { x: col * COL_W + 40, y: row * ROW_H + 40 };
+    const position = gn.position ?? { x: col * COL_W + 40, y };
 
     return {
       id: gn.id,
       type: 'specNode',
       position,
       data: {
-        spec,
+        id: gn.id,
+        type: gn.type,
+        spec: spec ?? null,
         boundInputs: gn.inputs ?? {},
         wiredInputs: wiredByNode.get(gn.id) ?? new Set<string>(),
+        wiredOutputs: wiredOutByNode.get(gn.id) ?? new Set<string>(),
         isOutput: graph.output?.node === gn.id,
       },
       // Read-only: no dragging/selecting mutations matter, but keep nodes draggable
@@ -79,7 +111,8 @@ export function buildFlow(
     sourceHandle: outHandle(e.sourceOutput),
     target: e.target,
     targetHandle: inHandle(e.targetInput),
-    animated: true,
+    // Marching-ants reads as "executing"; reserve animation for run-progress.
+    animated: false,
   }));
 
   return { nodes, edges };

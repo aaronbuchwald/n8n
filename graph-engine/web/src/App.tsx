@@ -5,6 +5,8 @@ import {
   MiniMap,
   ReactFlow,
   ReactFlowProvider,
+  useEdgesState,
+  useNodesState,
   type NodeTypes,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
@@ -18,10 +20,15 @@ import type { GraphDoc, NodeSpecs } from './types';
 const nodeTypes: NodeTypes = { specNode: SpecNode };
 
 export default function App() {
-  const { nodes, edges } = useMemo(
+  const { nodes: initialNodes, edges: initialEdges } = useMemo(
     () => buildFlow(graphDoc as GraphDoc, nodeSpecs as NodeSpecs),
     [],
   );
+
+  // Controlled state so ReactFlow can sync node dimensions back (minimap) and
+  // apply drag position changes. Without change handlers both are inert.
+  const [nodes, , onNodesChange] = useNodesState(initialNodes);
+  const [edges, , onEdgesChange] = useEdgesState(initialEdges);
 
   const doc = graphDoc as GraphDoc;
 
@@ -41,8 +48,12 @@ export default function App() {
           <ReactFlow
             nodes={nodes}
             edges={edges}
+            onNodesChange={onNodesChange}
+            onEdgesChange={onEdgesChange}
             nodeTypes={nodeTypes}
+            colorMode="dark"
             fitView
+            minZoom={0.1}
             nodesConnectable={false}
             edgesFocusable={false}
             proOptions={{ hideAttribution: true }}
