@@ -25,6 +25,15 @@ class CycleError(GraphError):
     """The graph contains a cycle and cannot be ordered/executed."""
 
 
+class TracingError(EngineError):
+    """A traced node value was used where a concrete value is required.
+
+    Raised when a ``@graph`` composite tries to branch/iterate on the output of
+    another node during tracing. Composites are pure dataflow wiring; imperative
+    logic (loops, branches, mutation) belongs inside a ``@node`` body.
+    """
+
+
 class WaitingParentError(EngineError):
     """Raised while resolving a node whose parent output isn't ready yet.
 

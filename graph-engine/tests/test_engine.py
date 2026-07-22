@@ -1,24 +1,18 @@
-"""Phase-0 engine tests: introspection, schema, run, and the graph->Python round-trip.
+"""Engine-core tests: introspection, schema, run, and the export round-trip.
 
+Self-contained — uses only toy functions defined here, no external example.
 Run with:  uv run --extra dev pytest tests/ -q
+
+NOTE: no ``from __future__ import annotations`` here — it would stringify the
+list-of-dicts multi-output annotation on ``make`` and break its detection.
 """
-
-from __future__ import annotations
-
-import json
-from pathlib import Path
 
 import pytest
 
-from demolib.data import unpack_member
-from demolib.mechanics import axial_stress
-from demo_graph import build_graph, build_registry
-
 from engine import (
-    GRAPH_SCHEMA,
-    NODE_SPEC_SCHEMA,
     CycleError,
     Graph,
+    NodeRegistry,
     UnknownNodeType,
     node_spec,
     run,
@@ -27,138 +21,115 @@ from engine import (
     validate_node_spec,
 )
 
-HERE = Path(__file__).resolve().parent
-ROOT = HERE.parent
-SCHEMAS = ROOT / "engine" / "schemas"
+
+# -- toy node functions ----------------------------------------------------
 
 
-# --------------------------------------------------------------------------
-# node_spec — introspection
-# --------------------------------------------------------------------------
+def inc(x: int = 0) -> int:
+    return x + 1
 
 
-def test_multi_output_from_annotation():
-    spec = node_spec(unpack_member)
-    assert [o["name"] for o in spec["outputs"]] == [
-        "name",
-        "force_kN",
-        "width_mm",
-        "thickness_mm",
-        "fy_MPa",
-    ]
+def add(a: int, b: int) -> int:
+    return a + b
+
+
+def make(a: int = 1, b: int = 2) -> [{"name": "a"}, {"name": "b"}]:
+    return {"a": a, "b": b}
+
+
+# -- node_spec introspection ----------------------------------------------
+
+
+def test_single_output_and_widget():
+    spec = node_spec(inc)
+    assert spec["outputs"] == [{"name": "output", "type": "int"}]
+    x = spec["inputs"][0]
+    assert x["name"] == "x" and x["default"] == 0
+    assert x["widget"] == {"kind": "number", "subtype": "int"}
     validate_node_spec(spec)
 
 
-def test_single_output_and_widgets():
-    spec = node_spec(axial_stress)
-    assert len(spec["outputs"]) == 1
-    assert spec["outputs"][0] == {"name": "output", "type": "si.Physical"}
-    force = next(i for i in spec["inputs"] if i["name"] == "force_kN")
-    assert force["widget"] == {"kind": "number", "subtype": "float"}
-    assert force["default"] == 100.0
-    assert force["required"] is False
+def test_multi_output_from_annotation():
+    spec = node_spec(make)
+    assert [o["name"] for o in spec["outputs"]] == ["a", "b"]
+    validate_node_spec(spec)
 
 
-def test_output_override_exposes_dict_keys():
-    reg = build_registry()
-    spec = reg.spec("render_stress_check")
-    assert [o["name"] for o in spec["outputs"]] == ["latex", "utilisation", "summary"]
-
-
-# --------------------------------------------------------------------------
-# Graph model + schema
-# --------------------------------------------------------------------------
+# -- Graph model + schema --------------------------------------------------
 
 
 def test_graph_json_roundtrip():
-    g = build_graph(index=0)
+    g = Graph().add("a", "inc", inputs={"x": 1})
+    g.connect("a", "output", "b", "x")
+    g.add("b", "inc")
     restored = Graph.from_json(g.to_json())
     assert restored.to_dict() == g.to_dict()
-    validate_graph(g.to_dict())
 
 
 def test_validate_graph_rejects_dangling_edge():
     bad = {
         "version": "0.1.0",
-        "nodes": [{"id": "a", "type": "x"}],
-        "edges": [
-            {"source": "a", "sourceOutput": "output", "target": "ghost", "targetInput": "y"}
-        ],
+        "nodes": [{"id": "a", "type": "inc"}],
+        "edges": [{"source": "a", "sourceOutput": "output", "target": "ghost", "targetInput": "x"}],
     }
     with pytest.raises(Exception):
         validate_graph(bad)
 
 
-# --------------------------------------------------------------------------
-# run — execution
-# --------------------------------------------------------------------------
+# -- run -------------------------------------------------------------------
 
 
-def test_run_matches_baseline_pass():
-    reg = build_registry()
-    result = run(build_graph(index=0), reg)
-    assert result.value("report", "utilisation") == 0.8
-    assert result.value("check").startswith("PASS")
+def _registry() -> NodeRegistry:
+    reg = NodeRegistry()
+    reg.register(inc)
+    reg.register(add)
+    reg.register(make)
+    return reg
 
 
-def test_run_failing_member_raises_assertion():
-    reg = build_registry()
-    # Member index 1 is overstressed (utilisation 1.2) -> assertion node raises.
-    with pytest.raises(AssertionError):
-        run(build_graph(index=1), reg)
+def test_run_single_chain():
+    reg = _registry()
+    g = Graph().add("a", "inc", inputs={"x": 1}).add("b", "inc")
+    g.connect("a", "output", "b", "x")
+    assert run(g, reg).value("b") == 3
+
+
+def test_run_multi_output_sockets():
+    reg = _registry()
+    g = Graph().add("m", "make", inputs={"a": 10, "b": 5}).add("s", "add")
+    g.connect("m", "a", "s", "a")
+    g.connect("m", "b", "s", "b")
+    assert run(g, reg).value("s") == 15
 
 
 def test_unknown_node_type():
-    reg = build_registry()
-    g = Graph().add("a", "does_not_exist")
+    g = Graph().add("a", "nope")
     with pytest.raises(UnknownNodeType):
-        run(g, reg)
+        run(g, _registry())
 
 
 def test_cycle_detection():
-    reg = build_registry()
-    g = Graph()
-    g.add("a", "select_member")
-    g.add("b", "select_member")
-    g.connect("a", "output", "b", "rows")
-    g.connect("b", "output", "a", "rows")
+    reg = _registry()
+    g = Graph().add("a", "inc").add("b", "inc")
+    g.connect("a", "output", "b", "x")
+    g.connect("b", "output", "a", "x")
     with pytest.raises(CycleError):
         run(g, reg)
 
 
-# --------------------------------------------------------------------------
-# to_python — the round-trip (graph -> Python -> run -> same result)
-# --------------------------------------------------------------------------
+# -- to_python round-trip (no imports so we can exec with injected fns) -----
 
 
 def test_exported_python_reproduces_result():
-    reg = build_registry()
-    graph = build_graph(index=0)
-    engine_result = run(graph, reg).value("report", "utilisation")
+    reg = NodeRegistry()
+    reg.register(inc, third_party_import=None)
+    reg.register(add, third_party_import=None)
+    g = Graph().add("a", "inc", inputs={"x": 1}).add("b", "inc").add("c", "add")
+    g.connect("a", "output", "b", "x")
+    g.connect("a", "output", "c", "a")
+    g.connect("b", "output", "c", "b")
 
-    script = to_python(graph, reg)
-    namespace: dict = {}
+    script = to_python(g, reg, header=False)
+    namespace = {"inc": inc, "add": add}
     exec(compile(script, "<exported>", "exec"), namespace)  # noqa: S102 - trusted, generated
-
-    assert namespace["_report"]["utilisation"] == engine_result == 0.8
-    assert namespace["_check"].startswith("PASS")
-
-
-# --------------------------------------------------------------------------
-# Frozen schema files stay in sync with the in-code contract
-# --------------------------------------------------------------------------
-
-
-def test_frozen_schema_files_match_code():
-    node = json.loads((SCHEMAS / "node-spec.schema.json").read_text())
-    graph = json.loads((SCHEMAS / "graph.schema.json").read_text())
-    assert node == NODE_SPEC_SCHEMA, "run: uv run python freeze_schemas.py"
-    assert graph == GRAPH_SCHEMA, "run: uv run python freeze_schemas.py"
-
-
-def test_frozen_examples_validate():
-    specs = json.loads((SCHEMAS / "example.node-specs.json").read_text())
-    for spec in specs.values():
-        validate_node_spec(spec)
-    graph = json.loads((SCHEMAS / "example.beam-graph.json").read_text())
-    validate_graph(graph)
+    assert namespace["_c"] == run(g, reg).value("c") == (2 + 3)

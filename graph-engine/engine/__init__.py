@@ -8,23 +8,40 @@ Four entry points make up the Phase-0 contract every later UI depends on:
 * :func:`run` — execute a graph by a topological sweep.
 * :func:`to_python` — emit a flat, runnable Python script from a graph.
 
-The node-spec and graph JSON shapes are frozen in :mod:`engine.schema`
-(``NODE_SPEC_SCHEMA`` / ``GRAPH_SCHEMA``, version ``engine.SCHEMA_VERSION``).
+Graphs are authored as ordinary Python with the decorator + tracing layer
+(:func:`node`, :func:`graph`/:func:`main`) — calling a node inside a composite
+records wiring instead of executing. Tracing produces the same :class:`Graph`
+data model, so the frozen JSON contract in :mod:`engine.schema`
+(``NODE_SPEC_SCHEMA`` / ``GRAPH_SCHEMA``, version ``engine.SCHEMA_VERSION``) is
+unchanged.
 
-    >>> from engine import node_spec, Graph, run, to_python, NodeRegistry
-    >>> reg = NodeRegistry()
-    >>> reg.register(lambda x: x + 1, name="inc")           # doctest: +ELLIPSIS
-    <function ...>
-    >>> g = Graph().add("a", "inc", inputs={"x": 1})
-    >>> run(g, reg).value("a")
-    2
+    >>> from engine import node, main, run
+    >>> @node
+    ... def inc(x: int = 0) -> int:
+    ...     return x + 1
+    >>> @main
+    ... def add_two(x: int = 0) -> int:
+    ...     return inc(inc(x))
+    >>> g = add_two.to_graph(x=1)
+    >>> run(g).value(g.output_id)
+    3
 """
 
+from .authoring import (
+    Composite,
+    NodeHandle,
+    NodePrimitive,
+    graph,
+    main,
+    node,
+    trace,
+)
 from .errors import (
     CycleError,
     EngineError,
     GraphError,
     SchemaError,
+    TracingError,
     UnknownNodeType,
     WaitingParentError,
 )
@@ -49,6 +66,15 @@ __all__ = [
     "Graph",
     "run",
     "to_python",
+    # authoring (decorators + tracing)
+    "node",
+    "graph",
+    "main",
+    "trace",
+    "NodeHandle",
+    "NodePrimitive",
+    "Composite",
+    "TracingError",
     # model
     "Node",
     "Edge",

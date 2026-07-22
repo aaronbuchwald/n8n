@@ -1,0 +1,57 @@
+{
+  "version": "0.1.0",
+  "nodes": [
+    {
+      "id": "read_values",
+      "type": "read_values",
+      "inputs": {
+        "path": "readings.csv"
+      },
+      "position": null
+    },
+    {
+      "id": "total",
+      "type": "total",
+      "inputs": {},
+      "position": null
+    },
+    {
+      "id": "average",
+      "type": "average",
+      "inputs": {},
+      "position": null
+    },
+    {
+      "id": "render_summary",
+      "type": "render_summary",
+      "inputs": {},
+      "position": null
+    }
+  ],
+  "edges": [
+    {
+      "source": "read_values",
+      "sourceOutput": "output",
+      "target": "total",
+      "targetInput": "values"
+    },
+    {
+      "source": "read_values",
+      "sourceOutput": "output",
+      "target": "average",
+      "targetInput": "values"
+    },
+    {
+      "source": "total",
+      "sourceOutput": "output",
+      "target": "render_summary",
+      "targetInput": "total"
+    },
+    {
+      "source": "average",
+      "sourceOutput": "output",
+      "target": "render_summary",
+      "targetInput": "average"
+    }
+  ]
+}
