@@ -57,7 +57,7 @@ export interface GraphDoc {
   version: string;
   nodes: GraphNode[];
   edges: GraphEdge[];
-  output: GraphOutput;
+  output: GraphOutput | null;
 }
 
 // Data carried by each ReactFlow custom node.

@@ -66,7 +66,7 @@ export function buildFlow(
         spec,
         boundInputs: gn.inputs ?? {},
         wiredInputs: wiredByNode.get(gn.id) ?? new Set<string>(),
-        isOutput: graph.output.node === gn.id,
+        isOutput: graph.output?.node === gn.id,
       },
       // Read-only: no dragging/selecting mutations matter, but keep nodes draggable
       // so a reviewer can rearrange while exploring.

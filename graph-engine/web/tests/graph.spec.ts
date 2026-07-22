@@ -27,7 +27,22 @@ test('renders the example graph read-only in ReactFlow', async ({ page }) => {
   // The graph output node is marked.
   await expect(page.getByTestId('output-badge')).toBeVisible();
 
-  // Wait for the fitView animation to settle, then screenshot the whole app.
-  await page.waitForTimeout(600);
+  // Wait for the fitView animation to SETTLE (viewport transform stops changing)
+  // instead of a fixed sleep, which can race on a slow runner.
+  const viewport = page.locator('.react-flow__viewport');
+  await expect(viewport).toBeVisible();
+  await page.waitForFunction(
+    () => {
+      const el = document.querySelector('.react-flow__viewport') as HTMLElement | null;
+      if (!el) return false;
+      const t = el.style.transform;
+      const w = window as unknown as { __geLastTransform?: string };
+      const stable = w.__geLastTransform === t && t.includes('scale');
+      w.__geLastTransform = t;
+      return stable;
+    },
+    null,
+    { polling: 100, timeout: 5000 },
+  );
   await page.screenshot({ path: 'tests/__screenshots__/graph.png', fullPage: false });
 });
