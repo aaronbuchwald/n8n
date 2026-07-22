@@ -13,6 +13,15 @@ server = [
     "fastapi>=0.110",
     "uvicorn>=0.29",
 ]
+# `uv sync --extra sym` — the symbolic-math node pack (nodepacks/sym).
+# These are OPTIONAL: `import sym` and spec listing work without them; the
+# node bodies lazy-import them at call time.
+sym = [
+    "sympy>=1.13,<2",
+    "handcalcs>=1.9,<2",
+    "forallpeople>=2.6,<3",
+    "latex2mathml>=3.77,<4",
+]
 # `uv sync --extra dev` — run the full test suite (includes server deps).
 dev = [
     "pytest>=8.0",
@@ -29,10 +38,10 @@ build-backend = "hatchling.build"
 # Real, installable packages, so `import engine` / `import server` /
 # `import calc` / `import sources` work anywhere (examples, node packs, tests)
 # without any sys.path manipulation.
-packages = ["engine", "server", "nodepacks/calc", "nodepacks/sources"]
+packages = ["engine", "server", "nodepacks/calc", "nodepacks/sources", "nodepacks/sym"]
 
 [tool.pytest.ini_options]
 # `engine` and the node packs are installed into the venv; only the example
 # modules need a path so tests can import them directly.
-pythonpath = ["examples/minimal", "examples/readings", "examples/bijection"]
+pythonpath = ["examples/minimal", "examples/readings", "examples/bijection", "examples/symbolic"]
 testpaths = ["tests"]
