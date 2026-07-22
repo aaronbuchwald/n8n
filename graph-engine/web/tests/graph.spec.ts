@@ -82,6 +82,55 @@ test('renders the graph fetched live from the API (not fixtures)', async ({ page
     .not.toBe(before);
 });
 
+test('runs the graph and exports it to Python from the UI', async ({ page }) => {
+  // The graph must load before Run/Export are enabled.
+  await page.goto('/');
+  await expect(page.getByTestId('flow-canvas')).toBeVisible();
+
+  const runButton = page.getByTestId('run-button');
+  const exportButton = page.getByTestId('export-button');
+  await expect(runButton).toBeEnabled();
+
+  // --- Run: POST /api/run, then the output socket value renders in the iframe.
+  const runResponse = page.waitForResponse(
+    (r) => r.url().includes('/api/run') && r.status() === 200,
+  );
+  await runButton.click();
+  await runResponse;
+
+  // The declared output socket (render_summary.result) is an HTML card shown in
+  // the sandboxed iframe. Assert the computed numbers appear INSIDE the frame.
+  const frame = page.frameLocator('[data-testid="run-result-frame"]');
+  await expect(frame.getByText('Readings summary')).toBeVisible();
+  await expect(frame.getByText('25', { exact: true })).toBeVisible();
+
+  // The iframe is fully sandboxed (no scripts / same-origin), never innerHTML.
+  await expect(page.getByTestId('run-result-frame')).toHaveAttribute('sandbox', '');
+
+  // Per-node outputs are surfaced (the average node produced 25).
+  const results = page.getByTestId('run-results');
+  await expect(results).toContainText('average');
+  await expect(results).toContainText('total');
+
+  // --- Export: POST /api/export, then the read-only Python panel shows.
+  const exportResponse = page.waitForResponse(
+    (r) => r.url().includes('/api/export') && r.status() === 200,
+  );
+  await exportButton.click();
+  await exportResponse;
+
+  const code = page.getByTestId('export-code');
+  await expect(code).toBeVisible();
+  await expect(code).toContainText('from minimal import');
+  await expect(code).toContainText('render_summary(');
+
+  // Both the graph and the exported Python are visible side-by-side.
+  await expect(page.getByTestId('flow-canvas')).toBeVisible();
+  await expect(page.getByTestId('export-panel')).toBeVisible();
+
+  await page.screenshot({ path: 'tests/__screenshots__/run.png', fullPage: false });
+});
+
 test('shows an error state when the API fails', async ({ page }) => {
   // Force a server error on the specs endpoint before the app loads.
   await page.route('**/api/specs', (route) =>

@@ -99,6 +99,9 @@ export function buildFlow(
         wiredInputs: wiredByNode.get(gn.id) ?? new Set<string>(),
         wiredOutputs: wiredOutByNode.get(gn.id) ?? new Set<string>(),
         isOutput: graph.output?.node === gn.id,
+        // Run results are patched in after execution (see GraphView).
+        result: null,
+        hasError: false,
       },
       // Read-only: no dragging/selecting mutations matter, but keep nodes draggable
       // so a reviewer can rearrange while exploring.

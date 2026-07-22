@@ -1,16 +1,36 @@
-# graph-engine · web shell (B2 — live)
+# graph-engine · web shell (B3 — run + export)
 
-A read-only [ReactFlow](https://reactflow.dev) view of a graph served by the
-**live** graph-engine HTTP API. On load the app fetches the palette from
-`GET /api/specs` and the graph from `GET /api/graph`, then renders one node per
-graph node showing the spec **title**, its **input sockets** (left handles, with
-the bound literal, the `wired` state, or the declared widget) and **output
-sockets** (right handles), the docstring as a subtitle/tooltip, and a badge on
-the graph's **output** node. Pan / zoom / minimap come from ReactFlow.
+A [ReactFlow](https://reactflow.dev) view of a graph served by the **live**
+graph-engine HTTP API. On load the app fetches the palette from `GET /api/specs`
+and the graph from `GET /api/graph`, then renders one node per graph node showing
+the spec **title**, its **input sockets** (left handles, with the bound literal,
+the `wired` state, or the declared widget) and **output sockets** (right handles),
+the docstring as a subtitle/tooltip, and a badge on the graph's **output** node.
+Pan / zoom / minimap come from ReactFlow.
 
 It renders from the running server — **there are no baked-in fixtures**. If the
 server is down or replies non-200, the app shows a clear **error** state; while
 the two requests are in flight it shows a **loading** state.
+
+## Run + export (B3)
+
+Two toolbar actions operate on the currently-loaded graph:
+
+- **Run** → `POST /api/run`. The response's per-node socket values are overlaid
+  on each node and listed in a **run-results panel** below the canvas. The
+  graph's declared output socket (the `render_summary` HTML card) is rendered in
+  a **fully sandboxed iframe** (`sandbox=""`, `srcDoc`) — never
+  `dangerouslySetInnerHTML` — so untrusted node HTML can't touch the host page.
+  JSON-safe values render as-is; non-JSON returns arrive as `{"$repr","$type"}`
+  previews (see `server/serialize.py`) and are shown readably. A run error
+  (`errors: [{code, message, nodeId?}]`) marks the offending node and is surfaced
+  in the panel rather than crashing the app.
+- **Export Python** → `POST /api/export`. The returned flat script is shown in a
+  read-only, whitespace-preserving code panel **side-by-side with the graph**, so
+  the graph ↔ Python correspondence is visible at a glance.
+
+Both buttons show a pending/disabled state while their request is in flight; a
+transport failure (server unreachable) clears stale results and shows a banner.
 
 ## Where the data comes from
 
@@ -81,7 +101,10 @@ It then asserts that `GET /api/specs` and `GET /api/graph` both return 200, that
 the four node titles (`read_values`, `total`, `average`, `render_summary`) render
 with four nodes / four edges and a badged output node **from the live API**, and
 that forcing `/api/specs` to 500 surfaces the error state instead of a blank
-canvas. A screenshot is saved to `tests/__screenshots__/graph.png`.
+canvas. A second test clicks **Run** (asserting the computed `25` appears inside
+the sandboxed output iframe) then **Export** (asserting the Python panel shows
+`from minimal import` / `render_summary(`). Screenshots are saved to
+`tests/__screenshots__/graph.png` (render) and `run.png` (run + export).
 
 The environment ships Chromium at `/opt/pw-browsers`; the Playwright config
 points `executablePath` at it, so **do not** run `playwright install`.
@@ -90,9 +113,12 @@ points `executablePath` at it, so **do not** run `playwright install`.
 
 | Path | Role |
 |---|---|
-| `src/api.ts` | Fetches `/api/specs` + `/api/graph`; typed loading/error surface |
+| `src/api.ts` | Fetches `/api/specs` + `/api/graph`; posts `/api/run` + `/api/export`; typed surfaces |
 | `src/types.ts` | TypeScript shapes for the engine's JSON contract (v0.2.0) |
+| `src/preview.ts` | Renders a socket value (incl. `{"$repr","$type"}` previews) readably |
 | `src/buildGraph.ts` | Graph + spec JSON → ReactFlow nodes/edges (auto-layout, socket handles) |
-| `src/components/SpecNode.tsx` | The custom node: title, doc, input/output sockets, output badge |
-| `src/GraphView.tsx` | The ReactFlow canvas (background, minimap, controls) |
-| `src/App.tsx` | Data loading + loading/error/ready states + topbar |
+| `src/components/SpecNode.tsx` | The custom node: title, doc, sockets, output badge, per-node run result |
+| `src/components/RunResultsPanel.tsx` | Run outputs: sandboxed output iframe + per-node values + errors |
+| `src/components/ExportPanel.tsx` | Read-only exported-Python panel beside the canvas |
+| `src/GraphView.tsx` | The ReactFlow canvas (background, minimap, controls); folds in run results |
+| `src/App.tsx` | Data loading + loading/error/ready states + topbar + Run/Export actions |

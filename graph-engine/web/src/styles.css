@@ -59,6 +59,74 @@ body,
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
+/* ---- toolbar / actions ---- */
+.ge-toolbar {
+  display: flex;
+  gap: 8px;
+  margin-left: 18px;
+}
+
+.ge-btn {
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--ge-node-border);
+  background: var(--ge-node-bg);
+  color: var(--ge-text);
+  cursor: pointer;
+}
+
+.ge-btn:hover:not(:disabled) {
+  border-color: var(--ge-accent);
+}
+
+.ge-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.ge-btn--primary {
+  background: var(--ge-accent);
+  border-color: var(--ge-accent);
+  color: #08152e;
+}
+
+.ge-btn--primary:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.ge-btn--ghost {
+  margin-left: auto;
+  padding: 3px 8px;
+  background: transparent;
+  color: var(--ge-muted);
+}
+
+.ge-actionbar-error {
+  padding: 8px 18px;
+  background: rgba(200, 80, 80, 0.14);
+  border-bottom: 1px solid #b4553f;
+  color: #f2b0aa;
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* ---- main layout: canvas + optional export dock ---- */
+.ge-main {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.ge-workspace {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .ge-canvas {
   flex: 1;
   min-height: 0;
@@ -271,4 +339,233 @@ body,
 
 .ge-handle--out {
   background: var(--ge-output);
+}
+
+/* ---- error node (run failed here) ---- */
+.ge-node--error {
+  border-color: #e06a5f;
+  box-shadow: 0 0 0 1px #e06a5f, 0 4px 14px rgba(0, 0, 0, 0.35);
+}
+
+/* ---- per-node run result overlay ---- */
+.ge-node__result {
+  border-top: 1px solid var(--ge-node-border);
+  padding: 6px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  background: rgba(63, 191, 127, 0.08);
+  border-radius: 0 0 10px 10px;
+}
+
+.ge-node__result-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 11px;
+  min-width: 0;
+}
+
+.ge-node__result-socket {
+  color: var(--ge-output);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-weight: 600;
+  flex: none;
+}
+
+.ge-node__result-value {
+  color: var(--ge-text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+/* ---- run results panel (below the canvas) ---- */
+.ge-results {
+  flex: none;
+  max-height: 42%;
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--ge-node-border);
+  background: var(--ge-panel);
+}
+
+.ge-results__head,
+.ge-export__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--ge-node-border);
+}
+
+.ge-results__title,
+.ge-export__title {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.ge-results__sub,
+.ge-export__sub {
+  font-size: 11px;
+  color: var(--ge-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.ge-results__errors {
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--ge-node-border);
+  background: rgba(200, 80, 80, 0.12);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ge-results__error {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 12px;
+}
+
+.ge-results__error-code {
+  color: #f2b0aa;
+  font-weight: 700;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.ge-results__error-node {
+  color: var(--ge-value);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.ge-results__error-msg {
+  color: var(--ge-text);
+}
+
+.ge-results__body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 14px;
+  padding: 12px 14px;
+  overflow: hidden;
+}
+
+.ge-results__render {
+  flex: none;
+  width: 22rem;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ge-results__nodes {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ge-results__label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--ge-muted);
+}
+
+.ge-results__frame {
+  flex: 1;
+  min-height: 8rem;
+  width: 100%;
+  border: 1px solid var(--ge-node-border);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.ge-results__empty {
+  color: var(--ge-muted);
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.ge-results__list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ge-results__node {
+  border: 1px solid var(--ge-node-border);
+  border-radius: 8px;
+  padding: 6px 10px;
+  background: var(--ge-node-bg);
+}
+
+.ge-results__node-id {
+  font-size: 12px;
+  font-weight: 700;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  margin-bottom: 4px;
+}
+
+.ge-results__socket {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 11px;
+  padding: 1px 0;
+}
+
+.ge-results__socket-name {
+  color: var(--ge-output);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  flex: none;
+}
+
+.ge-results__socket-type {
+  color: var(--ge-muted);
+  flex: none;
+}
+
+.ge-results__socket-value {
+  color: var(--ge-text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+/* ---- export panel (dock beside the canvas) ---- */
+.ge-export {
+  flex: none;
+  width: 34rem;
+  max-width: 50%;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--ge-node-border);
+  background: #0b0d11;
+}
+
+.ge-export__code {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  margin: 0;
+  padding: 14px 16px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  color: #d6e2f5;
+  white-space: pre;
+  tab-size: 4;
 }
