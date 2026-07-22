@@ -1,4 +1,5 @@
 import type { Edge, Node } from '@xyflow/react';
+import { computeLayout, type LayoutEdge } from './layout';
 import type { GraphDoc, NodeSpec, NodeSpecs, SpecNodeData } from './types';
 
 // Handle ids are namespaced by direction so a socket that is both an input and
@@ -6,18 +7,61 @@ import type { GraphDoc, NodeSpec, NodeSpecs, SpecNodeData } from './types';
 export const inHandle = (name: string) => `in:${name}`;
 export const outHandle = (name: string) => `out:${name}`;
 
+// Fixed card width — must match `.ge-node { width }` in styles.css. Content
+// adapts to the card (ellipsis/clamping), never the other way around, so the
+// pre-measurement width estimate is exact.
+export const NODE_WIDTH = 280;
+
+// Pre-measurement height estimate. Only used for the very first (invisible)
+// paint; the layout re-runs with ReactFlow's measured sizes right after
+// mounting (see GraphView), so this only needs to be in the right ballpark.
+const HEADER_H = 41;
+const DOC_H = 37; // docstring clamps to two lines
+const ROW_H = 25; // one socket row
+const BODY_PAD = 21;
+
+function estimateHeight(spec: NodeSpec | null): number {
+  if (!spec) return HEADER_H + DOC_H + 2 * ROW_H + BODY_PAD;
+  const rows = Math.max(spec.inputs.length + spec.outputs.length, 1);
+  return HEADER_H + (spec.doc ? DOC_H : 0) + rows * ROW_H + BODY_PAD;
+}
+
+/**
+ * Re-run the auto-layout over existing ReactFlow nodes, preferring their
+ * measured dimensions (available once ReactFlow has rendered them) and falling
+ * back to estimates. Returns new node objects with updated positions.
+ */
+export function layoutFlowNodes(
+  nodes: Node<SpecNodeData>[],
+  edges: Edge[],
+): Node<SpecNodeData>[] {
+  const layoutEdges: LayoutEdge[] = edges.map((e) => ({ source: e.source, target: e.target }));
+  const positions = computeLayout(
+    nodes.map((n) => ({
+      id: n.id,
+      width: n.measured?.width ?? NODE_WIDTH,
+      height: n.measured?.height ?? estimateHeight(n.data.spec),
+    })),
+    layoutEdges,
+  );
+  return nodes.map((n) => {
+    const p = positions.get(n.id);
+    return p ? { ...n, position: p } : n;
+  });
+}
+
 /**
  * Convert the engine's graph + node-spec JSON into ReactFlow nodes and edges.
  *
- * The engine emits `position: null`, so we lay the graph out left-to-right in
- * topological-ish order using each node's longest distance from a root. This
- * keeps the read-only view readable without any stored coordinates.
+ * The engine emits `position: null`, so positions always come from the
+ * auto-layout (layout.ts): estimated sizes here for the initial mount, then
+ * refreshed with measured sizes in GraphView before the canvas is revealed.
  */
 export function buildFlow(
   graph: GraphDoc,
   specs: NodeSpecs,
 ): { nodes: Node<SpecNodeData>[]; edges: Edge[] } {
-  // name of each node fed by an edge, keyed by node id -> set of target inputs.
+  // Input names of each node fed by an edge, keyed by node id.
   const wiredByNode = new Map<string, Set<string>>();
   for (const e of graph.edges) {
     let set = wiredByNode.get(e.target);
@@ -39,58 +83,12 @@ export function buildFlow(
     set.add(e.sourceOutput);
   }
 
-  // Longest-path depth from any root, for column placement.
-  const depth = new Map<string, number>();
-  const incoming = new Map<string, string[]>();
-  for (const n of graph.nodes) incoming.set(n.id, []);
-  for (const e of graph.edges) incoming.get(e.target)?.push(e.source);
-
-  const computeDepth = (id: string, seen: Set<string>): number => {
-    if (depth.has(id)) return depth.get(id)!;
-    if (seen.has(id)) return 0; // cycle guard (engine forbids cycles, but be safe)
-    seen.add(id);
-    const parents = incoming.get(id) ?? [];
-    const d = parents.length === 0 ? 0 : Math.max(...parents.map((p) => computeDepth(p, seen) + 1));
-    depth.set(id, d);
-    return d;
-  };
-  for (const n of graph.nodes) computeDepth(n.id, new Set());
-
-  const COL_W = 320;
-  // Card height is unbounded (socket count + doc length drive it), so a fixed
-  // row pitch overlaps tall nodes. Estimate each node's height and stack columns
-  // with a running per-column offset instead.
-  const COL_GAP = 40; // top margin + vertical gap between stacked cards
-  const HEADER_H = 40; // title/badge row
-  const SOCKET_H = 22; // per input/output row
-  const CHARS_PER_LINE = 34; // ~doc chars that fit on one wrapped line
-  const DOC_LINE_H = 15;
-  const BASE_PADDING = 24; // body padding above/below the socket columns
-
-  const estimateHeight = (spec: NodeSpec | undefined): number => {
-    if (!spec) return HEADER_H + BASE_PADDING + SOCKET_H; // id + type rows on the unknown card
-    const socketRows = Math.max(spec.inputs.length, spec.outputs.length, 1);
-    const docLen = spec.doc?.length ?? 0;
-    const docLines = docLen > 0 ? Math.ceil(docLen / CHARS_PER_LINE) : 0;
-    return HEADER_H + BASE_PADDING + socketRows * SOCKET_H + docLines * DOC_LINE_H;
-  };
-
-  // Running vertical offset (next free y) per column.
-  const yByColumn = new Map<number, number>();
-
   const nodes: Node<SpecNodeData>[] = graph.nodes.map((gn) => {
     const spec = specs[gn.type];
-    const col = depth.get(gn.id) ?? 0;
-    const y = yByColumn.get(col) ?? COL_GAP;
-    const height = estimateHeight(spec);
-    yByColumn.set(col, y + height + COL_GAP);
-
-    const position = gn.position ?? { x: col * COL_W + 40, y };
-
     return {
       id: gn.id,
       type: 'specNode',
-      position,
+      position: { x: 0, y: 0 }, // replaced by layoutFlowNodes below
       data: {
         id: gn.id,
         type: gn.type,
@@ -103,8 +101,8 @@ export function buildFlow(
         result: null,
         hasError: false,
       },
-      // Read-only: no dragging/selecting mutations matter, but keep nodes draggable
-      // so a reviewer can rearrange while exploring.
+      // Read-only: no graph mutations, but keep nodes draggable so a reviewer
+      // can rearrange while exploring.
     };
   });
 
@@ -118,5 +116,5 @@ export function buildFlow(
     animated: false,
   }));
 
-  return { nodes, edges };
+  return { nodes: layoutFlowNodes(nodes, edges), edges };
 }

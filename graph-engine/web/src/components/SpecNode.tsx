@@ -5,11 +5,13 @@ import { previewValue } from '../preview';
 
 function formatValue(v: unknown): string {
   if (typeof v === 'string') return `"${v}"`;
-  return JSON.stringify(v);
+  const json: string | undefined = JSON.stringify(v);
+  return json ?? String(v);
 }
 
 // A compact per-socket result overlay shown on a node after a run. Truncated so
-// a long value (e.g. a big list) doesn't blow out the card.
+// a long value (e.g. a big list) doesn't blow out the card; click the node to
+// see everything in the inspector.
 function ResultChips({ result }: { result: Record<string, unknown> }) {
   const entries = Object.entries(result);
   if (entries.length === 0) return null;
@@ -17,7 +19,9 @@ function ResultChips({ result }: { result: Record<string, unknown> }) {
     <div className="ge-node__result" data-testid="node-result">
       {entries.map(([socket, value]) => (
         <div className="ge-node__result-row" key={socket}>
-          <span className="ge-node__result-socket">{socket}</span>
+          <span className="ge-node__result-socket" title={socket}>
+            {socket}
+          </span>
           <span className="ge-node__result-value" title={previewValue(value)}>
             {previewValue(value)}
           </span>
@@ -46,15 +50,15 @@ export function SpecNode({ data }: NodeProps<SpecNode>) {
         data-node-title={id}
       >
         <div className="ge-node__header">
-          <span className="ge-node__title" data-testid="node-title">
+          <span className="ge-node__title" data-testid="node-title" title={id}>
             {id}
           </span>
         </div>
-        <div className="ge-node__doc ge-node__doc--missing">
+        <div className="ge-node__doc ge-node__doc--missing" title={type}>
           unknown node type: <code>{type}</code>
         </div>
         <div className="ge-node__body">
-          <div className="ge-node__col ge-node__col--in">
+          <div className="ge-node__sockets">
             {targetNames.map((name, i) => (
               <div className="ge-socket ge-socket--in" key={`t${i}`}>
                 <Handle
@@ -63,14 +67,22 @@ export function SpecNode({ data }: NodeProps<SpecNode>) {
                   position={Position.Left}
                   className="ge-handle ge-handle--in"
                 />
-                {name && <span className="ge-socket__name">{name}</span>}
+                {name && (
+                  <span className="ge-socket__name" title={name}>
+                    {name}
+                  </span>
+                )}
               </div>
             ))}
           </div>
-          <div className="ge-node__col ge-node__col--out">
+          <div className="ge-node__sockets ge-node__sockets--out">
             {sourceNames.map((name, i) => (
               <div className="ge-socket ge-socket--out" key={`s${i}`}>
-                {name && <span className="ge-socket__name">{name}</span>}
+                {name && (
+                  <span className="ge-socket__name" title={name}>
+                    {name}
+                  </span>
+                )}
                 <Handle
                   id={name ? outHandle(name) : undefined}
                   type="source"
@@ -91,10 +103,9 @@ export function SpecNode({ data }: NodeProps<SpecNode>) {
       className={`ge-node${isOutput ? ' ge-node--output' : ''}${hasError ? ' ge-node--error' : ''}`}
       data-testid="spec-node"
       data-node-title={spec.title}
-      title={spec.doc}
     >
       <div className="ge-node__header">
-        <span className="ge-node__title" data-testid="node-title">
+        <span className="ge-node__title" data-testid="node-title" title={spec.title}>
           {spec.title}
         </span>
         {isOutput && (
@@ -104,55 +115,72 @@ export function SpecNode({ data }: NodeProps<SpecNode>) {
         )}
       </div>
 
-      {spec.doc && <div className="ge-node__doc">{spec.doc}</div>}
+      {spec.doc && (
+        <div className="ge-node__doc" title={spec.doc}>
+          {spec.doc}
+        </div>
+      )}
 
       <div className="ge-node__body">
-        <div className="ge-node__col ge-node__col--in">
-          {spec.inputs.map((input) => {
-            const wired = wiredInputs.has(input.name);
-            const hasLiteral = Object.prototype.hasOwnProperty.call(boundInputs, input.name);
-            return (
-              <div className="ge-socket ge-socket--in" key={input.name}>
-                <Handle
-                  id={inHandle(input.name)}
-                  type="target"
-                  position={Position.Left}
-                  className="ge-handle ge-handle--in"
-                />
-                <span className="ge-socket__name">{input.name}</span>
-                <span className="ge-socket__type">{input.type}</span>
-                {wired ? (
-                  <span className="ge-socket__state ge-socket__state--wired">wired</span>
-                ) : hasLiteral ? (
-                  <span className="ge-socket__state ge-socket__state--value">
-                    {formatValue(boundInputs[input.name])}
+        {spec.inputs.length > 0 && (
+          <div className="ge-node__sockets">
+            {spec.inputs.map((input) => {
+              const wired = wiredInputs.has(input.name);
+              const hasLiteral = Object.prototype.hasOwnProperty.call(boundInputs, input.name);
+              const literal = hasLiteral ? formatValue(boundInputs[input.name]) : null;
+              return (
+                <div className="ge-socket ge-socket--in" key={input.name}>
+                  <Handle
+                    id={inHandle(input.name)}
+                    type="target"
+                    position={Position.Left}
+                    className="ge-handle ge-handle--in"
+                  />
+                  <span className="ge-socket__name" title={input.name}>
+                    {input.name}
                   </span>
-                ) : input.widget ? (
-                  <span className="ge-socket__state ge-socket__state--widget">
-                    {input.widget.kind}
-                  </span>
-                ) : input.required ? (
-                  <span className="ge-socket__state ge-socket__state--required">required</span>
-                ) : null}
-              </div>
-            );
-          })}
-        </div>
+                  <span className="ge-socket__type">{input.type}</span>
+                  {wired ? (
+                    <span className="ge-socket__state ge-socket__state--wired">wired</span>
+                  ) : literal !== null ? (
+                    <span className="ge-socket__state ge-socket__state--value" title={literal}>
+                      {literal}
+                    </span>
+                  ) : input.widget ? (
+                    <span className="ge-socket__state ge-socket__state--widget">
+                      {input.widget.kind}
+                    </span>
+                  ) : input.required ? (
+                    <span className="ge-socket__state ge-socket__state--required">required</span>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        )}
 
-        <div className="ge-node__col ge-node__col--out">
-          {spec.outputs.map((output) => (
-            <div className="ge-socket ge-socket--out" key={output.name}>
-              <span className="ge-socket__type">{output.type}</span>
-              <span className="ge-socket__name">{output.name}</span>
-              <Handle
-                id={outHandle(output.name)}
-                type="source"
-                position={Position.Right}
-                className="ge-handle ge-handle--out"
-              />
-            </div>
-          ))}
-        </div>
+        {spec.inputs.length > 0 && spec.outputs.length > 0 && (
+          <div className="ge-node__divider" aria-hidden="true" />
+        )}
+
+        {spec.outputs.length > 0 && (
+          <div className="ge-node__sockets ge-node__sockets--out">
+            {spec.outputs.map((output) => (
+              <div className="ge-socket ge-socket--out" key={output.name}>
+                <span className="ge-socket__type">{output.type}</span>
+                <span className="ge-socket__name" title={output.name}>
+                  {output.name}
+                </span>
+                <Handle
+                  id={outHandle(output.name)}
+                  type="source"
+                  position={Position.Right}
+                  className="ge-handle ge-handle--out"
+                />
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {result && <ResultChips result={result} />}

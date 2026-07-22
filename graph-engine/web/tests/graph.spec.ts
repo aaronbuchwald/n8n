@@ -41,23 +41,11 @@ test('renders the graph fetched live from the API (not fixtures)', async ({ page
   // The graph output node is marked.
   await expect(page.getByTestId('output-badge')).toBeVisible();
 
-  // Wait for the fitView animation to SETTLE (viewport transform stops changing)
-  // instead of a fixed sleep, which can race on a slow runner.
-  const viewport = page.locator('.react-flow__viewport');
-  await expect(viewport).toBeVisible();
-  await page.waitForFunction(
-    () => {
-      const el = document.querySelector('.react-flow__viewport') as HTMLElement | null;
-      if (!el) return false;
-      const t = el.style.transform;
-      const w = window as unknown as { __geLastTransform?: string };
-      const stable = w.__geLastTransform === t && t.includes('scale');
-      w.__geLastTransform = t;
-      return stable;
-    },
-    null,
-    { polling: 100, timeout: 5000 },
-  );
+  // The canvas signals readiness once the measured layout is applied and the
+  // graph is framed (see GraphView's layout phases).
+  await expect(page.locator('[data-testid="flow-canvas"][data-layout-ready="true"]')).toBeVisible({
+    timeout: 10_000,
+  });
 
   // The MiniMap renders one rectangle per node only when node dimensions sync
   // back through onNodesChange. Poll: the minimap re-renders a beat after
