@@ -2,8 +2,10 @@
 // The value is the SymPy expression string (bijective literal); the preview is best-effort,
 // with fallback to monospace when conversion/rendering fails. Python is authoritative (A-D5).
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { WidgetEditorProps } from '../registry';
+import { escapeHtml, hasUnsupportedShape, sympyToLatex } from './translate';
+import './math.css';
 
 // Lazy-load KaTeX for code-splitting (B-D4: heavy editors are lazy chunks).
 // KaTeX is bundled locally (npm offline), not via CDN.
@@ -24,117 +26,16 @@ const loadKaTeX = async () => {
 };
 
 /**
- * Convert a constrained subset of SymPy syntax to LaTeX (B: the mini-translator).
- * Handles arithmetic, exponents, sqrt, common symbols. Falls back to the raw string
- * if conversion can't complete or rendering throws (A-D5: Python validates, not JS).
- *
- * Examples:
- *  "x**2" → "x^{2}"
- *  "sqrt(x)" → "\sqrt{x}"
- *  "pi" → "\pi"
- *  "x*y" → "x \cdot y"
- *  "a = b + c" → "a = b + c"
+ * Render LaTeX to HTML using KaTeX. Returns `null` (never throws) if KaTeX
+ * itself rejects the LaTeX — the caller falls back to the raw expression.
  */
-function sympyToLatex(expr: string): string {
-  try {
-    let latex = expr.trim();
-
-    // Replace SymPy function calls: sqrt(x) -> \sqrt{x}
-    latex = latex.replace(/sqrt\(([^)]+)\)/g, '\\sqrt{$1}');
-
-    // Replace exponentiation: x**2 -> x^{2}
-    // Match base (variable/number/grouped expression) followed by **exponent
-    latex = latex.replace(/(\w+|\})\*\*(\{[^}]+\}|\w+)/g, '$1^{$2}');
-    latex = latex.replace(/(\))\*\*(\{[^}]+\}|\w+)/g, '$1^{$2}');
-
-    // Replace common Greek letters and constants
-    const greekMap: Record<string, string> = {
-      pi: '\\pi',
-      Pi: '\\Pi',
-      alpha: '\\alpha',
-      beta: '\\beta',
-      gamma: '\\gamma',
-      delta: '\\delta',
-      epsilon: '\\epsilon',
-      zeta: '\\zeta',
-      eta: '\\eta',
-      theta: '\\theta',
-      iota: '\\iota',
-      kappa: '\\kappa',
-      lambda: '\\lambda',
-      mu: '\\mu',
-      nu: '\\nu',
-      xi: '\\xi',
-      omicron: '\\omicron',
-      rho: '\\rho',
-      sigma: '\\sigma',
-      tau: '\\tau',
-      upsilon: '\\upsilon',
-      phi: '\\phi',
-      chi: '\\chi',
-      psi: '\\psi',
-      omega: '\\omega',
-      infinity: '\\infty',
-      oo: '\\infty',
-    };
-
-    for (const [key, value] of Object.entries(greekMap)) {
-      const regex = new RegExp(`\\b${key}\\b`, 'g');
-      latex = latex.replace(regex, value);
-    }
-
-    // Replace multiplication: x*y -> x \cdot y (but preserve function args like sqrt(x*y))
-    // Heuristic: replace * only if not inside parentheses
-    let depth = 0;
-    let result = '';
-    for (let i = 0; i < latex.length; i++) {
-      const char = latex[i];
-      if (char === '(') depth++;
-      else if (char === ')') depth--;
-      else if (char === '*' && depth === 0) {
-        result += ' \\cdot ';
-        continue;
-      }
-      result += char;
-    }
-    latex = result;
-
-    return latex;
-  } catch {
-    // Any error in conversion → return the raw string (fallback)
-    return expr;
-  }
-}
-
-/**
- * Render LaTeX to HTML using KaTeX (if loaded), or fallback to monospace text.
- * Returns HTML string for display; never throws.
- */
-async function renderLatex(latex: string): Promise<{ html: string; fallback: boolean }> {
+async function renderKatex(latex: string): Promise<string | null> {
   try {
     const KT = await loadKaTeX();
-    const html = KT.renderToString(latex, {
-      throwOnError: true,
-    });
-    return { html, fallback: false };
+    return KT.renderToString(latex, { throwOnError: true });
   } catch {
-    // Rendering failed → show the input string in monospace (best-effort fallback)
-    return {
-      html: `<code style="font-family:monospace;font-size:0.9em;color:#666">${escapeHtml(latex)}</code>`,
-      fallback: true,
-    };
+    return null;
   }
-}
-
-function escapeHtml(text: string): string {
-  const map: Record<string, string> = {
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    '"': '&quot;',
-    "'": '&#039;',
-  };
-  return text.replace(/[&<>"']/g, (c) => map[c]);
 }
 
 function asString(value: unknown): string {
@@ -143,39 +44,59 @@ function asString(value: unknown): string {
 }
 
 interface PreviewState {
+  status: 'empty' | 'rendered' | 'fallback';
   html: string;
-  fallback: boolean;
 }
+
+const EMPTY_PREVIEW: PreviewState = { status: 'empty', html: '' };
+
+// Raw-text fallback: monospace, with an explicit cue rendered alongside it
+// (see JSX below) rather than a KaTeX render we can't vouch for (review #4).
+const buildFallback = (raw: string): PreviewState => ({ status: 'fallback', html: escapeHtml(raw) });
 
 /**
  * `kind: "math"` — a SymPy expression editor with live KaTeX preview.
  * The value is the expression string (e.g., "x**2 - 5*x + 6"). Editing commits on blur/Enter.
- * Preview converts to LaTeX and renders with KaTeX; fallback to monospace on any error.
- * Config may include `placeholder` (else defaults to the input name).
+ * Preview converts to LaTeX and renders with KaTeX; shapes the mini-translator can't faithfully
+ * handle (review #4), and anything KaTeX itself rejects, fall back to a labelled raw-text preview.
  */
 export function MathEditor({ value, config, input, onCommit }: WidgetEditorProps) {
   const [draft, setDraft] = useState(asString(value));
-  const [preview, setPreview] = useState<PreviewState>({ html: '', fallback: false });
-  const [previewReady, setPreviewReady] = useState(false);
+  const [preview, setPreview] = useState<PreviewState>(EMPTY_PREVIEW);
 
   useEffect(() => {
     setDraft(asString(value));
   }, [value]);
 
+  // `previewSeq` drops out-of-order responses from superseded drafts — the
+  // same guard the table-recipe editor uses (review #10: without it, a slow
+  // render for an earlier draft can land after a faster later one and show
+  // stale math under the current input).
+  const previewSeq = useRef(0);
+
   // Update preview whenever draft changes (live preview, not debounced for simplicity).
   useEffect(() => {
-    const updatePreview = async () => {
-      if (draft.trim() === '') {
-        setPreview({ html: '', fallback: false });
-        return;
-      }
-      const latex = sympyToLatex(draft);
-      const rendered = await renderLatex(latex);
-      setPreview(rendered);
-      setPreviewReady(true);
-    };
+    const seq = ++previewSeq.current;
+    const trimmed = draft.trim();
 
-    updatePreview();
+    if (trimmed === '') {
+      setPreview(EMPTY_PREVIEW);
+      return;
+    }
+
+    if (hasUnsupportedShape(trimmed)) {
+      // Known-untranslatable shape: don't even attempt the mini translator —
+      // admitting uncertainty beats a clean-but-wrong render. The server's
+      // real SymPy `latex()` stays authoritative at run time (A-D5).
+      setPreview(buildFallback(trimmed));
+      return;
+    }
+
+    const latex = sympyToLatex(trimmed);
+    void renderKatex(latex).then((html) => {
+      if (seq !== previewSeq.current) return; // superseded by a later draft
+      setPreview(html === null ? buildFallback(trimmed) : { status: 'rendered', html });
+    });
   }, [draft]);
 
   const commit = () => {
@@ -204,18 +125,20 @@ export function MathEditor({ value, config, input, onCommit }: WidgetEditorProps
           padding: '0.4rem 0.6rem',
         }}
       />
-      {previewReady && preview.html && (
+      {preview.status !== 'empty' && (
         <div
-          className="ge-widget-math-preview"
-          style={{
-            fontSize: '1rem',
-            padding: '0.4rem 0.6rem',
-            backgroundColor: preview.fallback ? '#f5f5f5' : 'transparent',
-            borderRadius: preview.fallback ? '4px' : '0',
-            minHeight: '1.5em',
-          }}
+          className={`ge-widget-math-preview${preview.status === 'fallback' ? ' mw-fallback' : ''}`}
+          data-testid="widget-math-preview"
         >
-          <div dangerouslySetInnerHTML={{ __html: preview.html }} />
+          {preview.status === 'fallback' && (
+            <div className="mw-fallback__cue" data-testid="widget-math-fallback-cue">
+              Approximate preview — can&apos;t typeset, showing raw expression
+            </div>
+          )}
+          <div
+            className={preview.status === 'fallback' ? 'mw-fallback__code' : undefined}
+            dangerouslySetInnerHTML={{ __html: preview.html }}
+          />
         </div>
       )}
     </div>
