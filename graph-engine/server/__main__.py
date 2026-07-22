@@ -80,15 +80,26 @@ def main() -> None:
 
     url = args.open_url or view_url(args.host, args.port)
 
+    # Be LOUD about whether the built web app is present, so opening the printed
+    # URL never comes as a surprise 404. Printed on every run (not just a TTY).
+    web_built = WEB_DIST.is_dir()
+    if web_built:
+        print(f"✓ web/dist found — the app is served at {url}")
+    else:
+        print(
+            "✗ web/dist NOT built — run: cd web && pnpm build\n"
+            f"  Until then {url} shows a build hint (the /api/* endpoints work now)."
+        )
+
     # Enter-to-open only when interactive; skip for pipes/CI/tests so we never
     # block on a stdin that will never see a keystroke.
     if args.open and sys.stdin.isatty():
-        if WEB_DIST.is_dir():
+        if web_built:
             print(f"➜ Press Enter to open the app in your browser ({url})")
         else:
             print(
                 f"➜ Press Enter to open the app in your browser ({url}) — "
-                "build the web first (`cd web && pnpm build`) or `/` will 404"
+                "it will show a build hint until you build the web (`cd web && pnpm build`)"
             )
         threading.Thread(target=_wait_for_enter_then_open, args=(url,), daemon=True).start()
 

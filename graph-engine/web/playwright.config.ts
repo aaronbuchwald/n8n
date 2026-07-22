@@ -11,6 +11,9 @@ const API_PORT = 8000;
 
 export default defineConfig({
   testDir: './tests',
+  // The server-mount spec has its own config (playwright.server-mount.config.ts)
+  // that boots uvicorn as the origin; it must not run against vite preview here.
+  testIgnore: /server-mount\.spec\.ts/,
   fullyParallel: true,
   reporter: [['list']],
   timeout: 60_000,
