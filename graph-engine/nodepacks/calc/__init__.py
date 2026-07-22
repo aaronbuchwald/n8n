@@ -14,6 +14,7 @@ behave like normal functions.
 
 from __future__ import annotations
 
+import html
 import statistics
 
 from engine import node
@@ -57,14 +58,16 @@ def render_summary(
 ) -> str:
     """Render a small, self-contained HTML card (inline CSS, no CDN assets).
 
-    Shows the ``average`` and ``median`` under ``title``. Returns a single
-    ``<div>`` string safe to embed anywhere.
+    Shows the ``average`` and ``median`` under ``title``. ``title`` is
+    HTML-escaped, so the returned ``<div>`` is safe to embed even when the title
+    is user- or upstream-controlled; the numeric fields are formatted, not
+    interpolated raw.
     """
     return (
         '<div style="font-family:system-ui,-apple-system,sans-serif;'
         "max-width:20rem;padding:1rem;border:1px solid #ddd;border-radius:8px;"
         'box-shadow:0 1px 3px rgba(0,0,0,.08)">'
-        f'<h1 style="font-size:1rem;margin:0 0 .5rem">{title}</h1>'
+        f'<h1 style="font-size:1rem;margin:0 0 .5rem">{html.escape(title)}</h1>'
         '<dl style="margin:0;display:grid;grid-template-columns:auto auto;'
         'gap:.25rem 1rem;font-size:.9rem">'
         '<dt style="color:#666">Average</dt>'

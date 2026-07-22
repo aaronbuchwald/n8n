@@ -136,3 +136,12 @@ def test_editing_csv_changes_the_result(tmp_path: Path):
     assert result.value("median") == 30.0
     html = result.value("render_summary", "result")
     assert "32" in html and "30" in html
+
+
+def test_render_summary_escapes_title():
+    # A user/upstream-controlled title must not inject markup (HTML escaping).
+    from calc import render_summary
+
+    out = render_summary("</h1><script>alert(1)</script>", 1.0, 2.0)
+    assert "<script>" not in out
+    assert "&lt;script&gt;" in out
