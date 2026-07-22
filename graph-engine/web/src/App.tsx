@@ -7,8 +7,10 @@ import {
   type LiveGraph,
   type RunResult,
 } from './api';
+import { BranchBadge } from './components/BranchBadge';
 import { ExportPanel } from './components/ExportPanel';
 import { RunResultsPanel } from './components/RunResultsPanel';
+import { SourceEditor } from './components/SourceEditor';
 import { GraphView } from './GraphView';
 
 type LoadState =
@@ -31,23 +33,27 @@ export default function App() {
   const [runState, setRunState] = useState<ActionState>(IDLE);
   const [python, setPython] = useState<string | null>(null);
   const [exportState, setExportState] = useState<ActionState>(IDLE);
+  const [editingSource, setEditingSource] = useState(false);
+
+  // `quiet` refreshes in place (no loading flash) — used after a source save
+  // so the open editor panel isn't unmounted mid-edit.
+  const reload = useCallback(async (opts?: { quiet?: boolean }) => {
+    if (!opts?.quiet) setState({ status: 'loading' });
+    try {
+      const data = await fetchLiveGraph();
+      setState({ status: 'ready', data });
+    } catch (err: unknown) {
+      setState({ status: 'error', message: err instanceof Error ? err.message : String(err) });
+    }
+  }, []);
 
   useEffect(() => {
-    let cancelled = false;
-    setState({ status: 'loading' });
-    fetchLiveGraph()
-      .then((data) => {
-        if (!cancelled) setState({ status: 'ready', data });
-      })
-      .catch((err: unknown) => {
-        if (!cancelled) {
-          setState({ status: 'error', message: err instanceof Error ? err.message : String(err) });
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+    void reload();
+  }, [reload]);
+
+  const onSourceSaved = useCallback(() => {
+    void reload({ quiet: true });
+  }, [reload]);
 
   const graph = state.status === 'ready' ? state.data.graph : null;
   // Contract version comes from /api/specs (the palette contract), per ADR 0002.
@@ -92,6 +98,7 @@ export default function App() {
         <span className="ge-topbar__sub">
           live graph{version ? ` · contract v${version}` : ''}
         </span>
+        <BranchBadge />
 
         <div className="ge-toolbar">
           <button
@@ -111,6 +118,15 @@ export default function App() {
             onClick={onExport}
           >
             {exportState.pending ? 'Exporting…' : 'Export Python'}
+          </button>
+          <button
+            type="button"
+            className="ge-btn"
+            data-testid="edit-source-button"
+            disabled={state.status !== 'ready'}
+            onClick={() => setEditingSource((open) => !open)}
+          >
+            Edit source
           </button>
         </div>
 
@@ -152,6 +168,13 @@ export default function App() {
             {run && <RunResultsPanel run={run} onClose={() => setRun(null)} />}
           </div>
           {python !== null && <ExportPanel python={python} onClose={() => setPython(null)} />}
+          {editingSource && (
+            <SourceEditor
+              specs={state.data.specs}
+              onSaved={onSourceSaved}
+              onClose={() => setEditingSource(false)}
+            />
+          )}
         </div>
       )}
     </div>

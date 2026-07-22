@@ -29,6 +29,7 @@ from engine import (
 )
 
 from .serialize import to_jsonable
+from .workspace import SourceEditError, Workspace, find_repo_root, git_branch_info
 
 
 def _error_payload(exc: Exception) -> dict:
@@ -66,6 +67,7 @@ def create_app(
     registry: Optional[NodeRegistry] = None,
     sample_graph: Optional[Any] = None,
     web_dist: Optional[Path] = WEB_DIST,
+    workspace: Optional[Workspace] = None,
 ) -> FastAPI:
     """Build the app over ``registry`` (defaults to the process registry).
 
@@ -73,6 +75,13 @@ def create_app(
     ``GET /api/graph`` so a client has something to render. Its node ``type``s
     must all exist in ``registry`` (``GET /api/specs``). ``None`` → the endpoint
     replies 404.
+
+    ``workspace`` — a :class:`~server.workspace.Workspace` binding the app to a
+    real authoring module on disk. With it, source editing goes live:
+    ``GET/PUT /api/source/{spec_id}`` read/write the actual ``@node`` function
+    in the ``.py`` file, and ``PUT /api/graph`` rewrites the ``@main``
+    composite's wiring lines (ADR 0004 D2/D5). Without it those routes keep
+    replying 501, as before.
 
     ``web_dist`` — if the directory exists, the built web app is mounted at
     ``/`` (``html=True``) so the SPA is served **same-origin** with ``/api/*``
@@ -82,7 +91,10 @@ def create_app(
     """
     registry = registry or DEFAULT_REGISTRY
     # Normalise to the engine graph JSON dict once; accept a Graph or a dict.
-    graph_doc: Optional[dict] = sample_graph.to_dict() if isinstance(sample_graph, Graph) else sample_graph
+    # Kept in a one-slot dict so PUT /api/graph can swap in the saved graph.
+    state: dict[str, Optional[dict]] = {
+        "graph": sample_graph.to_dict() if isinstance(sample_graph, Graph) else sample_graph
+    }
     app = FastAPI(title="graph-engine", version=SCHEMA_VERSION)
 
     @app.get("/api/specs")
@@ -91,9 +103,16 @@ def create_app(
 
     @app.get("/api/graph")
     def get_graph() -> JSONResponse:
-        if graph_doc is None:
+        if state["graph"] is None:
             return JSONResponse(status_code=404, content={"message": "no sample graph is configured"})
-        return JSONResponse(status_code=200, content=graph_doc)
+        return JSONResponse(status_code=200, content=state["graph"])
+
+    @app.get("/api/workspace")
+    def get_workspace() -> dict:
+        if workspace is not None:
+            return workspace.info()
+        # No editable module bound — still report the branch this server runs from.
+        return {**git_branch_info(find_repo_root(Path(__file__).resolve().parent)), "modules": []}
 
     @app.post("/api/graphs/validate")
     def validate(body: dict = Body(...)) -> JSONResponse:
@@ -131,13 +150,64 @@ def create_app(
         except EngineError as exc:
             raise HTTPException(status_code=422, detail=[_error_payload(exc)]) from exc
 
+    def _no_workspace() -> JSONResponse:
+        return JSONResponse(
+            status_code=501,
+            content={"message": "source editing requires a workspace (start with --demo or pass workspace=)"},
+        )
+
+    def _rebind_current_graph() -> list[dict]:
+        """Re-validate the served graph after a source edit; report, don't fail.
+
+        An edit can legitimately break the wiring (e.g. renaming a parameter
+        the graph feeds) — the file write already happened, so surface the bind
+        errors for the UI instead of pretending the save failed.
+        """
+        if state["graph"] is None:
+            return []
+        try:
+            bind(Graph.from_dict(state["graph"]), registry)
+        except EngineError as exc:
+            return [_error_payload(exc)]
+        return []
+
     @app.get("/api/source/{spec_id}")
     def get_source(spec_id: str) -> JSONResponse:
-        return JSONResponse(status_code=501, content={"message": "source editing is not implemented yet (stream E)"})
+        if workspace is None:
+            return _no_workspace()
+        try:
+            return JSONResponse(status_code=200, content=workspace.function_source(spec_id))
+        except SourceEditError as exc:
+            return JSONResponse(status_code=exc.status, content={"message": str(exc)})
 
     @app.put("/api/source/{spec_id}")
     def put_source(spec_id: str, body: dict = Body(default={})) -> JSONResponse:
-        return JSONResponse(status_code=501, content={"message": "source editing is not implemented yet (stream E)"})
+        if workspace is None:
+            return _no_workspace()
+        source = body.get("source")
+        if not isinstance(source, str) or not source.strip():
+            return JSONResponse(status_code=400, content={"message": "body must be {\"source\": \"<function definition>\"}"})
+        try:
+            result = workspace.replace_function_source(spec_id, source)
+        except SourceEditError as exc:
+            return JSONResponse(status_code=exc.status, content={"message": str(exc)})
+        result["spec"] = registry.spec(spec_id)  # re-introspected after reload
+        result["graphErrors"] = _rebind_current_graph()
+        return JSONResponse(status_code=200, content=result)
+
+    @app.put("/api/graph")
+    def put_graph(body: dict = Body(...)) -> JSONResponse:
+        if workspace is None:
+            return _no_workspace()
+        try:
+            graph = _graph_from(body)
+            saved = workspace.save_graph(graph)  # writes wiring + sidecar, reloads
+        except SourceEditError as exc:
+            return JSONResponse(status_code=exc.status, content={"message": str(exc)})
+        except EngineError as exc:
+            raise HTTPException(status_code=422, detail=[_error_payload(exc)]) from exc
+        state["graph"] = saved
+        return JSONResponse(status_code=200, content={"graph": saved})
 
     # Serve the built SPA at "/" — mounted LAST so /api/* routes win. When the
     # bundle isn't built we mount nothing: the API stays live and "/" simply

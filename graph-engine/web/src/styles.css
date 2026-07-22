@@ -938,3 +938,142 @@ body,
   white-space: pre;
   tab-size: 4;
 }
+
+/* ---- branch badge (topbar) — where source edits land ---- */
+.ge-branch {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 9px;
+  border: 1px solid var(--ge-node-border);
+  border-radius: 999px;
+  background: var(--ge-node-bg);
+  color: var(--ge-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.ge-branch__icon {
+  color: var(--ge-accent);
+  font-weight: 700;
+}
+
+/* ---- node source editor (dock beside the canvas) ---- */
+.ge-source {
+  flex: none;
+  width: 34rem;
+  max-width: 50%;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--ge-node-border);
+  background: #0b0d11;
+}
+
+.ge-source__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--ge-node-border);
+}
+
+.ge-source__title {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.ge-source__sub {
+  flex: 1;
+  font-size: 11px;
+  color: var(--ge-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.ge-source__field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px 0;
+}
+
+.ge-source__label {
+  font-size: 11px;
+  color: var(--ge-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.ge-source__select {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 8px;
+  border: 1px solid var(--ge-node-border);
+  border-radius: 6px;
+  background: var(--ge-node-bg);
+  color: var(--ge-text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+
+.ge-source__file {
+  padding: 6px 14px 0;
+  color: var(--ge-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+}
+
+.ge-source__text {
+  flex: 1;
+  min-height: 0;
+  margin: 10px 14px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--ge-node-border);
+  border-radius: 8px;
+  background: var(--ge-bg);
+  color: #d6e2f5;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre;
+  tab-size: 4;
+  resize: none;
+}
+
+.ge-source__text:focus {
+  outline: 1px solid var(--ge-accent);
+}
+
+.ge-source__error,
+.ge-source__notice {
+  margin: 8px 14px 0;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  white-space: pre-wrap;
+}
+
+.ge-source__error {
+  background: rgba(200, 80, 80, 0.12);
+  border: 1px solid rgba(200, 80, 80, 0.4);
+  color: #f2b8b8;
+}
+
+.ge-source__notice {
+  background: rgba(63, 191, 127, 0.1);
+  border: 1px solid rgba(63, 191, 127, 0.35);
+  color: #a9e6c6;
+}
+
+.ge-source__actions {
+  display: flex;
+  justify-content: flex-end;
+  padding: 10px 14px 14px;
+}

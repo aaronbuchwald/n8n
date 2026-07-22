@@ -68,6 +68,18 @@ class NodeRegistry:
         self._by_id[node_id] = entry
         return entry
 
+    def unregister_module(self, module: str) -> list[str]:
+        """Drop every type whose spec ``module`` is ``module``; return the ids.
+
+        Used before re-importing an edited authoring module: the reload runs the
+        ``@node`` decorators again with *new* function objects, which would
+        otherwise trip the duplicate-id guard.
+        """
+        removed = [nid for nid, e in self._by_id.items() if e.spec["module"] == module]
+        for nid in removed:
+            del self._by_id[nid]
+        return removed
+
     def __contains__(self, node_id: str) -> bool:
         return node_id in self._by_id
 

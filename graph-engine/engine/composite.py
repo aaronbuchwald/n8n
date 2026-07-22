@@ -27,7 +27,7 @@ from .graph import Graph
 from .registry import DEFAULT_REGISTRY, NodeRegistry
 from .spec import DEFAULT_OUTPUT, is_multi_output
 
-__all__ = ["to_composite", "from_composite"]
+__all__ = ["to_composite", "from_composite", "wiring_lines", "find_composite"]
 
 
 # ======================================================================
@@ -149,6 +149,53 @@ def to_composite(
     return "\n".join(lines) + "\n"
 
 
+def wiring_lines(
+    graph: Graph,
+    registry: Optional[NodeRegistry] = None,
+    *,
+    module: Optional[str] = None,
+    indent: str = "    ",
+) -> list[str]:
+    """Emit only the composite-body wiring lines (assignments + ``return``).
+
+    Used when patching a composite **in place** inside its own authoring module
+    (ADR 0004 D5): the ``@node`` functions are defined in that same module, so
+    calls are emitted by bare qualname and no imports are added. ``module``
+    (when given) asserts every node type is defined there. Because a node id is
+    a local variable of the composite, an id equal to a called function name
+    would shadow that function (Python function-scoping) — rejected with a
+    rename hint rather than emitting broken code.
+    """
+    bound = graph if isinstance(graph, BoundGraph) else bind(graph, registry)
+
+    if module is not None:
+        for n in bound.nodes:
+            if n.spec["module"] != module:
+                raise EngineError(
+                    f"node {n.id!r} has type {n.type!r} from module "
+                    f"{n.spec['module']!r}; in-place wiring can only call "
+                    f"functions defined in {module!r}"
+                )
+
+    node_ids = {n.id for n in bound.nodes}
+    call_of: dict[str, str] = {}
+    for n in bound.nodes:
+        qualname = n.spec["qualname"]
+        if qualname in node_ids:
+            raise EngineError(
+                f"a node is named {qualname!r}, which shadows the function it "
+                f"must call — rename that node (node id = variable name, "
+                f"ADR 0004 D3)"
+            )
+        call_of[n.type] = qualname
+
+    lines = [f"{indent}{n.id} = {call_of[n.type]}({_arg_exprs(n)})" for n in bound.nodes]
+    if bound.output is not None:
+        onode, osocket = bound.output
+        lines.append(f"{indent}return {_ref(onode, osocket)}")
+    return lines or [f"{indent}pass"]
+
+
 # ======================================================================
 # composite source -> Graph (AST parse, the inverse)
 # ======================================================================
@@ -176,7 +223,7 @@ def _import_map(tree: ast.Module) -> dict[str, str]:
     return mapping
 
 
-def _find_composite(tree: ast.Module) -> ast.FunctionDef:
+def find_composite(tree: ast.Module) -> ast.FunctionDef:
     """Locate the composite: the ``@main``/``@graph`` def, else the lone def."""
     functions = [s for s in tree.body if isinstance(s, ast.FunctionDef)]
 
@@ -200,6 +247,32 @@ def _find_composite(tree: ast.Module) -> ast.FunctionDef:
         "expected exactly one @main/@graph composite; found "
         f"{len(decorated) or len(functions)}"
     )
+
+
+def _param_defaults(fn: ast.FunctionDef) -> dict[str, object]:
+    """The composite's parameters that carry a *literal* default.
+
+    A wiring argument that references such a parameter collapses to that
+    default value as a widget literal — the parameter indirection itself is not
+    graph-representable, so this is the closest faithful projection. Parameters
+    with non-literal defaults are simply omitted (referencing one errors).
+    """
+    out: dict[str, object] = {}
+    args = fn.args
+    positional = args.posonlyargs + args.args
+    for arg, default in zip(positional[len(positional) - len(args.defaults):], args.defaults):
+        try:
+            out[arg.arg] = ast.literal_eval(default)
+        except (ValueError, SyntaxError):
+            continue
+    for arg, default in zip(args.kwonlyargs, args.kw_defaults):
+        if default is None:
+            continue
+        try:
+            out[arg.arg] = ast.literal_eval(default)
+        except (ValueError, SyntaxError):
+            continue
+    return out
 
 
 def _socket_from_reference(value: ast.expr, node_ids: set[str]) -> Optional[tuple[str, str]]:
@@ -230,16 +303,19 @@ def _socket_from_reference(value: ast.expr, node_ids: set[str]) -> Optional[tupl
     return None
 
 
-def _literal_value(value: ast.expr, target: str, param: str):
+def _literal_value(value: ast.expr, target: str, param: str, params: dict[str, object]):
     """Interpret ``value`` as a widget literal, or raise a clear error."""
     if isinstance(value, ast.Constant):
         return value.value
+    if isinstance(value, ast.Name) and value.id in params:
+        return params[value.id]  # composite parameter → its literal default
     try:
         return ast.literal_eval(value)
     except (ValueError, SyntaxError):
         raise EngineError(
             f"argument for input {param!r} of node {target!r} is neither a "
-            f"reference to an earlier node nor a literal value "
+            f"reference to an earlier node, a composite parameter with a "
+            f"literal default, nor a literal value "
             f"(got {type(value).__name__}); composites are straight-line "
             f"dataflow (ADR 0004 D7)"
         ) from None
@@ -274,6 +350,7 @@ def _parse_assignment(
     graph: Graph,
     node_ids: set[str],
     pending_edges: list[tuple[str, str, str, str]],
+    params: dict[str, object],
 ) -> None:
     """Turn a ``target = call(...)`` statement into a node (+ its edges)."""
     if len(stmt.targets) != 1 or not isinstance(stmt.targets[0], ast.Name):
@@ -323,7 +400,7 @@ def _parse_assignment(
             src_id, socket = reference
             pending_edges.append((src_id, socket, target, param))
         else:
-            widgets[param] = _literal_value(value, target, param)
+            widgets[param] = _literal_value(value, target, param, params)
 
     graph.add(target, type_id, inputs=widgets)
     node_ids.add(target)
@@ -344,7 +421,12 @@ def _parse_return(stmt: ast.Return, graph: Graph, node_ids: set[str]) -> None:
     graph.output = {"node": node_id, "socket": socket}
 
 
-def from_composite(source: str, registry: Optional[NodeRegistry] = None) -> Graph:
+def from_composite(
+    source: str,
+    registry: Optional[NodeRegistry] = None,
+    *,
+    module_name: Optional[str] = None,
+) -> Graph:
     """Parse an authoring-module ``source`` string into a :class:`Graph`.
 
     The inverse of :func:`to_composite`: module-level imports resolve call names
@@ -352,6 +434,13 @@ def from_composite(source: str, registry: Optional[NodeRegistry] = None) -> Grap
     nodes (variable name = node id), argument references become edges, and
     literal arguments become widget values. Positions are left ``null`` (layout
     is excluded from the bijection, ADR 0004 D6).
+
+    ``module_name`` names the module the source belongs to; when given, calls
+    to functions *defined at the top level of this same source* also resolve —
+    to ``f"{module_name}.{name}"`` — so an authoring module whose ``@node``
+    functions live next to its composite parses without self-imports. Composite
+    parameters with literal defaults collapse to those defaults as widget
+    values (see :func:`_param_defaults`).
 
     Raises:
         EngineError: the source contains a construct outside the dataflow subset
@@ -361,8 +450,13 @@ def from_composite(source: str, registry: Optional[NodeRegistry] = None) -> Grap
     registry = registry or DEFAULT_REGISTRY
     tree = ast.parse(source)
 
+    composite = find_composite(tree)
     imports = _import_map(tree)
-    composite = _find_composite(tree)
+    if module_name is not None:
+        for stmt in tree.body:
+            if isinstance(stmt, ast.FunctionDef) and stmt is not composite:
+                imports.setdefault(stmt.name, f"{module_name}.{stmt.name}")
+    params = _param_defaults(composite)
 
     graph = Graph()
     node_ids: set[str] = set()
@@ -370,7 +464,7 @@ def from_composite(source: str, registry: Optional[NodeRegistry] = None) -> Grap
 
     for stmt in composite.body:
         if isinstance(stmt, ast.Assign):
-            _parse_assignment(stmt, imports, registry, graph, node_ids, pending_edges)
+            _parse_assignment(stmt, imports, registry, graph, node_ids, pending_edges, params)
         elif isinstance(stmt, ast.Return):
             _parse_return(stmt, graph, node_ids)
         elif isinstance(stmt, ast.Pass):

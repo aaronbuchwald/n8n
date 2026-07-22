@@ -26,7 +26,7 @@ import webbrowser
 import uvicorn
 
 from .app import WEB_DIST, create_app
-from .demo import load_minimal_graph
+from .demo import load_minimal_graph, make_minimal_workspace
 
 
 def view_url(host: str, port: int) -> str:
@@ -76,7 +76,8 @@ def main() -> None:
     for module in args.library:
         importlib.import_module(module)
 
-    sample_graph = load_minimal_graph() if args.demo else None
+    workspace = make_minimal_workspace() if args.demo else None
+    sample_graph = load_minimal_graph(workspace) if args.demo else None
 
     url = args.open_url or view_url(args.host, args.port)
 
@@ -103,7 +104,11 @@ def main() -> None:
             )
         threading.Thread(target=_wait_for_enter_then_open, args=(url,), daemon=True).start()
 
-    uvicorn.run(create_app(sample_graph=sample_graph), host=args.host, port=args.port)
+    uvicorn.run(
+        create_app(sample_graph=sample_graph, workspace=workspace),
+        host=args.host,
+        port=args.port,
+    )
 
 
 if __name__ == "__main__":
