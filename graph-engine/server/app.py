@@ -65,7 +65,8 @@ def create_app(registry: Optional[NodeRegistry] = None) -> FastAPI:
         try:
             result = run(graph, registry)  # environment honoured by stream C later
         except NodeExecutionError as exc:
-            return {"outputs": {}, "order": [], "errors": [_error_payload(exc)]}
+            # Keep the documented response shape on failure (ADR 0002).
+            return {"outputs": {}, "order": [], "output": graph.output, "errors": [_error_payload(exc)]}
         except EngineError as exc:
             raise HTTPException(status_code=422, detail=[_error_payload(exc)]) from exc
         return {

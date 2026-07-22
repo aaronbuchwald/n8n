@@ -32,6 +32,15 @@ GET/PUT /api/source/{spec_id}    -> 501 (reserved for stream E)
 - `environment` on `/api/run` is accepted and ignored until stream C wires the
   sandboxed runner in; in-process run is the dev default.
 
+## Security posture (v1)
+
+`/api/run` executes arbitrary node code **in-process with no isolation** — a
+node can read any host path (`read_csv` opens absolute paths by design), open
+sockets, etc. Enforcement (subprocess + ephemeral venv + mount guard) is
+deferred to stream C (ADR 0003); v1 is accident-proof, not malice-proof. The
+server binds `127.0.0.1` by default. **Do not expose `/api/run` on an untrusted
+network, and do not run untrusted graphs, until the sandbox exists.**
+
 ## Deferred
 
 - Structured per-node bind errors (today the `nodeId` is in the message text for
