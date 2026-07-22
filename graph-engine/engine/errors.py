@@ -6,7 +6,7 @@ imported anywhere without pulling in a UI or heavy libraries.
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 
 
 class EngineError(Exception):
@@ -95,11 +95,31 @@ class NodeExecutionError(EngineError):
 
     Carries the offending ``node_id`` so a UI can highlight it; the original
     exception is available as ``__cause__``.
+
+    ``message`` is the *raw* cause text (``str(cause)``, no wrapping prefix) —
+    combined with the structural ``node_id``, a UI can badge and display the
+    failure without parsing it out of ``str(exc)``, which stays the fuller
+    "node X (type) raised Y: ..." form for logs/CLI (review 0005 #14).
+
+    ``outputs``/``order`` carry the results of every node that finished
+    executing *before* this one failed, so a caller doesn't have to discard
+    them just because the run as a whole didn't succeed (review 0005 #6).
     """
 
-    def __init__(self, node_id: str, node_type: str, cause: BaseException) -> None:
+    def __init__(
+        self,
+        node_id: str,
+        node_type: str,
+        cause: BaseException,
+        *,
+        outputs: Optional[dict[str, dict[str, Any]]] = None,
+        order: Optional[list[str]] = None,
+    ) -> None:
         self.node_id = node_id
         self.node_type = node_type
+        self.message = str(cause)
+        self.outputs = outputs or {}
+        self.order = order or []
         super().__init__(f"node {node_id!r} ({node_type}) raised {type(cause).__name__}: {cause}")
 
 

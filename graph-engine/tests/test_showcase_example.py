@@ -72,10 +72,17 @@ def test_showcase_graph_types_are_all_in_the_palette():
 
 
 def test_showcase_graph_binds_and_runs_to_one_html_card():
-    from server.demo import load_showcase_graph
+    from server.demo import SHOWCASE_RUN_PATH_OVERRIDES, load_showcase_graph
 
     graph = load_showcase_graph()
-    client = TestClient(create_app(DEFAULT_REGISTRY, sample_graph=graph, web_dist=None))
+    client = TestClient(
+        create_app(
+            DEFAULT_REGISTRY,
+            sample_graph=graph,
+            web_dist=None,
+            run_path_overrides=SHOWCASE_RUN_PATH_OVERRIDES,
+        )
+    )
 
     assert client.post("/api/graphs/validate", json={"graph": graph}).status_code == 200
     result = client.post("/api/run", json={"graph": graph}).json()
@@ -97,6 +104,14 @@ def test_showcase_editable_widgets_are_declared_on_the_graph():
     assert by_type["sym.parse_expr"]["inputs"]["text"] == "x**2 - 5*x + 6"
     assert by_type["table.apply_recipe"]["inputs"]["recipe"]["version"] == 1
     assert by_type["table.table_summary"]["inputs"]["title"] == "Sales by region"
+
+
+def test_showcase_graph_path_literal_stays_relative_as_authored():
+    """The served graph is pristine (review 0005 #3) — no machine-absolute path."""
+    from server.demo import load_showcase_graph
+
+    by_type = {n["type"]: n for n in load_showcase_graph()["nodes"]}
+    assert by_type["table.read_table"]["inputs"]["path"] == "showcase.csv"
 
 
 # -- a widget commit round-trips through PUT /api/graph -----------------------
@@ -160,6 +175,74 @@ def test_showcase_widget_commit_round_trips(showcase_sandbox):
     text = module_file.read_text(encoding="utf-8")
     assert "parse_expr(text='x**2 - 4')" in text
     assert client.post("/api/run", json={"graph": saved}).json()["errors"] == []
+
+
+@pytest.fixture()
+def showcase_sandbox_pristine(tmp_path: Path):
+    """Like ``showcase_sandbox``, but the served graph is never pre-baked with
+    an absolute path — it mirrors the real ``load_showcase_graph`` +
+    ``run_path_overrides`` flow, to prove a widget commit can't leak the
+    sandbox's absolute path into the persisted source (review 0005 #3).
+    """
+    name = f"showcase_{uuid.uuid4().hex[:8]}"
+    module_file = tmp_path / f"{name}.py"
+    shutil.copy(SHOWCASE_DIR / "showcase.py", module_file)
+    shutil.copy(SHOWCASE_DIR / "showcase.csv", tmp_path / "showcase.csv")
+
+    sys.path.insert(0, str(tmp_path))
+    import importlib
+
+    importlib.import_module(name)
+    workspace = Workspace(DEFAULT_REGISTRY, name, allowed_roots=[tmp_path])
+
+    graph = workspace.parse_graph()  # pristine: relative "showcase.csv", as authored
+    run_overrides = {"table.read_table": str(tmp_path / "showcase.csv")}
+    client = TestClient(
+        create_app(DEFAULT_REGISTRY, graph, workspace=workspace, run_path_overrides=run_overrides)
+    )
+    yield client, module_file, tmp_path
+
+    sys.path.remove(str(tmp_path))
+    sys.modules.pop(name, None)
+    DEFAULT_REGISTRY.unregister_module(name)
+
+
+def test_showcase_widget_commit_keeps_path_relative_and_run_still_works(showcase_sandbox_pristine):
+    """review 0005 #3: the served graph and the first widget commit both keep
+    the ``path`` literal exactly as authored — ``/api/run`` still works via the
+    run-time-only override, not by baking the absolute path into the source."""
+    client, module_file, tmp_path = showcase_sandbox_pristine
+    graph = client.get("/api/graph").json()
+
+    read_table = next(n for n in graph["nodes"] if n["type"] == "table.read_table")
+    assert read_table["inputs"]["path"] == "showcase.csv"  # pristine before any commit
+
+    # Simulate a text-widget edit — the first commit finding #3 describes.
+    summary = next(n for n in graph["nodes"] if n["type"] == "table.table_summary")
+    summary["inputs"]["title"] = "Edited via widget"
+
+    res = client.put("/api/graph", json={"graph": graph})
+    assert res.status_code == 200, res.text
+    saved = res.json()["graph"]
+
+    # The commit landed...
+    assert (
+        next(n for n in saved["nodes"] if n["type"] == "table.table_summary")["inputs"]["title"]
+        == "Edited via widget"
+    )
+    # ...but the path literal is untouched: still relative, not the sandbox's
+    # machine-specific absolute path — both in what's re-served...
+    saved_read_table = next(n for n in saved["nodes"] if n["type"] == "table.read_table")
+    assert saved_read_table["inputs"]["path"] == "showcase.csv"
+    assert client.get("/api/graph").json() == saved
+    # ...and in what actually landed on disk.
+    text = module_file.read_text(encoding="utf-8")
+    assert "path='showcase.csv'" in text
+    assert str(tmp_path) not in text  # the sandbox's absolute dir never lands in source
+
+    # And /api/run still works end to end, thanks to the run-time-only override.
+    result = client.post("/api/run", json={"graph": saved}).json()
+    assert result["errors"] == []
 
 
 def test_showcase_reject_uncallable_type_is_still_rejected(showcase_sandbox):

@@ -6,7 +6,9 @@ order. For each node it gathers inputs by reference — widget literals plus the
 resolved value of each wired upstream socket — invokes the callable respecting
 its parameter kinds (positional-only params are passed positionally), and stores
 its outputs. A failure inside a node's code is wrapped in
-:class:`~engine.errors.NodeExecutionError` carrying the node id.
+:class:`~engine.errors.NodeExecutionError` carrying the node id, plus the
+outputs/order of every node that ran to completion first (review 0005 #6) — a
+caller can inspect what *did* execute instead of discarding it.
 """
 
 from __future__ import annotations
@@ -97,6 +99,7 @@ def run(
 
     outputs: dict[str, dict[str, Any]] = {}
     returns: dict[str, Any] = {}
+    executed: list[str] = []
 
     for node in bound.nodes:
         provided = dict(node.literals)
@@ -106,9 +109,12 @@ def run(
         try:
             result = _invoke(node.entry.fn, provided)
         except Exception as exc:  # noqa: BLE001 - re-raised as NodeExecutionError
-            raise NodeExecutionError(node.id, node.type, exc) from exc
+            # `outputs`/`executed` cover every node that finished before this
+            # one failed — attach them so a caller isn't left with nothing.
+            raise NodeExecutionError(node.id, node.type, exc, outputs=outputs, order=executed) from exc
 
         returns[node.id] = result
         _store_outputs(node, result, outputs)
+        executed.append(node.id)
 
-    return ExecutionResult(outputs=outputs, returns=returns, order=[n.id for n in bound.nodes])
+    return ExecutionResult(outputs=outputs, returns=returns, order=executed)

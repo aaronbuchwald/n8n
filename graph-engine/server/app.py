@@ -42,8 +42,14 @@ def _error_payload(exc: Exception) -> dict:
     * ``edge`` — the offending connection ``{source, sourceOutput, target,
       targetInput}`` for edge-scoped bind errors.
     * ``nodeIds`` — the ids caught in a cycle (``CycleError``).
+
+    ``message`` prefers the exception's own ``message`` attribute when it has
+    one (``NodeExecutionError`` sets it to the raw cause text, no node-id
+    prefix) over ``str(exc)``, so a UI reading ``{nodeId, message}`` never has
+    to strip a baked-in prefix itself (review 0005 #14).
     """
-    payload: dict[str, Any] = {"code": type(exc).__name__, "message": str(exc)}
+    message = getattr(exc, "message", None)
+    payload: dict[str, Any] = {"code": type(exc).__name__, "message": message if message is not None else str(exc)}
     node_id = getattr(exc, "node_id", None)
     if node_id is not None:
         payload["nodeId"] = node_id
@@ -63,11 +69,31 @@ def _graph_from(body: dict) -> Graph:
     return Graph.from_dict(raw)
 
 
+def _with_run_path_overrides(graph: Graph, overrides: dict[str, str]) -> Graph:
+    """A copy of ``graph`` with ``path`` inputs of ``overrides``-matched nodes rewritten.
+
+    Applied **only** to the graph handed to :func:`engine.run` inside
+    ``/api/run`` — never to what ``GET /api/graph`` serves or what
+    ``PUT /api/graph`` persists, which both keep the literal exactly as
+    authored (review 0005 #3). ``overrides`` maps node ``type`` -> the
+    replacement ``path`` value.
+    """
+    if not overrides:
+        return graph
+    patched = Graph.from_dict(graph.to_dict())  # deep copy; never mutate the caller's graph
+    for node in patched.nodes:
+        override = overrides.get(node.type)
+        if override is not None and "path" in node.inputs:
+            node.inputs["path"] = override
+    return patched
+
+
 def create_app(
     registry: Optional[NodeRegistry] = None,
     sample_graph: Optional[Any] = None,
     web_dist: Optional[Path] = WEB_DIST,
     workspace: Optional[Workspace] = None,
+    run_path_overrides: Optional[dict[str, str]] = None,
 ) -> FastAPI:
     """Build the app over ``registry`` (defaults to the process registry).
 
@@ -83,6 +109,12 @@ def create_app(
     composite's wiring lines (ADR 0004 D2/D5). Without it those routes keep
     replying 501, as before.
 
+    ``run_path_overrides`` — ``{node_type: path}`` rewrites applied to a graph's
+    matching ``path`` inputs **only** while executing ``/api/run``, so a demo
+    can run from any working directory without the absolute path ever reaching
+    the served graph, a widget commit, or ``PUT /api/graph`` (review 0005 #3;
+    see ``server/demo.py``).
+
     ``web_dist`` — if the directory exists, the built web app is mounted at
     ``/`` (``html=True``) so the SPA is served **same-origin** with ``/api/*``
     (the web already fetches relative ``/api/*``). It is mounted **last** so it
@@ -90,6 +122,7 @@ def create_app(
     to skip the mount — e.g. when the web is served separately via ``pnpm dev``.
     """
     registry = registry or DEFAULT_REGISTRY
+    run_path_overrides = run_path_overrides or {}
     # Normalise to the engine graph JSON dict once; accept a Graph or a dict.
     # Kept in a one-slot dict so PUT /api/graph can swap in the saved graph.
     state: dict[str, Optional[dict]] = {
@@ -129,10 +162,20 @@ def create_app(
         except EngineError as exc:
             raise HTTPException(status_code=422, detail=[_error_payload(exc)]) from exc
         try:
-            result = run(graph, registry)  # environment honoured by stream C later
+            # environment honoured by stream C later; run_path_overrides never
+            # touch `graph` itself, only the copy handed to the executor.
+            result = run(_with_run_path_overrides(graph, run_path_overrides), registry)
         except NodeExecutionError as exc:
-            # Keep the documented response shape on failure (ADR 0002).
-            return {"outputs": {}, "order": [], "output": graph.output, "errors": [_error_payload(exc)]}
+            # ADR 0002's shape is additive on failure: `errors` is unchanged,
+            # but `outputs`/`order` now carry every node that ran before the
+            # failure instead of being discarded (review 0005 #6).
+            return {
+                "outputs": {nid: {s: to_jsonable(v) for s, v in sockets.items()}
+                            for nid, sockets in exc.outputs.items()},
+                "order": exc.order,
+                "output": graph.output,
+                "errors": [_error_payload(exc)],
+            }
         except EngineError as exc:
             raise HTTPException(status_code=422, detail=[_error_payload(exc)]) from exc
         return {

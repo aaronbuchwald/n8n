@@ -35,7 +35,7 @@ import webbrowser
 import uvicorn
 
 from .app import WEB_DIST, create_app
-from .demo import load_showcase_graph, make_showcase_workspace
+from .demo import SHOWCASE_RUN_PATH_OVERRIDES, load_showcase_graph, make_showcase_workspace
 
 
 def view_url(host: str, port: int) -> str:
@@ -110,6 +110,9 @@ def main() -> None:
 
     workspace = make_showcase_workspace() if args.demo else None
     sample_graph = load_showcase_graph(workspace) if args.demo else None
+    # Absolute CSV path applied at /api/run time only — the served/persisted
+    # graph keeps the relative path the module authors (review 0005 #3).
+    run_path_overrides = SHOWCASE_RUN_PATH_OVERRIDES if args.demo else None
 
     url = args.open_url or view_url(args.host, args.port)
 
@@ -137,7 +140,7 @@ def main() -> None:
         threading.Thread(target=_wait_for_enter_then_open, args=(url,), daemon=True).start()
 
     uvicorn.run(
-        create_app(sample_graph=sample_graph, workspace=workspace),
+        create_app(sample_graph=sample_graph, workspace=workspace, run_path_overrides=run_path_overrides),
         host=args.host,
         port=args.port,
     )
