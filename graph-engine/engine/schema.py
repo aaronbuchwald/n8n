@@ -175,11 +175,13 @@ def validate_graph(graph: Any) -> dict:
 
     ids: set[str] = set()
     for node in graph["nodes"]:
+        _require(isinstance(node, dict), "each node must be an object")
         _require("id" in node and "type" in node, "each node needs 'id' and 'type'")
         _require(node["id"] not in ids, f"duplicate node id: {node['id']!r}")
         ids.add(node["id"])
 
     for edge in graph["edges"]:
+        _require(isinstance(edge, dict), "each edge must be an object")
         for key in ("source", "sourceOutput", "target", "targetInput"):
             _require(key in edge, f"edge missing key {key!r}")
         _require(edge["source"] in ids, f"edge source {edge['source']!r} is not a node id")
@@ -187,6 +189,7 @@ def validate_graph(graph: Any) -> dict:
 
     output = graph.get("output")
     if output is not None:
+        _require(isinstance(output, dict), "graph 'output' must be an object or null")
         _require("node" in output and "socket" in output, "graph 'output' needs 'node' and 'socket'")
         _require(output["node"] in ids, f"graph output node {output['node']!r} is not a node id")
     return graph

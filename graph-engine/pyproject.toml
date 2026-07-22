@@ -8,9 +8,17 @@ requires-python = ">=3.10"
 dependencies = []
 
 [project.optional-dependencies]
-# `uv sync --extra dev` — run the test suite.
+# `uv sync --extra server` — the FastAPI HTTP service.
+server = [
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+]
+# `uv sync --extra dev` — run the full test suite (includes server deps).
 dev = [
     "pytest>=8.0",
+    "httpx>=0.27",
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
 ]
 
 [build-system]
@@ -18,9 +26,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-# The engine is a real, installable package, so `import engine` works anywhere
-# (examples, server, node packs) without any sys.path manipulation.
-packages = ["engine"]
+# Real, installable packages, so `import engine` / `import server` work anywhere
+# (examples, node packs, tests) without any sys.path manipulation.
+packages = ["engine", "server"]
 
 [tool.pytest.ini_options]
 # `engine` is installed into the venv; only the example module needs a path.
