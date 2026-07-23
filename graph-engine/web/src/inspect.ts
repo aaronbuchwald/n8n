@@ -60,6 +60,12 @@ export function inspectNode(
   specs: NodeSpecs,
   nodeId: string,
   runOutputs: Record<string, SocketValues> | null,
+  // The run predates the current graph (ADR 0008 G1). When stale, don't
+  // synthesize a fresh literal as this input's "run value" — that is exactly
+  // the mixed-epoch lie the reported bug showed (a just-edited literal rendered
+  // as if the last run had computed it). Genuine run outputs still flow through;
+  // the caller dims them.
+  runIsStale = false,
 ): InspectedNode | null {
   const gn = graph.nodes.find((n) => n.id === nodeId);
   if (!gn) return null;
@@ -92,7 +98,10 @@ export function inspectNode(
       }
     } else if (has(bound, name)) {
       source = { kind: 'literal', value: bound[name] };
-      if (runOutputs) run = { value: bound[name] };
+      // A literal is the value that flowed into this input during the run — but
+      // only if the run still describes the current graph. When stale, the
+      // literal shown here is fresher than the run, so it is NOT a run value.
+      if (runOutputs && !runIsStale) run = { value: bound[name] };
     } else if (meta?.widget) {
       source = { kind: 'widget', widget: meta.widget, default: meta.default };
     } else if (meta && !meta.required) {

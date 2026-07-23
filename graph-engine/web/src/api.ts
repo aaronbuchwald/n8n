@@ -148,10 +148,10 @@ export interface SourceInfo {
 export interface SaveSourceResult extends SourceInfo {
   spec: NodeSpec; // re-introspected after the module reload
   graphErrors: EngineErrorItem[]; // the served graph may stop binding after an edit
-  // NOTE: PUT /api/source also returns the re-projected `graph` now (ADR 0008
-  // G3), but Phase 0's source-save path re-fetches it via reload rather than
-  // threading it up through the (unowned) SourceEditor/NodeInspector props.
-  // Phase 1 (8-S1) types + ingests it when the store consumes the response.
+  // The re-projected graph the server now serves after the edit (ADR 0008 G3;
+  // "writes return truth"). Phase 1 (8-S1) ingests it from this response, so a
+  // source save needs no follow-up GET (Gap G4).
+  graph?: GraphDoc;
 }
 
 export interface SaveGraphResult {

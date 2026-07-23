@@ -16,12 +16,13 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 
-import type { SocketValues } from './api';
 import { buildFlow, layoutFlowNodes } from './buildGraph';
 import { NodeInspector } from './components/NodeInspector';
 import { SpecNode } from './components/SpecNode';
 import { inspectNode } from './inspect';
-import type { GraphDoc, NodeSpecs, SpecNodeData } from './types';
+import { selectErrorNodeId, selectRunIsStale } from './store/sync';
+import { useSyncSelector } from './store/useSyncSelector';
+import type { SpecNodeData } from './types';
 
 const nodeTypes: NodeTypes = { specNode: SpecNode };
 
@@ -48,11 +49,27 @@ function sameGraphData(a: SpecNodeData, b: SpecNodeData): boolean {
   );
 }
 
-// A structural signature: the node ids + edges. It changes only on a real
-// topology change (add/remove node or rewire), never on a literal edit — which
-// is what lets a widget commit reflect in place without a re-layout/re-frame.
-function structureKeyOf(nodes: { id: string }[], edges: { id: string }[]): string {
-  return JSON.stringify({ n: nodes.map((n) => n.id), e: edges.map((e) => e.id) });
+// A per-node socket signature: the node type plus its ordered input/output
+// socket NAMES (from the spec, or the wired sockets on a spec-less node). It
+// changes when a write reshapes a node — a source save that alters the
+// signature, or a dynamic-handcalc equation edit whose free symbols ARE the
+// sockets (ADR 0007) — so such a write is treated as structural (re-measure +
+// re-layout) instead of an in-place literal patch (ADR 0008 G6).
+function socketSignature(data: SpecNodeData): string {
+  const inputs = data.spec ? data.spec.inputs.map((i) => i.name) : [...data.wiredInputs];
+  const outputs = data.spec ? data.spec.outputs.map((o) => o.name) : [...data.wiredOutputs];
+  return `${data.type}(${inputs.join(',')}|${outputs.join(',')})`;
+}
+
+// A structural signature: node ids + per-node socket signatures + edge ids. It
+// changes on a real topology change (add/remove node or rewire) OR a shape
+// change (G6), never on a plain literal edit — which is what lets a widget
+// commit reflect in place without a re-layout/re-frame.
+function structureKeyOf(nodes: { id: string; data: SpecNodeData }[], edges: { id: string }[]): string {
+  return JSON.stringify({
+    n: nodes.map((n) => [n.id, socketSignature(n.data)]),
+    e: edges.map((e) => e.id),
+  });
 }
 
 // Smoothstep reads cleanly for a layered left-to-right DAG: edges leave/enter
@@ -65,16 +82,10 @@ export interface FocusRequest {
   token: number;
 }
 
+// The canvas reads the graph, specs and run from the store via selectors (8-S1);
+// it takes only the UI-interaction wiring the shell owns as props, so the App
+// stays a thin, selector-driven shell (and rebases over 9-S2c / 11-W4 cheaply).
 interface GraphViewProps {
-  graph: GraphDoc;
-  specs: NodeSpecs;
-  // Per-node socket values from the latest run (null before any run).
-  runOutputs: Record<string, SocketValues> | null;
-  // The latest run's values predate the current graph (an edit landed since):
-  // the result chips are kept for context but rendered dimmed (ADR 0008 G1).
-  runIsStale: boolean;
-  // The node the latest run failed at, if any.
-  errorNodeId: string | null;
   // Selection is owned by the caller so panels outside the canvas (results
   // rows, the app-level Escape handler) can drive it too.
   selectedNodeId: string | null;
@@ -85,27 +96,30 @@ interface GraphViewProps {
   // Escape cascade and selection changes can close it.
   editingSource: boolean;
   onEditSourceChange: (open: boolean) => void;
-  onSourceSaved: () => void;
 }
 
 // mount → nodes measured → final layout applied → graph framed → visible.
 type LayoutPhase = 'measuring' | 'framing' | 'ready';
 
 function GraphCanvas({
-  graph,
-  specs,
-  runOutputs,
-  runIsStale,
-  errorNodeId,
   selectedNodeId,
   onSelectNode,
   focusRequest,
   editingSource,
   onEditSourceChange,
-  onSourceSaved,
 }: GraphViewProps) {
+  // The single source of truth (8-S1). `effective.graph` is authoritative ⊕ the
+  // optimistic overlay, so an in-flight literal edit is on the canvas instantly;
+  // each of these selectors returns a stored reference or a primitive, so the
+  // snapshot stays stable (the useSyncExternalStore rule).
+  const graph = useSyncSelector((s) => s.effective.graph);
+  const specs = useSyncSelector((s) => s.specs);
+  const runOutputs = useSyncSelector((s) => s.run?.outputs ?? null);
+  const runIsStale = useSyncSelector(selectRunIsStale);
+  const errorNodeId = useSyncSelector(selectErrorNodeId);
+
   const { nodes: initialNodes, edges: initialEdges } = useMemo(
-    () => buildFlow(graph, specs),
+    () => (graph ? buildFlow(graph, specs) : { nodes: [], edges: [] }),
     [graph, specs],
   );
 
@@ -287,13 +301,16 @@ function GraphCanvas({
   }, [focusRequest, fitView, setNodes]);
 
   const inspected = useMemo(
-    () => (selectedNodeId ? inspectNode(graph, specs, selectedNodeId, runOutputs) : null),
-    [graph, specs, selectedNodeId, runOutputs],
+    () =>
+      graph && selectedNodeId
+        ? inspectNode(graph, specs, selectedNodeId, runOutputs, runIsStale)
+        : null,
+    [graph, specs, selectedNodeId, runOutputs, runIsStale],
   );
 
   // Several nodes may share one @node function; the source editor says so.
   const sharedNodeCount = useMemo(
-    () => (inspected ? graph.nodes.filter((n) => n.type === inspected.typeName).length : 0),
+    () => (graph && inspected ? graph.nodes.filter((n) => n.type === inspected.typeName).length : 0),
     [graph, inspected],
   );
 
@@ -336,7 +353,6 @@ function GraphCanvas({
           sharedNodeCount={sharedNodeCount}
           editingSource={editingSource}
           onEditSource={onEditSourceChange}
-          onSourceSaved={onSourceSaved}
           onClose={() => onSelectNode(null)}
         />
       )}

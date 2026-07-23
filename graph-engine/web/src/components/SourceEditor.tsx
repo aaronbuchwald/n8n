@@ -1,6 +1,8 @@
 import { Suspense, lazy, useCallback, useEffect, useState } from 'react';
 
-import { fetchSource, saveSource, type SourceInfo } from '../api';
+import { fetchSource, saveSource } from '../api';
+import { ingestSource, ingestSourceSave } from '../store/sync';
+import { useSyncSelector } from '../store/useSyncSelector';
 
 // Monaco is heavy; load it as its own chunk only when the source editor opens.
 const MonacoEditor = lazy(() => import('../monaco/MonacoEditor'));
@@ -10,7 +12,6 @@ interface SourceEditorProps {
   specId: string;
   /** How many canvas nodes share this type — the honesty label when > 1. */
   sharedNodeCount: number;
-  onSaved: () => void; // refresh specs/graph after a successful write
   onClose: () => void; // back to the inspector view
 }
 
@@ -23,23 +24,31 @@ interface SourceEditorProps {
  * module, so signature changes flow into the palette. The body is a Monaco
  * editor with Python highlighting, fully bundled offline (see monaco/setup.ts).
  */
-export function SourceEditor({ specId, sharedNodeCount, onSaved, onClose }: SourceEditorProps) {
-  const [info, setInfo] = useState<SourceInfo | null>(null);
+export function SourceEditor({ specId, sharedNodeCount, onClose }: SourceEditorProps) {
+  // The source cache lives in the store now (Gap G5): the path·lines basis is
+  // one shared value, so a wiring/source write elsewhere refreshes this label
+  // instead of leaving a stale per-view snapshot. The editable draft stays local.
+  const info = useSyncSelector((s) => s.sources[specId] ?? null);
   const [text, setText] = useState('');
+  const [loaded, setLoaded] = useState(false); // has this editor seeded its draft?
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
-    setInfo(null);
+    setLoaded(false);
+    setText('');
     setError(null);
     setNotice(null);
+    // Always fetch the authoritative source on open, then seed the draft from it
+    // and cache it in the store for every other view.
     fetchSource(specId)
       .then((data) => {
         if (cancelled) return;
-        setInfo(data);
+        ingestSource(data);
         setText(data.source);
+        setLoaded(true);
       })
       .catch((err: unknown) => {
         if (!cancelled) setError(err instanceof Error ? err.message : String(err));
@@ -55,14 +64,17 @@ export function SourceEditor({ specId, sharedNodeCount, onSaved, onClose }: Sour
     setNotice(null);
     try {
       const result = await saveSource(specId, text);
-      setInfo(result);
+      // The response carries the re-introspected spec, the fresh source AND the
+      // re-projected graph — ingest all three from the one write, no reload
+      // (Gaps G1/G3/G4); rev bumps so run views read stale and a signature
+      // change re-lays-out the card (G6).
+      ingestSourceSave(result);
       setText(result.source);
       setNotice(
         result.graphErrors.length > 0
           ? `Saved to ${result.path}, but the graph no longer binds: ${result.graphErrors[0].message}`
           : `Saved to ${result.path}`,
       );
-      onSaved();
     } catch (err: unknown) {
       // A rejected save (syntax error, wrong function, reload failure): the
       // file on disk is untouched — surface the reason inline and keep editing.
@@ -70,7 +82,7 @@ export function SourceEditor({ specId, sharedNodeCount, onSaved, onClose }: Sour
     } finally {
       setPending(false);
     }
-  }, [specId, text, onSaved]);
+  }, [specId, text]);
 
   return (
     <div className="ge-source" data-testid="source-editor" aria-label={`Source of ${specId}`}>
@@ -110,7 +122,7 @@ export function SourceEditor({ specId, sharedNodeCount, onSaved, onClose }: Sour
             </div>
           }
         >
-          <MonacoEditor value={text} readOnly={info === null} onChange={setText} />
+          <MonacoEditor value={text} readOnly={!loaded} onChange={setText} />
         </Suspense>
       </div>
 
@@ -131,7 +143,7 @@ export function SourceEditor({ specId, sharedNodeCount, onSaved, onClose }: Sour
           type="button"
           className="ge-btn ge-btn--primary"
           data-testid="source-save-button"
-          disabled={info === null || pending}
+          disabled={!loaded || pending}
           onClick={onSave}
         >
           {pending ? 'Saving…' : 'Save to file'}
