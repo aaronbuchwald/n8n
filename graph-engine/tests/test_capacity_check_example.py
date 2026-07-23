@@ -3,11 +3,12 @@
 Covers, in order:
 
 * the example-local nodes in isolation (plain Python, always run) —
-  ``select_extreme`` picking the right row, ``check_capacity`` building a
-  PASS/FAIL verdict for both outcomes;
+  ``select_extreme`` picking the right row, ``check_verdict`` reading the
+  calc's own boolean and raising on false / on a missing key (ADR 0016 D2);
 * the graph end-to-end: correct extremes (max force, min capacity), the
-  verdict matching ``force < capacity``, and a self-contained HTML card
-  (native MathML present, no ``http``/``<script>`` references).
+  verdict agreeing with ``steps.results["check"]``, and a self-contained HTML
+  card whose math block *is* the verdict (the substituted ``check`` row), with
+  no parallel PASS/FAIL re-derivation.
 
 Run with:  uv run --extra dev --extra sym python -m pytest -q
 """
@@ -16,7 +17,7 @@ from __future__ import annotations
 
 import pytest
 
-from engine import Graph, UserError, run, to_python, validate_graph
+from engine import Graph, NodeExecutionError, UserError, run, to_python, validate_graph
 
 HEAVY_DEPS = ("sympy", "handcalcs", "forallpeople", "latex2mathml")
 
@@ -73,19 +74,32 @@ def test_select_extreme_rejects_missing_column():
         select_extreme(table, column="capacity", mode="max")
 
 
-def test_check_capacity_pass_verdict():
-    from capacity_check import check_capacity
+def test_check_verdict_passes_silently_on_true():
+    """A True `check` result is a no-op returning {ok: True} — no comparison."""
+    from capacity_check import check_verdict
 
-    out = check_capacity(force=120.0, capacity=210.0)
-    assert out == {"ok": True, "text": "PASS — 120 < 210"}
+    out = check_verdict(results={"C_min": 210.0, "F_max": 120.0, "margin": 90.0, "check": True})
+    assert out == {"ok": True}
 
 
-def test_check_capacity_fail_verdict():
-    from capacity_check import check_capacity
+def test_check_verdict_raises_on_false():
+    """A False `check` result raises — the run reddens this node (ADR 0016 D2)."""
+    from capacity_check import check_verdict
 
-    out = check_capacity(force=300.0, capacity=210.0)
-    assert out["ok"] is False
-    assert out["text"] == "FAIL — 300 ≥ 210"
+    with pytest.raises(UserError, match="Capacity check failed"):
+        check_verdict(results={"margin": -20.0, "check": False})
+
+
+def test_check_verdict_raises_on_missing_key_listing_available_results():
+    """Criterion #5 — a missing key raises loudly, naming the available results."""
+    from capacity_check import check_verdict
+
+    with pytest.raises(UserError) as excinfo:
+        check_verdict(results={"C_min": 210.0, "margin": 90.0})
+    message = str(excinfo.value)
+    assert "'check'" in message
+    # The available result names are listed so a rename fails loudly, not stale.
+    assert "C_min" in message and "margin" in message
 
 
 # -- the example graph, end-to-end --------------------------------------------
@@ -106,21 +120,25 @@ def test_graph_loads_binds_and_runs_end_to_end():
 
 
 @needs_sym_extra
-def test_verdict_matches_force_less_than_capacity():
+def test_verdict_agrees_with_the_calc_check_result():
+    """Criterion #4 — one execution feeds the math block and the verdict.
+
+    The verdict node emits `ok` iff the calc's own `check` result is True;
+    there is no second computation to disagree with.
+    """
     from capacity_check import build_graph
 
     result = run(build_graph())
-    force = result.value("select_extreme", "value")
-    capacity = result.value("select_extreme_2", "value")
-    verdict = result.outputs["check_capacity"]
+    check = result.value("handcalc", "results")["check"]
 
-    assert verdict["ok"] == (force < capacity)
-    assert verdict["ok"] is True  # true for this example's mock data
-    assert f"{force:g}" in verdict["text"] and f"{capacity:g}" in verdict["text"]
+    assert check is True  # true for this example's mock data (margin 90)
+    # One execution: the verdict node ran without raising (a no-op on pass)
+    # precisely because the calc's own `check` is True — nothing recomputed.
+    assert bool(result.value("check_verdict", "ok"))
 
 
 @needs_sym_extra
-def test_output_html_shows_values_and_verdict_and_is_self_contained():
+def test_output_html_shows_the_substituted_check_and_is_self_contained():
     from capacity_check import build_graph
 
     graph = build_graph()
@@ -131,11 +149,19 @@ def test_output_html_shows_values_and_verdict_and_is_self_contained():
     # handcalcs display: the substituted numbers are typeset as native MathML.
     assert "<math" in html and "</math>" in html
     assert "210.000" in html and "120.000" in html and "90.000" in html  # C_min, F_max, margin
+    # Criterion #3 — the assertion is its own math row (equation row + check
+    # row), and its boolean result is typeset (`True` as letter tokens).
+    assert html.count("<math") == 2
+    assert "<mi>T</mi><mi>r</mi><mi>u</mi><mi>e</mi>" in html
     # The caption (from calc_notes) restates each results symbol as `name = value`,
     # generated from handcalc.results — one source of truth (ADR 0013 Change 2).
     assert "C_min = 210" in html and "F_max = 120" in html and "margin = 90" in html
-    # The separate check node's verdict is shown too (not just the numbers).
-    assert "PASS" in html and "120 &lt; 210" in html
+    # The boolean verdict is visible in the caption too, straight from results.
+    assert "check = True" in html
+    # No parallel PASS/FAIL re-derivation: neither the word nor the raw-input
+    # comparison string survives (ADR 0016 criterion #1).
+    assert "PASS" not in html and "FAIL" not in html
+    assert "120 &lt; 210" not in html
     # Self-contained: no external/CDN references, no script.
     assert "http" not in html
     assert "<script" not in html and "<link" not in html and "@import" not in html
@@ -166,7 +192,7 @@ def test_graph_exports_python():
     )
 
 
-# -- ADR 0013 Change 2: single source of truth for the caption ----------------
+# -- ADR 0016: single source of truth for the verdict -------------------------
 
 
 def _edge_set(graph) -> set[tuple[str, str, str, str]]:
@@ -176,22 +202,29 @@ def _edge_set(graph) -> set[tuple[str, str, str, str]]:
     }
 
 
-def test_caption_is_wired_from_handcalc_results_through_calc_notes():
-    """2.1 — the handcalc → caption dependency is now an explicit wire.
+def test_verdict_and_caption_both_hang_off_the_calc_results():
+    """The verdict and the caption are both fed from handcalc.results.
 
-    handcalc.results feeds calc_notes, whose text reaches
-    render_math_card.caption via join_text — the diamond the ADR made honest.
+    handcalc.results feeds check_verdict (the side-assertion) AND calc_notes,
+    whose text reaches render_math_card.caption directly — no join_text, no
+    re-derivation over the raw extremes (ADR 0016).
     """
     from capacity_check import build_graph
 
     edges = _edge_set(build_graph())
+    assert ("handcalc", "results", "check_verdict", "results") in edges
     assert ("handcalc", "results", "calc_notes", "results") in edges
-    assert ("calc_notes", "result", "join_text", "a") in edges
-    assert ("join_text", "result", "render_math_card", "caption") in edges
+    assert ("calc_notes", "result", "render_math_card", "caption") in edges
+    # The caption wire is direct: no join_text node stands between them.
+    assert not any(target == "join_text" for _, _, target, _ in edges)
 
 
-def test_example_source_no_longer_redeclares_the_symbols():
-    """2.2 — no describe() and no re-declared symbol labels outside the equation."""
+def test_example_source_single_sources_the_judgment():
+    """Criterion #1 — no describe(), no re-declared labels, no parallel check.
+
+    The only comparison text in the module is the `check` calc line; the old
+    `force < capacity` re-derivation and its PASS/FAIL string are gone.
+    """
     import capacity_check
 
     with open(capacity_check.__file__, encoding="utf-8") as fh:
@@ -199,16 +232,78 @@ def test_example_source_no_longer_redeclares_the_symbols():
 
     assert "describe(" not in source
     assert "sym.describe" not in source
-    # The symbols are declared exactly once — inside the lines= equation. No
+    # The symbols are declared exactly once — inside the lines= literal. No
     # double-quoted "F_max"/"C_min" string literals (the old describe labels).
     assert '"F_max"' not in source and '"C_min"' not in source
-    # Sanity: the equation itself still carries the symbols.
-    assert 'lines="margin = C_min - F_max"' in source
+    # No parallel re-derivation node and no joined PASS/FAIL caption fragment:
+    # the old force-vs-capacity check and the join_text wire are both gone.
+    assert "check_capacity" not in source
+    assert "join_text" not in source
+    # Sanity: the equation AND the assertion live in one two-line lines= literal.
+    assert 'lines="margin = C_min - F_max\\ncheck = margin > 0"' in source
+
+
+@needs_sym_extra
+def test_one_edit_to_the_lines_updates_math_and_verdict_coherently():
+    """Criterion #2 — editing only the `lines` literal moves everything.
+
+    A safety factor that keeps the margin positive still passes; one that
+    drives it negative flips the same `check` result to False and the verdict
+    raises — no second edit, math block and judgment cannot disagree.
+    """
+    import capacity_check  # noqa: F401 - registers capacity_check.check_verdict
+
+    def _run_with_factor(factor: float):
+        g = Graph()
+        g.add(
+            "steps",
+            "sym.handcalc",
+            inputs={"lines": f"margin = {factor} * C_min - F_max\ncheck = margin > 0", "C_min": 210.0, "F_max": 120.0},
+        )
+        g.add("verdict", "capacity_check.check_verdict")
+        g.add("notes", "sym.calc_notes")
+        g.connect("steps", "results", "verdict", "results")
+        g.connect("steps", "results", "notes", "results")
+        g.output = {"node": "notes", "socket": "result"}
+        return g
+
+    # 0.9 * 210 - 120 = 69 > 0 → passes; notes reflect the new margin.
+    caption = run(_run_with_factor(0.9)).value("notes")
+    assert "margin = 69" in caption and "check = True" in caption
+
+    # 0.5 * 210 - 120 = -15 → check flips to False and the verdict raises.
+    with pytest.raises(NodeExecutionError, match="is False"):
+        run(_run_with_factor(0.5))
+
+
+@needs_sym_extra
+def test_renaming_the_check_symbol_fails_loudly_through_run():
+    """Criterion #5 — rename the assertion symbol and forget the param → loud.
+
+    The calc names its boolean `verdict_flag`; check_verdict still reads
+    `check` and raises, listing the available results — never a stale verdict.
+    """
+    import capacity_check  # noqa: F401 - registers capacity_check.check_verdict
+
+    g = Graph()
+    g.add(
+        "steps",
+        "sym.handcalc",
+        inputs={"lines": "margin = C_min - F_max\nverdict_flag = margin > 0", "C_min": 210.0, "F_max": 120.0},
+    )
+    g.add("verdict", "capacity_check.check_verdict")
+    g.connect("steps", "results", "verdict", "results")
+    g.output = {"node": "verdict", "socket": "ok"}
+
+    with pytest.raises(NodeExecutionError) as excinfo:
+        run(g)
+    message = str(excinfo.value)
+    assert "'check'" in message and "verdict_flag" in message
 
 
 @needs_sym_extra
 def test_caption_follows_a_renamed_symbol_with_no_further_edits():
-    """2.3 — rename F_max → F_app in the equation and the caption follows.
+    """Rename F_max → F_app in the equation and the caption follows.
 
     Nothing else changes: calc_notes reads whatever keys results carries.
     """
@@ -232,13 +327,18 @@ def test_caption_follows_a_renamed_symbol_with_no_further_edits():
 
 @needs_sym_extra
 def test_caption_covers_exactly_the_results_symbols():
-    """2.4 — every results symbol appears as `symbol = value`; none is absent."""
+    """Every results symbol appears as `symbol = value`; none is absent.
+
+    With the assertion line, `check` is one of the results — so the caption
+    carries it too, straight from the calc.
+    """
     from capacity_check import build_graph
 
     result = run(build_graph())
     results = result.value("handcalc", "results")
     caption = result.value("calc_notes")
 
+    assert "check" in results  # the assertion is a computed result now
     for symbol in results:
         assert f"{symbol} = " in caption
     # No symbol in the caption that is absent from results: the caption's LHS
