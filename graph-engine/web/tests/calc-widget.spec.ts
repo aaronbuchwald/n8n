@@ -28,7 +28,10 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const MODULE_PY = path.resolve(HERE, '..', '..', 'examples', 'capacity_check', 'capacity_check.py');
 
 const GRAPH_ROUTE = '/api/graphs/capacity_check/graph';
-const ORIGINAL_EQ = 'margin = C_min - F_max';
+// capacity_check's handcalc is a two-line calc since ADR 0016: the equation
+// plus the assertion that judges it (`check = margin > 0`), single-sourced.
+// The edits below append to / replace this whole value.
+const ORIGINAL_EQ = 'margin = C_min - F_max\ncheck = margin > 0';
 
 test.describe.configure({ mode: 'serial' });
 
