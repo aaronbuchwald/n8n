@@ -7,8 +7,11 @@
 * **Combine** — the highest force and lowest capacity feed two independent
   consumers:
 
-  * ``sym.typeset_calc`` (handcalcs) typesets ``margin = C_min - F_max`` with
-    the numbers substituted — a **display** concern, values only.
+  * ``sym.handcalc`` (handcalcs) typesets ``margin = C_min - F_max`` with the
+    numbers substituted — a **display** concern, values only. The equation's free
+    symbols (``C_min``, ``F_max``) are the node's input sockets, derived from the
+    equation itself (ADR 0007) and wired straight from the two extremes — no
+    ``pack_values`` bundling node in between.
   * :func:`check_capacity` asserts ``force < capacity`` and builds a PASS/FAIL
     verdict — a separate **logic** concern. It does *not* go through SymPy:
     feeding concrete numbers into a symbolic inequality (``Lt(120, 210)``)
@@ -16,10 +19,10 @@
     comparison string is built as plain Python text instead.
 
     forces.csv  ─> read_table ─> select_extreme(max, "force")    ──┐
-                                                                    ├─> pack_values ─> typeset_calc ─> latex_to_mathml ─┐
-    members.csv ─> read_table ─> select_extreme(min, "capacity") ──┘                                                   │
-                              │                                                                                        │
-                              └────────────────────────────────────> check_capacity ────────────┐                     │
+                                                                    ├─> handcalc ─> latex_to_mathml ─┐
+    members.csv ─> read_table ─> select_extreme(min, "capacity") ──┘                                 │
+                              │                                                                       │
+                              └────────────────────────────────────> check_capacity ────────────┐    │
                                                                                                   ├─> join_text ─> render_math_card
                               describe(F_max) ──────────────────────────────────────────────────┘
 
@@ -36,7 +39,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from engine import UserError, main, node
-from sym import describe, join_text, latex_to_mathml, render_math_card, typeset_calc
+from sym import describe, handcalc, join_text, latex_to_mathml, render_math_card
 from table import read_table
 
 HERE = Path(__file__).resolve().parent
@@ -77,17 +80,6 @@ def select_extreme(table: dict, column: str, mode: str = "max") -> dict:
     return {"name": best[name_idx], "value": best[col_idx]}
 
 
-@node
-def pack_values(force: float, capacity: float) -> dict:
-    """Bundle the two extremes into handcalcs' ``{symbol: number}`` map.
-
-    Kept as its own node (rather than a literal dict built inline) because a
-    composite's tracer only wires *top-level* node arguments — a NodeHandle
-    buried inside a hand-written dict literal would not become an edge.
-    """
-    return {"F_max": force, "C_min": capacity}
-
-
 @node(outputs=["ok", "text"])
 def check_capacity(force: float, capacity: float) -> dict:
     """Check ``force < capacity``; return a plain-text PASS/FAIL verdict.
@@ -104,7 +96,7 @@ def check_capacity(force: float, capacity: float) -> dict:
 
 
 # All node types this example defines (for schema snapshots / registries).
-NODES = [select_extreme, pack_values, check_capacity]
+NODES = [select_extreme, check_capacity]
 
 
 # -- the graph, as ordinary Python (ADR 0004 straight-line form) -------------
@@ -121,9 +113,10 @@ def capacity_check_report(
     max_force = select_extreme(forces, column="force", mode="max")
     min_capacity = select_extreme(members, column="capacity", mode="min")
 
-    # Display concern: handcalcs typesets the substituted numbers.
-    values = pack_values(force=max_force.value, capacity=min_capacity.value)
-    steps = typeset_calc(lines="margin = C_min - F_max", values=values)
+    # Display concern: handcalcs typesets the substituted numbers. The equation's
+    # free symbols (C_min, F_max) are the node's derived sockets, wired straight
+    # from the two extremes (ADR 0007) — no pack_values bundling node.
+    steps = handcalc(lines="margin = C_min - F_max", C_min=min_capacity.value, F_max=max_force.value)
     mathml = latex_to_mathml(steps.latex)
 
     # Logic concern: a separate node decides PASS/FAIL.

@@ -88,12 +88,6 @@ def test_check_capacity_fail_verdict():
     assert out["text"] == "FAIL — 300 ≥ 210"
 
 
-def test_pack_values_bundles_the_handcalcs_substitution_map():
-    from capacity_check import pack_values
-
-    assert pack_values(force=120.0, capacity=210.0) == {"F_max": 120.0, "C_min": 210.0}
-
-
 # -- the example graph, end-to-end --------------------------------------------
 
 

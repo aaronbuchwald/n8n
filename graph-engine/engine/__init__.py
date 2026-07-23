@@ -68,7 +68,7 @@ from .schema import (
     validate_graph,
     validate_node_spec,
 )
-from .spec import Widget, node_spec
+from .spec import DerivedInputs, Widget, effective_inputs, node_spec
 from .version import SCHEMA_VERSION
 
 __version__ = SCHEMA_VERSION
@@ -77,6 +77,8 @@ __all__ = [
     # entry points
     "node_spec",
     "Widget",
+    "DerivedInputs",
+    "effective_inputs",
     "Graph",
     "bind",
     "run",

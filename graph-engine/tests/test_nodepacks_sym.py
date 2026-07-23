@@ -55,7 +55,7 @@ def test_import_and_spec_listing_need_no_heavy_deps():
         import sym  # must not touch any blocked module
 
         specs = [n.spec for n in sym.NODES]
-        assert len(specs) == 12, specs
+        assert len(specs) == 13, specs
         assert all(s["id"].startswith("sym.") for s in specs)
         assert all(s["outputs"] for s in specs)
         loaded = {m.split(".")[0] for m in sys.modules}
@@ -72,8 +72,9 @@ def test_import_and_spec_listing_need_no_heavy_deps():
 
 def test_every_node_has_a_registered_spec():
     ids = {n.spec["id"] for n in sym.NODES}
-    assert len(ids) == len(sym.NODES) == 12
+    assert len(ids) == len(sym.NODES) == 13
     assert "sym.typeset_calc" in ids
+    assert "sym.handcalc" in ids
     # typeset_calc is the pack's one multi-output node.
     typeset = next(n.spec for n in sym.NODES if n.spec["id"] == "sym.typeset_calc")
     assert [o["name"] for o in typeset["outputs"]] == ["latex", "results"]
@@ -171,6 +172,88 @@ def test_quantity_rejects_unknown_unit():
 
 
 # -- handcalcs + latex2mathml nodes -----------------------------------------
+
+
+# -- handcalc: value-derived sockets (ADR 0007) -----------------------------
+
+
+def test_calc_free_symbols_derives_in_first_appearance_order():
+    from sym import calc_free_symbols
+
+    got = calc_free_symbols("margin = C_min - F_max")
+    assert [s["name"] for s in got] == ["C_min", "F_max"]
+    # Every derived entry has the frozen shape (keyword-only, float, required).
+    for s in got:
+        assert s["kind"] == "keywordOnly"
+        assert s["type"] == "float"
+        assert s["required"] is True and s["default"] is None
+        assert s["widget"] == {"kind": "number", "subtype": "float"}
+        assert s["derived"] is True
+
+
+def test_calc_free_symbols_multiline_excludes_earlier_lhs():
+    from sym import calc_free_symbols
+
+    # d is assigned in line 1, so line 2's use of d is a local result, not input.
+    got = calc_free_symbols("d = v*t\nE = m*d")
+    assert [s["name"] for s in got] == ["v", "t", "m"]
+
+
+def test_calc_free_symbols_excludes_builtins_and_math_whitelist():
+    from sym import calc_free_symbols
+
+    got = calc_free_symbols("y = sqrt(x) + sin(theta) + pi + abs(z)")
+    # sqrt/sin/pi (whitelist) and abs (builtin) are not sockets; x/theta/z are.
+    assert [s["name"] for s in got] == ["x", "theta", "z"]
+
+
+def test_calc_free_symbols_first_appearance_order_is_textual():
+    from sym import calc_free_symbols
+
+    # Nested arithmetic: order is the textual one (a, b, c), not walk order.
+    assert [s["name"] for s in calc_free_symbols("r = a*b + c")] == ["a", "b", "c"]
+
+
+def test_calc_free_symbols_rejects_syntax_error():
+    from sym import calc_free_symbols
+    from engine import UserError
+
+    with pytest.raises(UserError, match="line 1"):
+        calc_free_symbols("x = = 3")
+
+
+def test_calc_free_symbols_rejects_reserved_param_collision():
+    from sym import calc_free_symbols
+    from engine import UserError
+
+    with pytest.raises(UserError, match="rename the symbol 'precision'"):
+        calc_free_symbols("y = precision * 2")
+
+
+def test_calc_free_symbols_rejects_non_assignment_line():
+    from sym import calc_free_symbols
+    from engine import UserError
+
+    with pytest.raises(UserError, match="single assignment"):
+        calc_free_symbols("print(x)")
+
+
+def test_handcalc_spec_marks_dynamic_and_calc_widget():
+    handcalc_spec = next(n.spec for n in sym.NODES if n.spec["id"] == "sym.handcalc")
+    assert handcalc_spec["dynamicInputs"] == {"param": "lines"}
+    lines = next(i for i in handcalc_spec["inputs"] if i["name"] == "lines")
+    assert lines["widget"]["kind"] == "calc"
+    # the **symbols receptacle is not itself a socket
+    assert "symbols" not in {i["name"] for i in handcalc_spec["inputs"]}
+
+
+def test_handcalc_runs_end_to_end_and_typesets_substituted_calc():
+    pytest.importorskip("handcalcs")
+    out = sym.handcalc("margin = C_min - F_max", C_min=210.0, F_max=120.0)
+    assert out["results"]["margin"] == 90.0
+    # The LaTeX shows the symbolic form AND the substituted numbers.
+    assert "margin" in out["latex"]
+    assert "210" in out["latex"] and "120" in out["latex"] and "90" in out["latex"]
 
 
 def test_typeset_calc_substitutes_values():

@@ -21,13 +21,16 @@ second — ``@node`` only registers it by its ``module.qualname`` id
 
 from __future__ import annotations
 
+import ast
+import builtins
 import html
 import itertools
 import linecache
+import math
 import re
 import textwrap
 
-from engine import node, Widget
+from engine import DerivedInputs, UserError, node, Widget
 
 # -- SymPy: expressions, solving, numeric evaluation ------------------------
 
@@ -232,6 +235,141 @@ def typeset_calc(lines: str, values: dict, precision: int = 3) -> dict:
     return {"latex": latex, "results": results}
 
 
+# -- handcalc: a dynamic node whose sockets come from the equation ----------
+
+# A small set of math names pre-bound in the calc's scope so they typeset (√,
+# sin, …) instead of becoming input sockets. Documented in the node docstring;
+# additive — a name outside it simply becomes a socket, which is visible.
+_MATH_WHITELIST = {
+    "sqrt": math.sqrt,
+    "sin": math.sin,
+    "cos": math.cos,
+    "tan": math.tan,
+    "log": math.log,
+    "exp": math.exp,
+    "pi": math.pi,
+}
+
+# Static parameters of ``handcalc`` a derived symbol may not shadow.
+_HANDCALC_STATIC_PARAMS = frozenset({"lines", "precision"})
+
+# Names never turned into sockets: Python builtins + the math whitelist.
+_NON_SOCKET_NAMES = frozenset(dir(builtins)) | frozenset(_MATH_WHITELIST)
+
+# Cap on the equation length so deriving (which runs per keystroke) stays cheap.
+_MAX_CALC_LEN = 10_000
+
+
+def _derived_socket(name: str) -> dict:
+    """One derived input-spec entry for a free symbol (ADR 0007 frozen shape)."""
+    return {
+        "name": name,
+        "type": "float",
+        "kind": "keywordOnly",
+        "required": True,
+        "default": None,
+        "widget": {"kind": "number", "subtype": "float"},
+        "derived": True,
+    }
+
+
+def calc_free_symbols(lines: str) -> list[dict]:
+    """Free names of the calc ``lines``, in first-appearance order, as input entries.
+
+    The deriver for :func:`handcalc` (ADR 0007 D3), stdlib-only and cheap:
+
+    * Parse ``lines`` with :func:`ast.parse` (a ``SyntaxError`` becomes a
+      :class:`~engine.errors.UserError` naming the line).
+    * Walk statements in order; a name *loaded* before any assignment to it is a
+      free symbol (an input); a name assigned earlier (an LHS) is a local result,
+      not an input. Multi-line: ``d = v*t`` then ``E = m*d`` derives ``{v, t, m}``,
+      not ``d``.
+    * Excluded: Python builtins and the small math whitelist (``sqrt``, ``sin``,
+      ``cos``, ``tan``, ``log``, ``exp``, ``pi``) — they typeset fine and must not
+      become sockets.
+    * A derived name colliding with a static param (``lines``, ``precision``)
+      raises ``UserError`` ("rename the symbol …").
+    * Only an :class:`ast.Assign` with a single Name target per statement is
+      accepted (mirrors handcalcs' own expectations); anything else raises
+      ``UserError``.
+
+    The equation is **never executed** here — only parsed.
+    """
+    if not isinstance(lines, str):
+        raise UserError(
+            f"handcalc 'lines' must be a string, got {type(lines).__name__}"
+        )
+    if len(lines) > _MAX_CALC_LEN:
+        raise UserError(
+            f"calc is too long ({len(lines)} chars; limit {_MAX_CALC_LEN})"
+        )
+
+    try:
+        tree = ast.parse(textwrap.dedent(lines))
+    except SyntaxError as exc:
+        raise UserError(f"line {exc.lineno}: cannot parse calc ({exc.msg})") from None
+
+    assigned: set[str] = set()
+    order: list[str] = []
+    seen: set[str] = set()
+
+    for stmt in tree.body:
+        if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Constant):
+            continue  # a bare string/docstring line — no symbols, no result
+        if not isinstance(stmt, ast.Assign):
+            raise UserError(
+                f"line {getattr(stmt, 'lineno', '?')}: each calc line must be a "
+                f"single assignment (name = expression)"
+            )
+        if len(stmt.targets) != 1 or not isinstance(stmt.targets[0], ast.Name):
+            raise UserError(
+                f"line {stmt.lineno}: each calc line must assign to a single name "
+                f"(no tuple/multi-target unpacking)"
+            )
+
+        # Loaded names on the RHS, in source (textual) order, are free unless an
+        # earlier statement already assigned them.
+        loads = [
+            n
+            for n in ast.walk(stmt.value)
+            if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)
+        ]
+        loads.sort(key=lambda n: (n.lineno, n.col_offset))
+        for name_node in loads:
+            name = name_node.id
+            if name in assigned or name in _NON_SOCKET_NAMES:
+                continue
+            if name in _HANDCALC_STATIC_PARAMS:
+                raise UserError(
+                    f"rename the symbol {name!r}: it collides with the reserved "
+                    f"parameter {name!r} of handcalc"
+                )
+            if name not in seen:
+                seen.add(name)
+                order.append(name)
+        assigned.add(stmt.targets[0].id)
+
+    return [_derived_socket(name) for name in order]
+
+
+@node(
+    outputs=["latex", "results"],
+    widgets={"lines": Widget("calc", language="python-calc", multiline=True)},
+    dynamic=DerivedInputs(param="lines", derive=calc_free_symbols),
+)
+def handcalc(lines: str = "", precision: int = 3, **symbols) -> dict:
+    """Typeset calculation ``lines`` with the symbol sockets substituted.
+
+    Each free symbol of ``lines`` is an input socket (wire it or give it a value),
+    derived automatically from the equation (ADR 0007). ``lines`` is **executed as
+    Python** at run time, exactly like :func:`typeset_calc` — same trust posture
+    (ADR 0003). A small math whitelist (``sqrt``, ``sin``, ``cos``, ``tan``,
+    ``log``, ``exp``, ``pi``) is pre-bound and never a socket.
+    """
+    values = {**_MATH_WHITELIST, **symbols}
+    return typeset_calc(lines, values=values, precision=precision)
+
+
 # -- rendering: LaTeX -> native MathML -> self-contained HTML ---------------
 
 _LATEX_WRAPPERS = re.compile(r"(^\s*(\$\$|\\\[)\s*)|(\s*(\$\$|\\\])\s*$)")
@@ -302,6 +440,7 @@ NODES = [
     multiply,
     describe,
     typeset_calc,
+    handcalc,
     latex_to_mathml,
     join_text,
     render_math_card,
@@ -317,6 +456,8 @@ __all__ = [
     "multiply",
     "describe",
     "typeset_calc",
+    "handcalc",
+    "calc_free_symbols",
     "latex_to_mathml",
     "join_text",
     "render_math_card",

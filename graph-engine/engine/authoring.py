@@ -46,7 +46,7 @@ from typing import Any, Callable, Optional
 from .errors import TracingError
 from .graph import Graph
 from .registry import DEFAULT_REGISTRY, NodeRegistry
-from .spec import Widget
+from .spec import DerivedInputs, Widget
 
 # One trace at a time per thread. ``None`` means "eager" (calls execute).
 _state = threading.local()
@@ -124,10 +124,26 @@ class NodePrimitive:
         if state is None:
             return self.fn(*args, **kwargs)  # eager
 
-        bound = inspect.signature(self.fn).bind_partial(*args, **kwargs)
+        signature = inspect.signature(self.fn)
+        bound = signature.bind_partial(*args, **kwargs)
+        # A dynamic node's derived symbols arrive as **kwargs, which bind_partial
+        # folds into a single dict under the VAR_KEYWORD parameter name. Flatten
+        # that dict so each symbol becomes its own literal or edge — otherwise a
+        # NodeHandle buried inside it would never become a wire (ADR 0007 D6).
+        var_keyword = next(
+            (p.name for p in signature.parameters.values() if p.kind == p.VAR_KEYWORD),
+            None,
+        )
         literals: dict[str, Any] = {}
         edges: list[tuple[str, NodeHandle]] = []
         for pname, value in bound.arguments.items():
+            if pname == var_keyword and isinstance(value, dict):
+                for kname, kvalue in value.items():
+                    if isinstance(kvalue, NodeHandle):
+                        edges.append((kname, kvalue))
+                    else:
+                        literals[kname] = kvalue
+                continue
             if isinstance(value, NodeHandle):
                 edges.append((pname, value))
             else:
@@ -171,6 +187,7 @@ def node(
     title: Optional[str] = None,
     outputs: Optional[list] = None,
     widgets: Optional[dict[str, Widget]] = None,
+    dynamic: Optional[DerivedInputs] = None,
     registry: Optional[NodeRegistry] = None,
     replace: bool = False,
 ) -> Any:
@@ -180,6 +197,9 @@ def node(
     declares named output sockets (default: one ``result`` socket).
     ``widgets={"param": Widget(...)}`` declares editing-widget contracts on named
     inputs (ADR 0005 A-D2), threaded into each input spec's ``widget`` field.
+    ``dynamic=DerivedInputs(...)`` (ADR 0007) declares extra input sockets derived
+    from one literal parameter's value; such a node needs a ``**kwargs``
+    receptacle for the derived values.
     """
 
     def wrap(target: Callable[..., Any]) -> NodePrimitive:
@@ -190,6 +210,7 @@ def node(
             title=title,
             outputs=outputs,
             widgets=widgets,
+            dynamic=dynamic,
             replace=replace,
         )
         return NodePrimitive(target, entry)

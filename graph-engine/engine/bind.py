@@ -20,21 +20,29 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-from .errors import BindError, UnknownNodeType
+from .errors import BindError, UnknownNodeType, UserError
 from .graph import Edge, Graph
 from .ordering import topological_order
 from .registry import DEFAULT_REGISTRY, NodeRegistry, RegisteredNode
+from .spec import effective_inputs
 
 
 @dataclass
 class BoundNode:
-    """A validated node instance, linked to its inputs by reference."""
+    """A validated node instance, linked to its inputs by reference.
+
+    ``inputs_spec`` is the node's **effective** input list — the static signature
+    sockets plus any derived sockets computed once here in bind pass 1 (ADR 0007).
+    For a non-dynamic node it equals ``spec["inputs"]``. Emit and execute consume
+    it so the derived sockets are never re-derived downstream.
+    """
 
     id: str
     entry: RegisteredNode
     literals: dict[str, Any] = field(default_factory=dict)
     # param name -> (upstream node, its output socket)
     wired: dict[str, tuple["BoundNode", str]] = field(default_factory=dict)
+    inputs_spec: list[dict] = field(default_factory=list)
 
     @property
     def spec(self) -> dict:
@@ -85,6 +93,14 @@ def bind(graph: Graph, registry: Optional[NodeRegistry] = None) -> BoundGraph:
     """
     registry = registry or DEFAULT_REGISTRY
 
+    # An edge targeting a dynamic node's deriving param must be rejected as such
+    # (ADR 0007 D2) — and *before* pass-1 literal validation, because a wired
+    # deriving param leaves its value unknown, so derivation yields nothing and
+    # the node's derived-symbol literals would otherwise look "unknown" first.
+    edge_by_target_input: dict[tuple[str, str], Edge] = {}
+    for edge in graph.edges:
+        edge_by_target_input.setdefault((edge.target, edge.target_input), edge)
+
     # -- pass 1: resolve node types, validate literals --------------------
     bound_by_id: dict[str, BoundNode] = {}
     for node in graph.nodes:
@@ -94,7 +110,24 @@ def bind(graph: Graph, registry: Optional[NodeRegistry] = None) -> BoundGraph:
             # Enrich with the graph node id — the registry only knows the type.
             exc.node_id = node.id
             raise
-        input_names = {i["name"] for i in entry.spec["inputs"]}
+        if entry.dynamic is not None:
+            wired_edge = edge_by_target_input.get((node.id, entry.dynamic.param))
+            if wired_edge is not None:
+                raise BindError(
+                    f"the deriving input {entry.dynamic.param!r} of a dynamic node "
+                    f"must be a widget literal, not wired",
+                    node_id=node.id,
+                    edge=_edge_dict(wired_edge),
+                )
+        literals = dict(node.inputs)
+        # Effective inputs = static sockets + derived entries from the deriving
+        # literal (ADR 0007). Computed once here; a deriver failure becomes a
+        # BindError badging the node, before anything executes.
+        try:
+            inputs_spec = effective_inputs(entry.spec, entry.dynamic, literals)
+        except UserError as exc:
+            raise BindError(str(exc), node_id=node.id) from exc
+        input_names = {i["name"] for i in inputs_spec}
         for param, value in node.inputs.items():
             if param not in input_names:
                 raise BindError(
@@ -103,7 +136,9 @@ def bind(graph: Graph, registry: Optional[NodeRegistry] = None) -> BoundGraph:
                     node_id=node.id,
                 )
             _ensure_json(node.id, param, value)
-        bound_by_id[node.id] = BoundNode(id=node.id, entry=entry, literals=dict(node.inputs))
+        bound_by_id[node.id] = BoundNode(
+            id=node.id, entry=entry, literals=literals, inputs_spec=inputs_spec
+        )
 
     # -- pass 2: resolve + validate edges ---------------------------------
     for edge in graph.edges:
@@ -127,7 +162,8 @@ def bind(graph: Graph, registry: Optional[NodeRegistry] = None) -> BoundGraph:
                 node_id=edge.source,
                 edge=edge_ctx,
             )
-        target_inputs = {i["name"] for i in target.spec["inputs"]}
+        # (A wired deriving param is already rejected in pass 1, ADR 0007 D2.)
+        target_inputs = {i["name"] for i in target.inputs_spec}
         if edge.target_input not in target_inputs:
             raise BindError(
                 f"edge into {edge.target!r} feeds input {edge.target_input!r}, "
@@ -147,8 +183,11 @@ def bind(graph: Graph, registry: Optional[NodeRegistry] = None) -> BoundGraph:
         target.literals.pop(edge.target_input, None)
 
     # -- pass 3: every required input must be satisfied -------------------
+    # Derived sockets inherit Python's required/optional semantics (ADR 0007 #5):
+    # a socket with no default is required and fails loudly when unsatisfied; one
+    # with a default is optional and binds unsatisfied (execute uses the default).
     for bound in bound_by_id.values():
-        for inp in bound.spec["inputs"]:
+        for inp in bound.inputs_spec:
             if not inp["required"]:
                 continue
             name = inp["name"]
