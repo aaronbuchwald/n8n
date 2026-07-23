@@ -4,6 +4,16 @@ Status: **proposed** · Scope: `graph-engine/web` + the server seams it reads/wr
 Relates to: ADR 0002 (HTTP API), ADR 0004 (graph ⟷ source bijection),
 ADR 0005 (widgets, the A-D5 commit seam), ADR 0007 (dynamic handcalc)
 
+> **Amended 2026-07-23 — store mechanism re-decided.** Open confirmation 2
+> originally recommended Zustand. After pushback ("React ships state updates;
+> prefer the simplest React-default pattern we can easily enforce and check, if
+> one genuinely suffices"), the mechanism was re-compared on the merits and the
+> recommendation is now **`useSyncExternalStore` over a hand-rolled vanilla
+> store — zero dependencies** (§ The store, Open confirmation 2). Everything
+> else in this ADR — the diagnosis, the normalized single-source-of-truth
+> model, seq-gated ingestion, the single-flight write queue, the phased plan —
+> stands unchanged.
+
 ## Context
 
 A user edits a node in the UI. The backend `.py` updates (via
@@ -189,22 +199,103 @@ invalidation edges between them — and the server itself holds a fifth
    the moment the server confirms or rejects — so no view can show a rejected
    value for longer than the in-flight window, and none can get stuck stale.
 
-### The store
+### The store — mechanism (revised 2026-07-23)
 
-Recommendation: **Zustand** (a ~1 kB vanilla store with React selector
-bindings) over React context + `useReducer`. Rationale: selector-level
-subscription is load-bearing here — the canvas must re-render *one node card*
-when one literal changes, and a context provider above `ReactFlowProvider`
-re-renders the whole tree per dispatch; context also forces the provider-mount
-dance App already juggles for widgets. Zustand stores are callable outside
-React (the commit queue and SSE handler are plain async code), need no
-provider, and keep the current file layout. (Pinia is the same shape on the
-Vue side; this is the React equivalent, not a new architecture.) Hand-rolled
-context+reducer is workable but re-implements exactly the subscription
-machinery Zustand ships. — Open confirmation 2.
+The original draft recommended Zustand here. The pushback — *"isn't some
+version of state updates built into React from the beginning? If there's a
+React default pattern, opt for the simplest possible solution that we can
+easily enforce and is easy to check the correctness of"* — is the right
+question, so the mechanism was re-derived from the constraints instead of from
+library habit. The constraints, from Part 1 and the principles above:
+
+- **R1 — readable *and writable* from plain async code, no hooks.** The
+  single-flight write queue must **read** the current authoritative graph as
+  its rebase base at PUT-build time and **write** the response back
+  (`ingestGraph`); the phase-2 SSE handler does the same. Both are plain async
+  modules outside React. A mechanism whose state is only reachable inside a
+  component forces a mirror copy (a ref or module variable shadowing React
+  state) — a *second source of truth*, which is precisely the disease this ADR
+  treats. This constraint is structural: it eliminates candidates, not just
+  ranks them.
+- **R2 — per-node subscription granularity.** One literal edit must re-render
+  one card's chip, not every consumer. Nuance from the code as it stands: the
+  canvas itself is already insulated — `GraphView` is a *controlled* ReactFlow
+  (`useNodesState`) whose reconciliation effect patches node `data`
+  identity-preservingly (`sameGraphData`), so ReactFlow's memoized node
+  components skip unchanged cards under *any* store mechanism. R2 bites on the
+  **direct subscribers**: widget chips reading the optimistic overlay, the
+  inspector, the source panel. During a typing burst the overlay updates per
+  coalesced commit; those updates must not fan out to every chip on the
+  canvas. (Today they already do, accidentally: `commit` is remade per graph
+  identity, so every `WidgetSlot` re-renders through context churn — the
+  store fixes this by making commit a stable module function.)
+- **R3 — correctness testable without a renderer.** Seq-gated ingestion,
+  coalescing, rejection rollback are pure state-machine logic; the mechanism
+  should let vitest drive them as plain function calls — no JSDOM, no
+  `renderHook` — so the invariants in this ADR translate 1:1 into unit tests.
+
+#### Candidates compared
+
+| | (a) Zustand (~1.2 kB dep) | (b) `useReducer` + Context | (c) `useSyncExternalStore` + vanilla store | (d) `useState` lifted to App |
+|---|---|---|---|---|
+| R1: queue/SSE read+write, no hooks | yes — `store.getState()` / actions | **no** — `dispatch` can be smuggled to module scope, but *reading* current state from async code needs a mirror copy | yes — `getState()` / actions are plain module functions | **no** — same mirror problem |
+| R2: per-node subscription | yes — selectors | **no** — context has no selector; every consumer re-renders per dispatch; fixing it means split contexts + `memo` on every consumer | yes — per-hook selector; re-render iff the selected reference/primitive changes | **no** — whole tree under App re-renders |
+| Seq-gate / coalesce / rollback expressible | yes | yes (in the reducer) | yes (in actions) | yes — phase 0 proves the minimal form |
+| R3: unit-testable without React | yes (vanilla core) | reducer is a pure fn, but queue↔state integration needs a renderer (state lives in the tree) | **fully** — store + queue are plain TS; the React binding is one line of official API | no |
+| New runtime dependency | 1 | 0 | 0 | 0 |
+| Mechanism code we own | ~0 lines | context plumbing + memo discipline (diffuse) | **~50 lines** (subscribe/setState/hook) | ~0 lines |
+| Enforceability of correct use | convention + lint | hard — the memo/split-context discipline lives in *every consumer* | easy — three local, lint-able rules (below) | n/a (fails R1/R2 anyway) |
+| Provider component needed | no | yes (above `ReactFlowProvider`; value churn re-renders subtree) | no | no |
+
+**(d)** is the phase-0 vehicle and stays exactly that: the correctness patches
+(run-staleness stamp, reload seq guard) fit `useState` fine, but the queue's
+rebase base would have to be mirrored outside React, and every overlay update
+re-renders the full tree. Right for a days-scale fix, wrong as the
+architecture. **(b)** centralizes transitions nicely (the reducer is a genuine
+plus for R3's state-machine tests), but fails R1 the same way (d) does, and
+Context's all-consumers re-render makes R2 a per-consumer vigilance problem —
+the mitigation machinery (split contexts, `memo` on every chip, dispatch-ref
+plumbing) exceeds (c)'s 50 lines while being spread across the codebase
+instead of localized. **(a)** and **(c)** both clear every bar — because they
+are the *same design*: Zustand v4+ is internally a vanilla store bound to
+React through `useSyncExternalStore`(-with-selector). The question therefore
+reduces to: do we need what Zustand adds on top (equality-fn selectors /
+`useShallow`, middleware, devtools, SSR handling)? With one store, one app, no
+SSR, and selectors kept reference-stable by construction (rule below): no.
+
+**Decision: (c) — `useSyncExternalStore` over a hand-rolled vanilla store.**
+It is React's official built-in primitive for exactly this shape — a store
+living outside the tree, components subscribing with selectors, tear-free by
+contract — so it satisfies the "React default pattern" preference *without*
+giving up either property Zustand was originally picked for (R1, R2). The ~50
+lines we own are not incidental complexity: they are the seq-gate/overlay
+state machine this ADR obliges us to test anyway, now with zero third-party
+semantics between the tests and the behavior. — Open confirmation 2, **FOR
+HUMAN REVIEW**.
+
+**The one honest cost of (c), and its containment.** `useSyncExternalStore`
+re-renders when `getSnapshot()` returns a new value, and warns (dev) or loops
+if the snapshot is freshly allocated on every call. So selectors must return
+**stored references or primitives** — derivations (`effectiveGraph`, the
+per-node lookup map, run staleness inputs) are computed **once per `setState`
+inside the store**, identity-preserving (untouched nodes keep their object),
+and cached on the state object; selectors only *read*. This is rule-shaped,
+not vigilance-shaped, and it is enforced three ways:
+
+1. **Single mutation funnel:** only `store/sync.ts` calls `setState`; every
+   mutation is an exported named action. Lint: `no-restricted-imports` on the
+   store's internal module everywhere else. (The same funnel the CRDT seam in
+   Part 3 requires — the rule pays twice.)
+2. **Selectors don't allocate:** selectors passed to `useSyncSelector` are
+   field reads (including cached derived fields). Violations self-announce —
+   React's unstable-snapshot dev warning fires on first render — so the check
+   is automatic, not review-dependent.
+3. **No parallel state:** any server payload rendered by more than one
+   component enters via an `ingest*` action, never via component-local
+   `useState` (that is Gap G5's pattern, now nameable in review).
 
 ```ts
-// web/src/store/sync.ts (sketch)
+// web/src/store/sync.ts — zero-dependency vanilla store (sketch)
 interface PendingWrite {
   seq: number;                     // client-assigned, monotone
   kind: 'literal';                 // v1: widget commits; source saves are not optimistic
@@ -212,34 +303,123 @@ interface PendingWrite {
   state: 'queued' | 'inflight';
 }
 
-interface SyncStore {
-  // authoritative (server-confirmed) state — replaced only by ingest()
+interface SyncState {
+  // authoritative (server-confirmed) state — replaced only by ingest*()
   specs: NodeSpecs;
   graph: GraphDoc | null;
   version: string | null;          // contract version, /api/specs
   rev: number;                     // bumps on every authoritative acceptance
   sources: Record<string, SourceInfo & { rev: number }>; // per-spec source cache
-  derived: Record<string, SpecInput[]>; // ADR 0007: key `${specId} ${literal}`
+  derived: Record<string, SpecInput[]>; // ADR 0007: key `${specId} ${literal}`
   run: (RunResult & { forRev: number }) | null;
   workspace: WorkspaceInfo | null;
 
   // optimistic overlay
   pending: PendingWrite[];
 
-  // actions (the ONLY mutation funnel — also the future CRDT seam, Part 3)
-  hydrate(live: LiveGraph): void;                    // boot / explicit refresh
-  ingestGraph(graph: GraphDoc, ackSeqs?: number[]): void;   // any PUT response / push event
-  ingestSpec(spec: NodeSpec, source?: SourceInfo): void;    // PUT /api/source response
-  commitLiteral(nodeId: string, param: string, value: unknown): void; // optimistic
-  rejectWrite(seq: number, error: Error): void;
-  setRun(run: RunResult): void;                      // stamped with current rev
+  // derived — recomputed once per setState (identity-preserving), never in selectors
+  effective: { graph: GraphDoc | null; nodesById: ReadonlyMap<string, GraphNode> };
 }
 
-// derivation — what every view actually renders
-const effectiveGraph = (s: SyncStore): GraphDoc =>
-  s.pending.reduce((g, w) => patchLiteral(g, w), s.graph!);
-const runIsStale = (s: SyncStore) => s.run !== null && s.run.forRev !== s.rev;
+let state: SyncState = INITIAL;
+const listeners = new Set<() => void>();
+export const getState = (): SyncState => state;
+export function subscribe(fn: () => void): () => void {
+  listeners.add(fn);
+  return () => listeners.delete(fn);
+}
+
+function setState(patch: Partial<SyncState>): void {
+  // withDerived recomputes `effective` = authoritative ⊕ pending, reusing the
+  // object of every node the overlay didn't touch (referential stability).
+  state = withDerived({ ...state, ...patch });
+  for (const fn of listeners) fn();
+}
+
+// actions — the ONLY mutation funnel (and the future CRDT seam, Part 3)
+export function hydrate(live: LiveGraph): void { /* boot / explicit refresh */ }
+export function ingestGraph(graph: GraphDoc, ackSeqs: number[] = []): void {
+  setState({
+    graph,
+    rev: state.rev + 1,
+    pending: state.pending.filter((w) => !ackSeqs.includes(w.seq)),
+  });
+}
+export function ingestSpec(spec: NodeSpec, source?: SourceInfo): void { /* PUT /api/source response */ }
+export function commitLiteral(nodeId: string, param: string, value: unknown): void {
+  // coalesce: latest value wins per (nodeId, param) among still-queued writes
+  setState({
+    pending: coalesce(state.pending, {
+      seq: nextSeq(), kind: 'literal', nodeId, param, value, state: 'queued',
+    }),
+  });
+  void pump(); // kick the write queue (plain async module, below)
+}
+export function rejectWrite(seq: number): void {
+  setState({ pending: state.pending.filter((w) => w.seq !== seq) }); // revert to authoritative
+}
+export function setRun(run: RunResult): void {
+  setState({ run: { ...run, forRev: state.rev } }); // stamped with current rev
+}
 ```
+
+```ts
+// web/src/store/useSyncSelector.ts — the ENTIRE React binding
+import { useSyncExternalStore } from 'react';
+import { getState, subscribe, type SyncState } from './sync';
+
+export function useSyncSelector<T>(selector: (s: SyncState) => T): T {
+  // Rule: `selector` returns a stored reference or a primitive (see above).
+  return useSyncExternalStore(subscribe, () => selector(getState()));
+}
+```
+
+```ts
+// a node card's widget chip — re-renders ONLY when its own value changes
+const value = useSyncSelector((s) => s.effective.nodesById.get(nodeId)?.inputs[param]);
+const runIsStale = useSyncSelector((s) => s.run !== null && s.run.forRev !== s.rev); // boolean: stable
+```
+
+```ts
+// web/src/store/queue.ts — plain async module; replaces makeGraphCommitter.
+// Reads and writes the store with zero React involvement (R1).
+import { getState, ingestGraph, rejectWrite } from './sync';
+import { saveGraph } from '../api';
+
+let inflight = false;
+export async function pump(): Promise<void> {
+  if (inflight) return;
+  const { graph, pending } = getState();
+  if (!graph || pending.length === 0) return;
+  inflight = true;
+  const seqs = pending.map((w) => w.seq);
+  try {
+    // the store is the rebase base — no pre-PUT GET (client is the only writer here)
+    const result = await saveGraph(applyPending(graph, pending));
+    ingestGraph(result.graph, seqs);       // seq-gated acceptance: only these acks drop
+  } catch (err) {
+    for (const s of seqs) rejectWrite(s);  // overlay dropped → instant revert to truth
+    reportWriteError(err);                 // existing widgetError banner surface
+  } finally {
+    inflight = false;
+    if (getState().pending.length > 0) void pump(); // drain writes coalesced meanwhile
+  }
+}
+```
+
+**Checkability** (the user's third criterion, made concrete): the store and
+queue are plain TS, so the ADR's invariants become renderer-free vitest cases —
+call `commitLiteral` twice on one param and assert a single PUT whose body
+carries the coalesced value; resolve two responses out of order and assert the
+seq guard ignores the stale one (G2 dead by test); reject a PUT and assert the
+overlay is gone and `getState().effective` equals authoritative (rollback).
+The only untested seam is one line of official React API.
+
+**Reversibility.** If middleware, devtools, multiple stores, or
+shallow-equality tuple selectors ever earn their keep, Zustand adopts this
+exact shape (`getState`/`subscribe`/actions *are* its vanilla API): the swap
+is a mechanical rename, not a migration. The decision is cheap to revisit —
+which is itself a reason not to pre-pay for the library today.
 
 **Hydration.** Boot: `fetchLiveGraph()` → `hydrate()` (unchanged two GETs,
 once). `PUT /api/graph` response → `ingestGraph(result.graph, [seq])`.
@@ -403,12 +583,16 @@ the reported disconnect, no store yet:
    `state["graph"] = workspace.parse_graph()` and return it (G3's PUT half).
 
 **Phase 1 — the store refactor (the architecture, ~1–2 weeks).**
-`web/src/store/sync.ts` (+ `queue.ts`) added; `App.tsx` shrinks to shell +
-selectors; `GraphView.tsx` reads selectors, structure key gains the socket
-signature (G6); `inspectNode` takes epoch input; `SourceEditor` reads
-`sources` from the store; `makeGraphCommitter` retired in favor of the store
-queue (its lost-update tests carry over). Playwright specs in `web/tests/`
-extend: stale-run banner, coalesced commits, shape-change relayout.
+`web/src/store/sync.ts` (vanilla store + actions), `useSyncSelector.ts` (the
+one-line React binding), and `queue.ts` added — **zero new dependencies**;
+`App.tsx` shrinks to shell + selectors; `GraphView.tsx` reads selectors,
+structure key gains the socket signature (G6); `inspectNode` takes epoch
+input; `SourceEditor` reads `sources` from the store; `makeGraphCommitter`
+retired in favor of the store queue (its lost-update tests carry over).
+Renderer-free unit tests for the store/queue state machine (seq-gate,
+coalescing, rollback — § Checkability) land beside them. Playwright specs in
+`web/tests/` extend: stale-run banner, coalesced commits, shape-change
+relayout.
 
 **Phase 2 — liveness (external edits, Monaco dirty-file bar).**
 `server/app.py` + `server/workspace.py`: watchfiles-based SSE `/api/events`;
@@ -421,7 +605,7 @@ the seam in Part 3 — explicitly *not* scheduled.
 |---|---|---|---|
 | `web/src/App.tsx` | stale-run + seq guard + ingest PUT results | shell only; state moves to store | — |
 | `web/src/widgets/context.tsx` | pass PUT result through | retired → store queue | — |
-| `web/src/store/` (new) | — | `sync.ts`, `queue.ts`, selectors | SSE client |
+| `web/src/store/` (new) | — | `sync.ts` (vanilla store), `useSyncSelector.ts`, `queue.ts` — no new dependency | SSE client |
 | `web/src/GraphView.tsx` | accept `runIsStale` | selectors; socket-signature key | — |
 | `web/src/inspect.ts` / `components/NodeInspector.tsx` | epoch-aware values | derive from store | — |
 | `web/src/components/SourceEditor.tsx` | — | store-backed source cache | dirty-file bar |
@@ -435,9 +619,24 @@ the seam in Part 3 — explicitly *not* scheduled.
    affordance preserves context while never lying. **Recommendation:
    keep-dimmed with an explicit re-run affordance** (clear is acceptable for
    phase 0 if the banner work doesn't fit the slot).
-2. **Store: Zustand vs hand-rolled context+reducer.** **Recommendation:
-   Zustand** — selector subscriptions per node card, store usable from plain
-   async code (queue, SSE), no provider churn above ReactFlow; ~1 kB.
+2. **Store mechanism — re-decided 2026-07-23 (was: Zustand).** Four candidates
+   were compared against the constraints that motivated a store at all (§ The
+   store): (a) Zustand, (b) `useReducer` + Context, (c) `useSyncExternalStore`
+   over a hand-rolled vanilla store, (d) `useState` lifted to App.
+   (b) and (d) fail structurally: React-internal state cannot be *read* from
+   the plain-async write queue / SSE handler without a mirror copy (a second
+   source of truth — the disease this ADR treats), and neither offers
+   per-node subscription (Context re-renders every consumer per dispatch).
+   (a) and (c) both suffice and are the same design — Zustand v4+ is a
+   vanilla store bound via `useSyncExternalStore` internally — so the
+   React-built-in wins on the stated priority (simplest solution, easily
+   enforced, easily checked): zero dependencies, ~50 in-repo lines that are
+   exactly the state machine we must unit-test anyway, three lint-able usage
+   rules, and a mechanical upgrade path to Zustand if middleware/devtools
+   ever earn their keep. Constraint carried forward: selectors return stored
+   references or primitives; derivations are computed in the store on write.
+   **Recommendation: (c) `useSyncExternalStore` + hand-rolled vanilla store.**
+   **FOR HUMAN REVIEW** — final store choice.
 3. **Auto re-run after a write?** Runs execute arbitrary user code with
    arbitrary cost. **Recommendation: no** — never auto-run; the stale banner's
    one-click re-run is the affordance. Revisit only with per-node caching.
