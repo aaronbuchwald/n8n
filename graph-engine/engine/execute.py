@@ -47,10 +47,15 @@ def _invoke(fn: Any, provided: dict[str, Any]) -> Any:
     """Call ``fn`` with ``provided`` values, honouring parameter kinds.
 
     Positional-only params are passed positionally (filling gaps with their
-    defaults); everything else is passed by keyword.
+    defaults); everything else is passed by keyword. When the callable declares a
+    ``**kwargs`` receptacle (a dynamic node, ADR 0007), every provided value that
+    matches no declared parameter is passed through it — otherwise the derived
+    symbols would be silently dropped.
     """
     params = list(inspect.signature(fn).parameters.values())
     pos_only = [p for p in params if p.kind == p.POSITIONAL_ONLY]
+    declared = {p.name for p in params if p.kind != p.VAR_KEYWORD}
+    has_var_keyword = any(p.kind == p.VAR_KEYWORD for p in params)
 
     args: list[Any] = []
     if pos_only:
@@ -63,8 +68,12 @@ def _invoke(fn: Any, provided: dict[str, Any]) -> Any:
     kwargs = {
         p.name: provided[p.name]
         for p in params
-        if p.kind != p.POSITIONAL_ONLY and p.name in provided
+        if p.kind not in (p.POSITIONAL_ONLY, p.VAR_KEYWORD) and p.name in provided
     }
+    if has_var_keyword:
+        for name, value in provided.items():
+            if name not in declared:
+                kwargs[name] = value
     return fn(*args, **kwargs)
 
 
@@ -105,6 +114,13 @@ def run(
         provided = dict(node.literals)
         for param, (source, socket) in node.wired.items():
             provided[param] = outputs[source.id][socket]
+
+        # An optional derived socket (a default, unsatisfied) has no signature
+        # default to fall back on — it arrives via **kwargs — so supply its
+        # declared default here (ADR 0007 #5).
+        for inp in node.inputs_spec:
+            if inp.get("derived") and not inp["required"] and inp["name"] not in provided:
+                provided[inp["name"]] = inp["default"]
 
         try:
             result = _invoke(node.entry.fn, provided)

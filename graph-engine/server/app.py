@@ -22,6 +22,7 @@ from engine import (
     Graph,
     NodeExecutionError,
     NodeRegistry,
+    UnknownNodeType,
     bind,
     run,
     to_python,
@@ -135,6 +136,31 @@ def create_app(
     @app.get("/api/specs")
     def get_specs() -> dict:
         return {"version": SCHEMA_VERSION, "specs": registry.specs()}
+
+    @app.post("/api/specs/{spec_id}/derive")
+    def derive_inputs(spec_id: str, body: dict = Body(...)) -> JSONResponse:
+        """Derive a dynamic node's input sockets from a value (ADR 0007 D4).
+
+        Python-authoritative: the UI posts the draft equation and gets back the
+        socket list the engine would derive at bind time — one implementation, no
+        JS parser. Stateless and registry-only (no workspace needed).
+
+        * ``200 -> {"inputs": [...derived entries...]}``
+        * ``422 -> {"errors": [{"code","message"}]}`` — the value is invalid.
+        * ``404`` — the spec is unknown or not dynamic.
+        """
+        try:
+            entry = registry.get(spec_id)
+        except UnknownNodeType:
+            return JSONResponse(status_code=404, content={"message": f"spec {spec_id!r} is not registered"})
+        if entry.dynamic is None:
+            return JSONResponse(status_code=404, content={"message": f"spec {spec_id!r} has no derived inputs"})
+        value = body.get("value") if isinstance(body, dict) else body
+        try:
+            inputs = entry.dynamic.derive(value)
+        except EngineError as exc:
+            return JSONResponse(status_code=422, content={"errors": [_error_payload(exc)]})
+        return JSONResponse(status_code=200, content={"inputs": inputs})
 
     @app.get("/api/graph")
     def get_graph() -> JSONResponse:

@@ -94,9 +94,10 @@ def _arg_exprs(bound: BoundNode) -> str:
 
     Positional-only params are emitted positionally (a contiguous prefix, gaps
     filled with their defaults); every other provided input is emitted as
-    ``name=value``.
+    ``name=value``. Iterates the **effective** inputs (ADR 0007) so a dynamic
+    node's derived symbols emit as keyword args in deriver (appearance) order.
     """
-    inputs = bound.spec["inputs"]
+    inputs = bound.inputs_spec
     provided = set(bound.wired) | set(bound.literals)
     parts: list[str] = []
 

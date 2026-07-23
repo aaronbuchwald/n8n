@@ -20,12 +20,72 @@ from __future__ import annotations
 
 import inspect
 import json
+from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
-from .errors import EngineError
+from .errors import EngineError, UserError
 
 # Default output-socket name when a function has one plain return value.
 DEFAULT_OUTPUT = "result"
+
+
+@dataclass(frozen=True)
+class DerivedInputs:
+    """Extra input sockets derived from one literal parameter's value (ADR 0007).
+
+    A node type may declare that some of its input sockets are not fixed by its
+    Python signature but computed from the *value* of one designated literal
+    parameter (e.g. the equation text a handcalc node typesets). The engine owns
+    exactly one derivation seam; the effective inputs of an instance are the
+    static signature sockets **plus** ``derive(literals[param])``.
+
+    Args:
+        param: the static input whose *value* drives derivation (e.g. ``"lines"``).
+            Must name a declared parameter; :func:`engine.bind.bind` requires it to
+            be a literal, never wired (ADR 0007 D2).
+        derive: a **pure** function ``value -> ordered list of input-spec entries``
+            (the same dict shape as ``spec["inputs"]`` plus ``"derived": True``).
+            Contract: deterministic, no I/O, never ``exec``/``eval`` the value,
+            cheap (it runs at bind time and per keystroke via the derive endpoint).
+            Raises :class:`~engine.errors.UserError` on an invalid value.
+    """
+
+    param: str
+    derive: Callable[[Any], list[dict]]
+
+
+def effective_inputs(
+    spec: dict, dynamic: Optional[DerivedInputs], literals: dict
+) -> list[dict]:
+    """``spec["inputs"]`` + the derived entries from ``literals[dynamic.param]``.
+
+    For a non-dynamic node this is just the static inputs. For a dynamic node the
+    deriver runs against the current value of the deriving parameter (falling back
+    to that parameter's static default when the instance leaves it unset). Derived
+    entries are appended in the order the deriver returned them and are rejected if
+    any name collides with a static input. The deriver may raise
+    :class:`~engine.errors.UserError`; callers (bind, the derive endpoint) surface
+    it as their own structural error.
+    """
+    inputs = list(spec["inputs"])
+    if dynamic is None:
+        return inputs
+
+    if dynamic.param in literals:
+        value = literals[dynamic.param]
+    else:
+        static = next((i for i in inputs if i["name"] == dynamic.param), None)
+        value = static["default"] if static is not None else None
+
+    derived = dynamic.derive(value)
+    static_names = {i["name"] for i in inputs}
+    for entry in derived:
+        if entry["name"] in static_names:
+            raise UserError(
+                f"derived socket {entry['name']!r} collides with a static input "
+                f"of the node — rename the symbol"
+            )
+    return inputs + list(derived)
 
 
 class Widget:
@@ -157,6 +217,7 @@ def node_spec(
     title: Optional[str] = None,
     outputs: Optional[list] = None,
     widgets: Optional[dict[str, Widget]] = None,
+    dynamic: Optional[DerivedInputs] = None,
     module: Optional[str] = None,
     qualname: Optional[str] = None,
 ) -> dict:
@@ -172,12 +233,21 @@ def node_spec(
             by parameter name. A declared :class:`Widget` overrides the
             type-derived one; a key naming no parameter raises ``EngineError`` at
             import time.
+        dynamic: a :class:`DerivedInputs` declaration (ADR 0007). A node with it
+            derives extra input sockets from one literal parameter's value; the
+            spec gains an additive ``dynamicInputs`` marker naming that parameter.
+            A dynamic node **must** have a ``**kwargs`` receptacle (the derived
+            values arrive as keyword arguments); the receptacle itself is not a
+            socket.
         module / qualname: override the identity (defaults to ``fn.__module__`` /
             ``fn.__qualname__``); together they form the collision-proof id.
 
     Raises:
-        EngineError: the callable uses ``*args``/``**kwargs`` (not addressable as
-            named sockets), or a ``widgets`` key names no parameter.
+        EngineError: the callable uses ``*args`` (not addressable as named
+            sockets), uses ``**kwargs`` without a ``dynamic=`` declaration, is
+            declared ``dynamic=`` without a ``**kwargs`` receptacle or names a
+            deriving parameter that does not exist, or a ``widgets`` key names no
+            parameter.
     """
     signature = inspect.signature(fn)
     short_name = name or fn.__name__
@@ -193,15 +263,37 @@ def node_spec(
         )
 
     inputs = []
+    has_var_keyword = False
     for param in signature.parameters.values():
-        if param.kind in (param.VAR_POSITIONAL, param.VAR_KEYWORD):
+        if param.kind == param.VAR_POSITIONAL:
             raise EngineError(
-                f"{short_name!r} uses *args/**kwargs, which cannot be named "
-                f"input sockets; wrap it in a fixed-signature function"
+                f"{short_name!r} uses *args, which cannot be a named input "
+                f"socket; wrap it in a fixed-signature function"
             )
+        if param.kind == param.VAR_KEYWORD:
+            has_var_keyword = True
+            if dynamic is None:
+                raise EngineError(
+                    f"{short_name!r} uses **kwargs, which cannot be named input "
+                    f"sockets; only a node with a dynamic= declaration (ADR 0007) "
+                    f"may have a **kwargs receptacle for its derived values"
+                )
+            continue  # the receptacle is not a socket — the derived entries are
         inputs.append(_input_spec(param, widgets.get(param.name)))
 
-    return {
+    if dynamic is not None:
+        if not has_var_keyword:
+            raise EngineError(
+                f"{short_name!r} declares dynamic= but has no **kwargs receptacle "
+                f"for the derived values (ADR 0007 D1)"
+            )
+        if dynamic.param not in signature.parameters:
+            raise EngineError(
+                f"{short_name!r} declares dynamic= on parameter {dynamic.param!r}, "
+                f"which is not a declared parameter"
+            )
+
+    spec: dict[str, Any] = {
         "id": f"{module}.{qualname}",
         "name": short_name,
         "title": title or short_name,
@@ -211,6 +303,9 @@ def node_spec(
         "inputs": inputs,
         "outputs": _output_specs(outputs, signature.return_annotation),
     }
+    if dynamic is not None:
+        spec["dynamicInputs"] = {"param": dynamic.param}
+    return spec
 
 
 def is_multi_output(spec: dict) -> bool:

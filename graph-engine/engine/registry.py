@@ -18,17 +18,24 @@ from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
 from .errors import DuplicateNodeType, UnknownNodeType
-from .spec import Widget, node_spec
+from .spec import DerivedInputs, Widget, node_spec
 
 
 @dataclass(frozen=True)
 class RegisteredNode:
-    """A node type: canonical id, short name, the callable, and its spec."""
+    """A node type: canonical id, short name, the callable, and its spec.
+
+    ``dynamic`` (ADR 0007) carries the :class:`DerivedInputs` declaration for a
+    node whose input sockets are derived from one literal parameter's value. It
+    lives here — on the registered type, never in the JSON spec — because it holds
+    a live callable; the spec exposes only the additive ``dynamicInputs`` marker.
+    """
 
     id: str
     name: str
     fn: Callable[..., Any]
     spec: dict
+    dynamic: Optional[DerivedInputs] = None
 
 
 class NodeRegistry:
@@ -45,6 +52,7 @@ class NodeRegistry:
         title: Optional[str] = None,
         outputs: Optional[list] = None,
         widgets: Optional[dict[str, Widget]] = None,
+        dynamic: Optional[DerivedInputs] = None,
         module: Optional[str] = None,
         qualname: Optional[str] = None,
         replace: bool = False,
@@ -61,6 +69,7 @@ class NodeRegistry:
             title=title,
             outputs=outputs,
             widgets=widgets,
+            dynamic=dynamic,
             module=module,
             qualname=qualname,
         )
@@ -71,7 +80,7 @@ class NodeRegistry:
                 f"node type {node_id!r} is already registered to a different "
                 f"callable; pass replace=True to override"
             )
-        entry = RegisteredNode(id=node_id, name=spec["name"], fn=fn, spec=spec)
+        entry = RegisteredNode(id=node_id, name=spec["name"], fn=fn, spec=spec, dynamic=dynamic)
         self._by_id[node_id] = entry
         return entry
 

@@ -68,7 +68,7 @@ def _render_value(bound: BoundNode, param: str) -> str:
 
 
 def _arg_exprs(bound: BoundNode) -> str:
-    inputs = bound.spec["inputs"]
+    inputs = bound.inputs_spec
     provided = set(bound.wired) | set(bound.literals)
     parts: list[str] = []
 
