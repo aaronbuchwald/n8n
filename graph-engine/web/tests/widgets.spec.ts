@@ -1,17 +1,23 @@
 import { test, expect, type Page } from '@playwright/test';
 
-// The now-LIVE widget editing seam (ADR 0005 integration). The shell mounts the
-// commit provider, so unwired literal inputs render editors. These specs prove
-// the editor UX on the served showcase graph:
-//   * a chip opens its editor;
-//   * committing does NOT collapse the editor mid-edit (the WidgetSlot fix);
-//   * a committed value reflects on the canvas (re-render shows the new literal);
-//   * the table-recipe editor previews the recipe from Python (/api/run).
+// ADR 0013 Change 1 — all widget editing moved off the node card into the
+// inspector; the card is a read-only face (previews + sockets). These specs run
+// against the served showcase graph (`/`) and cover the acceptance criteria:
+//   * 1.1 no editable control on any card (no input/textarea/select/CE, no
+//     widget-chip/widget-slot anywhere);
+//   * 1.2 node click → inspector with an `inspector-widget-slot` per widget input;
+//   * 1.3 each kind editable ONLY in the inspector — the card preview and the
+//     committed graph reflect the edit (text/number/math/table here; calc lives
+//     in calc-widget.spec.ts against capacity_check);
+//   * 1.4 the card shows read-only previews + wireable sockets;
+//   * 1.8 clicking anywhere on a card (previews included) selects it; Escape closes.
 //
-// The COMMIT path (PUT /api/graph) is mocked so this runs parallel-safe against
-// the shared demo server without mutating it — disk persistence is proven by the
-// Python round-trip test (tests/test_showcase_example.py). The table PREVIEW uses
-// the real, read-only /api/run.
+// COMMIT path (PUT /api/graph) is mocked so this stays parallel-safe against the
+// shared demo server without mutating it — the PUT is echoed back (the store
+// ingests exactly what it committed) and GET stays live. Disk persistence is
+// proven by the Python round-trip test. checkbox has no widget in any served
+// demo graph, so its E2E assertion is deferred; it shares the identical
+// InspectorWidgetSlot mount + commit path and is covered by the store specs.
 
 function nodeCard(page: Page, title: string) {
   return page
@@ -20,90 +26,206 @@ function nodeCard(page: Page, title: string) {
     .first();
 }
 
-test('a math chip opens its editor, keeps it open on commit, and reflects the new literal', async ({
-  page,
-}) => {
+async function settle(page: Page) {
   await page.goto('/');
   await expect(page.locator('[data-testid="flow-canvas"][data-layout-ready="true"]')).toBeVisible({
     timeout: 15_000,
   });
+}
 
-  // Build the "saved" graph the mocked backend will return: the same served
-  // graph with parse_expr's `text` literal edited.
-  const original = await (await page.request.get('/api/graph')).json();
-  const edited = JSON.parse(JSON.stringify(original));
-  const NEW_EXPR = 'x**3 - 1';
-  for (const node of edited.nodes) {
-    if (node.type === 'sym.parse_expr') node.inputs.text = NEW_EXPR;
-  }
+async function openInspector(page: Page, title: string) {
+  await nodeCard(page, title).getByTestId('node-title').click();
+  const inspector = page.getByTestId('node-inspector');
+  await expect(inspector).toBeVisible();
+  return inspector;
+}
+
+interface Committed {
+  last: { nodes: Array<{ id: string; type: string; inputs: Record<string, unknown> }> } | null;
+}
+
+/** Echo PUTs back (the store ingests what it committed) and capture the graph. */
+async function mockCommits(page: Page): Promise<Committed> {
+  const state: Committed = { last: null };
   await page.route('**/api/graph', async (route) => {
-    const method = route.request().method();
-    if (method === 'PUT') {
-      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ graph: edited }) });
-    }
-    if (method === 'GET') {
-      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(edited) });
+    const req = route.request();
+    if (req.method() === 'PUT') {
+      const body = req.postDataJSON() as { graph: Committed['last'] };
+      state.last = body.graph;
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ graph: body.graph }),
+      });
     }
     return route.continue();
   });
+  return state;
+}
 
-  const card = nodeCard(page, 'parse_expr');
-  await card.getByTestId('widget-chip').first().click();
+const waitForPut = (page: Page) =>
+  page.waitForResponse(
+    (r) => new URL(r.url()).pathname === '/api/graph' && r.request().method() === 'PUT',
+  );
 
-  // The math editor renders with a live KaTeX preview.
-  const input = page.getByTestId('widget-editor-math-input');
+function nodeInputs(committed: Committed, type: string): Record<string, unknown> | undefined {
+  return committed.last?.nodes.find((n) => n.type === type)?.inputs;
+}
+
+test('1.1 no editable control renders on any node card', async ({ page }) => {
+  await settle(page);
+  expect(await page.getByTestId('spec-node').count()).toBeGreaterThan(0);
+  // No editors on the cards…
+  await expect(
+    page.locator(
+      '[data-testid="spec-node"] input, [data-testid="spec-node"] textarea, [data-testid="spec-node"] select, [data-testid="spec-node"] [contenteditable="true"]',
+    ),
+  ).toHaveCount(0);
+  // …and the removed canvas-editing testids match nothing, anywhere.
+  await expect(page.getByTestId('widget-chip')).toHaveCount(0);
+  await expect(page.getByTestId('widget-slot')).toHaveCount(0);
+  await expect(page.getByTestId('widget-done')).toHaveCount(0);
+});
+
+test('1.2 clicking a node opens the inspector with an editor slot per widget input', async ({
+  page,
+}) => {
+  await settle(page);
+  const inspector = await openInspector(page, 'read_table');
+  await expect(
+    inspector.locator('[data-testid="inspector-widget-slot"][data-input="path"]'),
+  ).toBeVisible();
+  await expect(inspector.getByTestId('inspector-widget-slot').first()).toBeVisible();
+});
+
+test('1.3/1.4 text: editable only in the inspector; card preview + graph reflect the commit', async ({
+  page,
+}) => {
+  const committed = await mockCommits(page);
+  await settle(page);
+  const card = nodeCard(page, 'read_table');
+  // No text editor on the card — only a read-only preview.
+  await expect(card.getByTestId('widget-editor-text')).toHaveCount(0);
+  await expect(card.getByTestId('widget-preview').first()).toBeVisible();
+
+  const inspector = await openInspector(page, 'read_table');
+  const input = inspector
+    .locator('[data-testid="inspector-widget-slot"][data-input="path"]')
+    .getByTestId('widget-editor-text');
   await expect(input).toBeVisible();
-  await input.fill(NEW_EXPR);
-  await expect(page.locator('.ge-widget-math-preview .katex').first()).toBeVisible({ timeout: 8_000 });
 
-  // Commit (Enter). With the WidgetSlot fix the editor stays OPEN — it must not
-  // collapse back to a chip mid-edit.
-  const put = page.waitForResponse((r) => r.url().includes('/api/graph') && r.request().method() === 'PUT');
+  const NEW = 'edited-showcase.csv';
+  const put = waitForPut(page);
+  await input.fill(NEW);
   await input.press('Enter');
   await put;
-  await expect(page.getByTestId('widget-slot')).toBeVisible();
+
+  expect(nodeInputs(committed, 'table.read_table')?.path).toBe(NEW);
+  const pathRow = card
+    .locator('.ge-socket--in')
+    .filter({ has: page.locator('.ge-socket__name', { hasText: 'path' }) });
+  await expect(pathRow.getByTestId('widget-preview')).toContainText(NEW);
+});
+
+test('1.3 number: editable only in the inspector; card preview + graph reflect the commit', async ({
+  page,
+}) => {
+  const committed = await mockCommits(page);
+  await settle(page);
+  const card = nodeCard(page, 'pick');
+  await expect(card.getByTestId('widget-editor-number')).toHaveCount(0);
+
+  const inspector = await openInspector(page, 'pick');
+  const input = inspector
+    .locator('[data-testid="inspector-widget-slot"][data-input="index"]')
+    .getByTestId('widget-editor-number');
   await expect(input).toBeVisible();
 
-  // Close via the discoverable Done affordance → the collapsed chip now shows
-  // the persisted literal (the commit reflected on the canvas).
-  await card.getByTestId('widget-done').click();
-  const chip = card.getByTestId('widget-chip').first();
-  await expect(chip).toContainText(NEW_EXPR);
+  const put = waitForPut(page);
+  await input.fill('1');
+  await input.press('Enter');
+  await put;
+
+  expect(nodeInputs(committed, 'sym.pick')?.index).toBe(1);
+  const indexRow = card
+    .locator('.ge-socket--in')
+    .filter({ has: page.locator('.ge-socket__name', { hasText: 'index' }) });
+  await expect(indexRow.getByTestId('widget-preview')).toContainText('1');
 });
 
-test('the table-recipe editor opens and previews the recipe from Python', async ({ page }) => {
-  await page.goto('/');
-  await expect(page.locator('[data-testid="flow-canvas"][data-layout-ready="true"]')).toBeVisible({
-    timeout: 15_000,
-  });
+test('1.3/1.4 math: editable only in the inspector; the card block preview re-typesets', async ({
+  page,
+}) => {
+  const committed = await mockCommits(page);
+  await settle(page);
+  const card = nodeCard(page, 'parse_expr');
+  // The card shows a read-only typeset block preview, no editor.
+  const blockPreview = card.locator('[data-testid="widget-preview"][data-kind="math"]');
+  await expect(blockPreview).toBeVisible();
+  await expect(blockPreview.locator('.katex').first()).toBeVisible({ timeout: 8_000 });
+  await expect(card.getByTestId('widget-editor-math-input')).toHaveCount(0);
 
+  const inspector = await openInspector(page, 'parse_expr');
+  const input = inspector.getByTestId('widget-editor-math-input');
+  await expect(input).toBeVisible();
+
+  const NEW = 'x**3 - 1';
+  const put = waitForPut(page);
+  await input.fill(NEW);
+  await input.press('Enter');
+  await put;
+
+  expect(nodeInputs(committed, 'sym.parse_expr')?.text).toBe(NEW);
+  // The card's block preview re-typesets from the committed literal.
+  await expect(blockPreview.locator('.katex').first()).toBeVisible({ timeout: 8_000 });
+});
+
+test('1.3/1.4 table-recipe: editable only in the inspector; card summary chip increments', async ({
+  page,
+}) => {
+  await mockCommits(page);
+  await settle(page);
   const card = nodeCard(page, 'apply_recipe');
-  await card.getByTestId('widget-chip').first().click();
+  // Card shows the compact recipe summary (read-only), no grid editor.
+  const summary = card.locator('[data-testid="widget-preview"][data-kind="table-recipe"]');
+  await expect(summary).toContainText('recipe · 3 steps');
+  await expect(card.getByTestId('table-recipe-editor')).toHaveCount(0);
 
-  const editor = page.getByTestId('table-recipe-editor');
+  const inspector = await openInspector(page, 'apply_recipe');
+  const editor = inspector.getByTestId('table-recipe-editor');
   await expect(editor).toBeVisible();
-
-  // The recipe is shown as a reorderable step list (the product, C-D1).
   await expect(editor.getByTestId('tr-step')).toHaveCount(3);
 
-  // The grid preview is computed by Python (/api/run) — the grid never computes.
-  await expect(editor.locator('.tr-preview__grid table')).toBeVisible({ timeout: 20_000 });
-  await expect(editor.getByText('preview computed in Python · /api/run')).toBeVisible();
+  // Add an op in the inspector editor → the recipe grows and commits (debounced).
+  const put = waitForPut(page);
+  await editor.getByTestId('tr-add-step').click();
+  await editor.getByRole('menuitem', { name: /Limit/ }).click();
+  await expect(editor.getByTestId('tr-step')).toHaveCount(4);
+  await put;
 
-  // Editing UX: the editor does not collapse — Done is the close affordance.
-  await expect(card.getByTestId('widget-done')).toBeVisible();
+  // The card summary follows: recipe · 4 steps.
+  await expect(summary).toContainText('recipe · 4 steps');
 });
 
-test('read-only mode without a commit provider renders no editor chips', async ({ page }) => {
-  // Sanity for the read-only path: when the shell does NOT mount the provider
-  // (e.g. a headless render), a literal input shows a static value span, never a
-  // chip button. Here we assert the served, editable canvas is the opposite —
-  // chips ARE buttons — pinning the two modes apart.
-  await page.goto('/');
-  await expect(page.locator('[data-testid="flow-canvas"][data-layout-ready="true"]')).toBeVisible({
-    timeout: 15_000,
-  });
-  const chip = page.getByTestId('widget-chip').first();
-  await expect(chip).toBeVisible();
-  await expect(chip).toHaveJSProperty('tagName', 'BUTTON');
+test('1.4 the card shows read-only previews and wireable sockets', async ({ page }) => {
+  await settle(page);
+  const card = nodeCard(page, 'apply_recipe');
+  // A read-only preview…
+  await expect(card.locator('[data-testid="widget-preview"][data-kind="table-recipe"]')).toBeVisible();
+  // …and the sockets/handles are still present (wireable).
+  await expect(card.locator('.ge-socket__name', { hasText: 'recipe' })).toBeVisible();
+  await expect(card.locator('.ge-handle--in').first()).toBeAttached();
+  await expect(card.locator('.ge-handle--out').first()).toBeAttached();
+});
+
+test('1.8 clicking a card preview selects the node; Escape closes the inspector', async ({
+  page,
+}) => {
+  await settle(page);
+  // A click that lands directly on a preview must still select the node — no
+  // dead zone left by the removed canvas-editing apparatus.
+  await nodeCard(page, 'apply_recipe').getByTestId('widget-preview').first().click();
+  await expect(page.getByTestId('node-inspector')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('node-inspector')).toHaveCount(0);
 });

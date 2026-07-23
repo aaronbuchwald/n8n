@@ -57,24 +57,30 @@ function nodeCard(page: Page, title: string) {
     .first();
 }
 
+// ADR 0013: editing moved to the inspector. The math editor now lives in the
+// inspector's widget slot, so scope every query to it (the card also mounts a
+// read-only `widget-math-preview` block, so an unscoped query is ambiguous).
 async function openMathEditor(page: Page) {
   await page.goto('/');
   await expect(page.locator('[data-testid="flow-canvas"][data-layout-ready="true"]')).toBeVisible({
     timeout: 15_000,
   });
-  const card = nodeCard(page, 'parse_expr');
-  await card.getByTestId('widget-chip').first().click();
-  return page.getByTestId('widget-editor-math-input');
+  await nodeCard(page, 'parse_expr').getByTestId('node-title').click();
+  const inspector = page.getByTestId('node-inspector');
+  await expect(inspector).toBeVisible();
+  const input = inspector.getByTestId('widget-editor-math-input');
+  await expect(input).toBeVisible();
+  return { input, inspector };
 }
 
 test('a shape the mini-translator cannot faithfully render falls back to a labelled raw preview (#4)', async ({
   page,
 }) => {
-  const input = await openMathEditor(page);
+  const { input, inspector } = await openMathEditor(page);
   await input.fill('x**(y+1)');
 
-  const preview = page.getByTestId('widget-math-preview');
-  const cue = page.getByTestId('widget-math-fallback-cue');
+  const preview = inspector.getByTestId('widget-math-preview');
+  const cue = inspector.getByTestId('widget-math-fallback-cue');
   await expect(cue).toBeVisible({ timeout: 8_000 });
   await expect(cue).toContainText(/approximate|can.t typeset/i);
 
@@ -84,15 +90,15 @@ test('a shape the mini-translator cannot faithfully render falls back to a label
 });
 
 test('a good expression still renders live KaTeX with no fallback cue (#4)', async ({ page }) => {
-  const input = await openMathEditor(page);
+  const { input, inspector } = await openMathEditor(page);
   await input.fill('x**3 - 1');
 
-  await expect(page.locator('.ge-widget-math-preview .katex').first()).toBeVisible({ timeout: 8_000 });
-  await expect(page.getByTestId('widget-math-fallback-cue')).toHaveCount(0);
+  await expect(inspector.locator('.ge-widget-math-preview .katex').first()).toBeVisible({ timeout: 8_000 });
+  await expect(inspector.getByTestId('widget-math-fallback-cue')).toHaveCount(0);
 });
 
 test('a stale in-flight render never clobbers a later draft (#10)', async ({ page }) => {
-  const input = await openMathEditor(page);
+  const { input, inspector } = await openMathEditor(page);
 
   // Type an unsupported shape (resolves synchronously to the fallback), then
   // immediately overwrite with a good expression. Without the `previewSeq`
@@ -101,7 +107,7 @@ test('a stale in-flight render never clobbers a later draft (#10)', async ({ pag
   await input.fill('sqrt(sqrt(x))');
   await input.fill('x**2');
 
-  await expect(page.locator('.ge-widget-math-preview .katex').first()).toBeVisible({ timeout: 8_000 });
-  await expect(page.getByTestId('widget-math-fallback-cue')).toHaveCount(0);
-  await expect(page.getByTestId('widget-math-preview')).not.toContainText('sqrt(sqrt(x))');
+  await expect(inspector.locator('.ge-widget-math-preview .katex').first()).toBeVisible({ timeout: 8_000 });
+  await expect(inspector.getByTestId('widget-math-fallback-cue')).toHaveCount(0);
+  await expect(inspector.getByTestId('widget-math-preview')).not.toContainText('sqrt(sqrt(x))');
 });

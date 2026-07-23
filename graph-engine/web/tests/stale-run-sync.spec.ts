@@ -70,9 +70,11 @@ test('an edit marks the previous run stale (dimmed + banner) and Run again clear
     return route.continue();
   });
 
-  const card = nodeCard(page, 'parse_expr');
-  await card.getByTestId('widget-chip').first().click();
-  const input = page.getByTestId('widget-editor-math-input');
+  // ADR 0013: edit in the inspector (the card is read-only now).
+  await nodeCard(page, 'parse_expr').getByTestId('node-title').click();
+  const inspector = page.getByTestId('node-inspector');
+  await expect(inspector).toBeVisible();
+  const input = inspector.getByTestId('widget-editor-math-input');
   await expect(input).toBeVisible();
   await input.fill(NEW_EXPR);
   const put = page.waitForResponse(

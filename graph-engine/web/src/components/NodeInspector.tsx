@@ -1,5 +1,6 @@
 import type { InspectedInput, InspectedNode, InputSource, ResolvedValue } from '../inspect';
 import { previewType, previewValue } from '../preview';
+import { InspectorWidgetSlot } from '../widgets/InspectorWidgetSlot';
 import { SourceEditor } from './SourceEditor';
 
 interface NodeInspectorProps {
@@ -60,8 +61,15 @@ function typeLabel(declared: string, resolved: ResolvedValue | null): string {
   return runtime === declared ? declared : `${declared} · ${runtime}`;
 }
 
-function InputRow({ input }: { input: InspectedInput }) {
+function InputRow({ input, nodeId }: { input: InspectedInput; nodeId: string }) {
   const resolved = inputValue(input);
+  // The inspector is the editing surface now (ADR 0013 D4): an UNWIRED input
+  // that declares a widget renders its editor inline, always expanded, under
+  // the row head. Wired inputs (their value comes from the graph) and
+  // non-widget inputs stay read-only — the ValueLine still shows "what it is
+  // set to" / "what flowed in the last run" below the editor.
+  const widgetSpec = input.spec?.widget ? input.spec : null;
+  const editable = widgetSpec !== null && input.source.kind !== 'wired';
   return (
     <div className="ge-inspector__row" data-testid="inspector-input">
       <div className="ge-inspector__row-head">
@@ -76,6 +84,9 @@ function InputRow({ input }: { input: InspectedInput }) {
           {sourceLabel(input.source)}
         </span>
       </div>
+      {editable && widgetSpec && (
+        <InspectorWidgetSlot input={widgetSpec} value={input.literal?.value} nodeId={nodeId} />
+      )}
       <ValueLine resolved={resolved} />
     </div>
   );
@@ -96,9 +107,19 @@ export function NodeInspector({
   onClose,
 }: NodeInspectorProps) {
   const editing = editingSource && !node.missingSpec;
+  // The calc / table-recipe editors are physically large (multi-line, grids):
+  // give the panel a wider layout when the selected node hosts one, the same
+  // expand-in-place pattern the source editor uses (ADR 0013 D4 ergonomics).
+  const hasWideEditor = node.inputs.some(
+    (input) =>
+      input.source.kind !== 'wired' &&
+      (input.spec?.widget?.kind === 'calc' || input.spec?.widget?.kind === 'table-recipe'),
+  );
   return (
     <aside
-      className={`ge-inspector${editing ? ' ge-inspector--editing' : ''}`}
+      className={`ge-inspector${editing ? ' ge-inspector--editing' : ''}${
+        !editing && hasWideEditor ? ' ge-inspector--wide' : ''
+      }`}
       data-testid="node-inspector"
       aria-label={`Inspect node ${node.id}`}
     >
@@ -180,7 +201,7 @@ export function NodeInspector({
           <h3 className="ge-inspector__label">Inputs</h3>
           {node.inputs.length === 0 && <div className="ge-inspector__empty">no inputs</div>}
           {node.inputs.map((input) => (
-            <InputRow input={input} key={input.name} />
+            <InputRow input={input} nodeId={node.id} key={input.name} />
           ))}
         </section>
 

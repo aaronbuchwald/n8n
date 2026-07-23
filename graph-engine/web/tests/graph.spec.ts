@@ -46,11 +46,11 @@ test('renders the showcase graph fetched live from the API (not fixtures)', asyn
     timeout: 10_000,
   });
 
-  // The canvas is EDITABLE now: the shell mounts the commit provider, so each
-  // unwired literal input renders an editor chip (read-only would show a static
-  // value span with no button). Several literal inputs → several chips.
-  const chips = page.getByTestId('widget-chip');
-  await expect.poll(async () => chips.count(), { timeout: 10_000 }).toBeGreaterThan(3);
+  // The card is READ-ONLY now (ADR 0013 D1): each unwired widget-bearing input
+  // renders a read-only preview (value chip / typeset block / recipe summary).
+  // Editing moved to the inspector. Several widget inputs → several previews.
+  const previews = page.getByTestId('widget-preview');
+  await expect.poll(async () => previews.count(), { timeout: 10_000 }).toBeGreaterThan(3);
 
   const minimapNodes = page.locator('.react-flow__minimap-node');
   await expect.poll(async () => minimapNodes.count(), { timeout: 10_000 }).toBe(NODE_COUNT);

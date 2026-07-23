@@ -69,8 +69,8 @@ test('a long literal value stays inside the node card', async ({ page }) => {
   await expect(node).toBeVisible();
   const nodeBox = (await node.boundingBox()) as Box;
 
-  // The path literal is editable now (a chip button), still clipped to the card.
-  const value = node.getByTestId('widget-chip').first();
+  // The path literal shows a read-only preview now (ADR 0013), still clipped.
+  const value = node.getByTestId('widget-preview').first();
   await expect(value).toBeVisible();
   const valueBox = (await value.boundingBox()) as Box;
   expect(within(valueBox, nodeBox), 'literal value is clipped inside the card').toBe(true);

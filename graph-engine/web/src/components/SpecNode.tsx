@@ -2,7 +2,8 @@ import { Handle, Position, type NodeProps, type Node } from '@xyflow/react';
 import type { SpecNodeData } from '../types';
 import { inHandle, outHandle } from '../buildGraph';
 import { RendererSlot } from '../node-renderers/RendererSlot';
-import { WidgetSlot } from '../widgets/WidgetSlot';
+import { WidgetPreview } from '../widgets/WidgetPreview';
+import { previewPlacementFor } from '../widgets/registry';
 
 type SpecNode = Node<SpecNodeData, 'specNode'>;
 
@@ -130,17 +131,18 @@ export function SpecNode({ data }: NodeProps<SpecNode>) {
                     {input.name}
                   </span>
                   <span className="ge-socket__type">{input.type}</span>
-                  {/* The one widget editor slot (ADR 0005 A-D4). WidgetSlot owns
-                      read-only display AND the editor, so this stays a single
-                      mount — B/C-ui add editor files, never touch this line. */}
+                  {/* The card is read-only now (ADR 0013 D1): the socket row
+                      mounts the INLINE preview (value chip / table summary);
+                      block previews (typeset math/calc) render in the strip
+                      below. All editing lives in the inspector. */}
                   {wired ? (
                     <span className="ge-socket__state ge-socket__state--wired">wired</span>
                   ) : (
-                    <WidgetSlot
+                    <WidgetPreview
                       input={input}
                       value={boundInputs[input.name]}
                       hasLiteral={hasLiteral}
-                      nodeId={id}
+                      slot="inline"
                     />
                   )}
                 </div>
@@ -172,6 +174,32 @@ export function SpecNode({ data }: NodeProps<SpecNode>) {
           </div>
         )}
       </div>
+
+      {/* Block-placement previews (ADR 0013 D2): typeset math/calc, one per
+          widget-bearing unwired input whose kind registered `block`. Read-only;
+          clicking still selects the node (no pointer shielding). */}
+      {(() => {
+        const blockInputs = spec.inputs.filter(
+          (input) =>
+            !wiredInputs.has(input.name) &&
+            input.widget &&
+            previewPlacementFor(input.widget) === 'block',
+        );
+        if (blockInputs.length === 0) return null;
+        return (
+          <div className="ge-node__previews" data-testid="node-previews">
+            {blockInputs.map((input) => (
+              <WidgetPreview
+                key={input.name}
+                input={input}
+                value={boundInputs[input.name]}
+                hasLiteral={Object.prototype.hasOwnProperty.call(boundInputs, input.name)}
+                slot="block"
+              />
+            ))}
+          </div>
+        );
+      })()}
 
       <RendererSlot data={data} />
     </div>
