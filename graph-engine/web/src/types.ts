@@ -24,6 +24,15 @@ export interface SpecOutput {
   type: string;
 }
 
+// A node-level rendering declaration (ADR 0010 D2): `kind` resolves against the
+// JS renderer registry (web/src/node-renderers/); `config` is opaque options
+// declared in Python via `Renderer(kind, **config)`. Optional and additive —
+// specs without it render exactly as before.
+export interface RendererDecl {
+  kind: string;
+  config?: Record<string, unknown>;
+}
+
 export interface NodeSpec {
   id: string;
   name: string;
@@ -33,6 +42,9 @@ export interface NodeSpec {
   doc: string;
   inputs: SpecInput[];
   outputs: SpecOutput[];
+  // Optional whole-node renderer declaration (ADR 0010). Absent/null on specs
+  // from engines that predate the field — the UI falls back to result chips.
+  renderer?: RendererDecl | null;
 }
 
 export type NodeSpecs = Record<string, NodeSpec>;
