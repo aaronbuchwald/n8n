@@ -15,6 +15,11 @@ import { createNode } from '../store/sync';
 import { useSyncSelector } from '../store/useSyncSelector';
 import type { NodeSpec } from '../types';
 
+// The W5→W4 drag payload contract (ADR 0011): a palette entry's drag carries
+// its spec id under this MIME type; the canvas reads it on drop and calls the
+// same `createNode(type, dropPosition)` click-to-place uses.
+export const PALETTE_SPEC_MIME = 'application/x-graph-engine-spec';
+
 interface PaletteEntry {
   spec: NodeSpec;
   summary: string; // first doc line, '' when undocumented
@@ -129,6 +134,12 @@ export function Palette() {
                     disabled={placing}
                     title={`add a ${spec.id} node to the graph`}
                     onClick={() => void place(spec.id)}
+                    draggable
+                    onDragStart={(event) => {
+                      // Drag-to-place (11-W4): the canvas' onDrop reads this id.
+                      event.dataTransfer.setData(PALETTE_SPEC_MIME, spec.id);
+                      event.dataTransfer.effectAllowed = 'copy';
+                    }}
                   >
                     <span className="ge-palette__entry-name">{spec.name}</span>
                     {summary && <span className="ge-palette__entry-doc">{summary}</span>}

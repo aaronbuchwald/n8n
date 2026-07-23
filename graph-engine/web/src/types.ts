@@ -97,4 +97,7 @@ export interface SpecNodeData extends Record<string, unknown> {
   result: Record<string, unknown> | null;
   // True when the most recent run failed at this node.
   hasError: boolean;
+  // Required inputs neither wired nor given a literal, per the latest edit-mode
+  // validation (ADR 0011 D6) — the on-canvas "needs wiring" badge (stream W4).
+  needsWiring: string[];
 }

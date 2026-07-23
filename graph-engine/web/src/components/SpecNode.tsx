@@ -7,7 +7,8 @@ import { WidgetSlot } from '../widgets/WidgetSlot';
 type SpecNode = Node<SpecNodeData, 'specNode'>;
 
 export function SpecNode({ data }: NodeProps<SpecNode>) {
-  const { id, type, spec, boundInputs, wiredInputs, wiredOutputs, isOutput, hasError } = data;
+  const { id, type, spec, boundInputs, wiredInputs, wiredOutputs, isOutput, hasError, needsWiring } =
+    data;
 
   // A spec can be missing if the graph references a type with no matching spec.
   // Render generic target/source handles (matching the ids its edges reference)
@@ -90,6 +91,17 @@ export function SpecNode({ data }: NodeProps<SpecNode>) {
         {isOutput && (
           <span className="ge-node__badge" data-testid="output-badge" title="Graph output socket">
             output
+          </span>
+        )}
+        {/* The store's edit-mode validation (`incomplete`) badged in place —
+            ADR 0011 D6/W4: a half-built node reads "needs wiring", not error. */}
+        {needsWiring.length > 0 && (
+          <span
+            className="ge-node__badge ge-node__badge--wiring"
+            data-testid="node-needs-wiring"
+            title={`required inputs not yet wired: ${needsWiring.join(', ')}`}
+          >
+            needs wiring
           </span>
         )}
       </div>

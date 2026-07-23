@@ -18,8 +18,16 @@
 //   3. No parallel state — any payload shown by >1 component enters via an
 //      `ingest*` action, never component-local `useState`.
 
-import type { GraphDoc, GraphNode, NodeSpecs, SpecInput } from '../types';
-import type { GraphId, LiveGraph, RunResult, SaveSourceResult, SourceInfo, WorkspaceInfo } from '../api';
+import type { GraphDoc, GraphEdge, GraphNode, NodeSpecs, SpecInput } from '../types';
+import type {
+  GraphId,
+  LiveGraph,
+  RunResult,
+  SaveSourceResult,
+  SourceInfo,
+  WorkspaceInfo,
+  WritebackWarning,
+} from '../api';
 import { mintNodeId, validateGraphEdit, type IncompleteInputWarning } from '../api';
 // queue.ts imports actions from THIS module; the cycle is safe because
 // `schedulePump` is only *called* (inside commitLiteral/createNode), never at
@@ -42,7 +50,35 @@ export interface PendingAddNodeWrite {
   node: GraphNode;
 }
 
-export type PendingWrite = PendingLiteralWrite | PendingAddNodeWrite;
+/** One optimistic edge add — a canvas connect/reconnect gesture (ADR 0011 W4).
+ * Dropping onto an occupied input replaces the existing edge (D5). */
+export interface PendingAddEdgeWrite {
+  seq: number; // client-assigned, monotone
+  kind: 'addEdge';
+  edge: GraphEdge;
+}
+
+/** One optimistic edge removal — a canvas edge delete / reconnect-away (W4). */
+export interface PendingRemoveEdgeWrite {
+  seq: number; // client-assigned, monotone
+  kind: 'removeEdge';
+  edge: GraphEdge;
+}
+
+/** One optimistic node removal — a canvas node delete (W4). Incident edges
+ * cascade client-side (D4); the graph output clears if this node carried it. */
+export interface PendingRemoveNodeWrite {
+  seq: number; // client-assigned, monotone
+  kind: 'removeNode';
+  nodeId: string;
+}
+
+export type PendingWrite =
+  | PendingLiteralWrite
+  | PendingAddNodeWrite
+  | PendingAddEdgeWrite
+  | PendingRemoveEdgeWrite
+  | PendingRemoveNodeWrite;
 
 /** A cached source buffer, tagged with the `rev` it was fetched/served at. */
 export interface StoredSource extends SourceInfo {
@@ -89,6 +125,10 @@ export interface SyncState {
   // required input in the draft. The "needs wiring" badge source — W5's palette
   // status strip today, W4's canvas badges later.
   incomplete: IncompleteInputWarning[];
+  // The last structural save's lossy-fallback warning (ADR 0011 HD2 §4): the
+  // wiring block was regenerated and hand-written comments were dropped. Set
+  // from the PUT envelope by the write queue; the canvas shows it as a banner.
+  writebackWarning: WritebackWarning | null;
 
   // --- optimistic overlay ---
   pending: PendingWrite[];
@@ -112,6 +152,7 @@ const INITIAL: SyncState = {
   workspace: null,
   writeError: null,
   incomplete: [],
+  writebackWarning: null,
   pending: [],
   effective: { graph: null, nodesById: EMPTY_NODES },
 };
@@ -145,25 +186,62 @@ function computeEffective(graph: GraphDoc | null, pending: readonly PendingWrite
     byParam.set(write.param, write.value);
   }
 
-  const nodes = graph.nodes.map((node) => {
+  let nodes = graph.nodes.map((node) => {
     const byParam = overrides.get(node.id);
     if (!byParam) return node; // identity preserved — untouched card won't re-render
     const inputs = { ...node.inputs };
     for (const [param, value] of byParam) inputs[param] = value;
     return { ...node, inputs };
   });
-  // Created nodes append after the authoritative ones. The id guard covers the
-  // window where the authoritative graph already contains the node (the PUT
-  // landed) but its overlay entry has not been acked/dropped yet.
-  const existing = new Set(nodes.map((n) => n.id));
+
+  // Structural writes replay chronologically over the authoritative topology,
+  // so a reconnect (removeEdge then addEdge) or a create-then-delete composes
+  // the way the gestures happened. The addNode id guard covers the window where
+  // the authoritative graph already contains the node (the PUT landed) but its
+  // overlay entry has not been acked/dropped yet.
+  let edges = graph.edges;
+  let output = graph.output;
   for (const write of pending) {
-    if (write.kind === 'addNode' && !existing.has(write.node.id)) {
-      nodes.push(write.node);
-      existing.add(write.node.id);
+    switch (write.kind) {
+      case 'literal':
+        break; // folded above
+      case 'addNode':
+        if (!nodes.some((n) => n.id === write.node.id)) nodes = [...nodes, write.node];
+        break;
+      case 'removeNode':
+        nodes = nodes.filter((n) => n.id !== write.nodeId);
+        // Client-side cascade (D4): incident edges go with the node…
+        edges = edges.filter((e) => e.source !== write.nodeId && e.target !== write.nodeId);
+        // …and the graph output clears if this node carried it.
+        if (output?.node === write.nodeId) output = null;
+        break;
+      case 'addEdge':
+        // An input is wired by at most one edge (D5): dropping onto an occupied
+        // input replaces the existing edge rather than double-wiring it.
+        edges = [
+          ...edges.filter(
+            (e) => !(e.target === write.edge.target && e.targetInput === write.edge.targetInput),
+          ),
+          write.edge,
+        ];
+        break;
+      case 'removeEdge':
+        edges = edges.filter((e) => !sameEdge(e, write.edge));
+        break;
     }
   }
-  const effectiveGraph: GraphDoc = { ...graph, nodes };
+  const effectiveGraph: GraphDoc = { ...graph, nodes, edges, output };
   return { graph: effectiveGraph, nodesById: indexNodes(nodes) };
+}
+
+/** Edge identity: all four endpoints match. */
+function sameEdge(a: GraphEdge, b: GraphEdge): boolean {
+  return (
+    a.source === b.source &&
+    a.sourceOutput === b.sourceOutput &&
+    a.target === b.target &&
+    a.targetInput === b.targetInput
+  );
 }
 
 let state: SyncState = INITIAL;
@@ -230,7 +308,16 @@ export function hydrate(live: LiveGraph, graphId: GraphId = null): void {
     graphId,
     rev: state.rev + 1,
     ...(switchingEntry
-      ? { sources: {}, derived: {}, pending: [], run: null, writeError: null, sourceDirty: false, incomplete: [] }
+      ? {
+          sources: {},
+          derived: {},
+          pending: [],
+          run: null,
+          writeError: null,
+          sourceDirty: false,
+          incomplete: [],
+          writebackWarning: null,
+        }
       : {}),
   });
 }
@@ -345,6 +432,101 @@ export async function createNode(
 /** Adopt the latest edit-mode validation result (the "needs wiring" source). */
 export function ingestEditValidation(warnings: IncompleteInputWarning[]): void {
   setState({ incomplete: warnings });
+}
+
+/**
+ * Re-run edit-mode validation over the current draft and refresh `incomplete`.
+ * Advisory and best-effort (D6): a validation failure never blocks or reverts
+ * the optimistic edit — the save queue is the authority, and a genuinely
+ * broken graph is rejected there (revert + `writeError`).
+ */
+async function refreshEditValidation(): Promise<void> {
+  const draft = state.effective.graph;
+  if (!draft) return;
+  try {
+    ingestEditValidation(await validateGraphEdit(draft));
+  } catch {
+    // Hard validate errors (cycle, unknown socket) surface via the queue's PUT.
+  }
+}
+
+/**
+ * Wire `edge.source`'s output into `edge.target`'s input — a completed canvas
+ * connect gesture (ADR 0011 W4, D5). Optimistic overlay first, then the store's
+ * single-flight source queue persists the whole graph (`PUT .../graph`, D2);
+ * a server rejection (cycle, type mismatch) reverts the overlay and surfaces
+ * the structured error on `writeError`. Edit-mode validation refreshes the
+ * "needs wiring" badges alongside (advisory, non-blocking).
+ */
+export function connectEdge(edge: GraphEdge): void {
+  setState({
+    pending: [...state.pending, { seq: nextSeq(), kind: 'addEdge', edge }],
+    writeError: null,
+  });
+  schedulePump();
+  void refreshEditValidation();
+}
+
+/**
+ * Move one end of an existing edge to a new socket — delete + add in ONE
+ * gesture and one save (D5). Both writes enter the overlay in a single
+ * mutation, so the pump's microtask coalesces them into one PUT.
+ */
+export function reconnectEdge(oldEdge: GraphEdge, newEdge: GraphEdge): void {
+  setState({
+    pending: [
+      ...state.pending,
+      { seq: nextSeq(), kind: 'removeEdge', edge: oldEdge },
+      { seq: nextSeq(), kind: 'addEdge', edge: newEdge },
+    ],
+    writeError: null,
+  });
+  schedulePump();
+  void refreshEditValidation();
+}
+
+/**
+ * Delete nodes and/or edges from the canvas (D4). One mutation → one save:
+ * node removals cascade their incident edges in the overlay (and clear the
+ * graph output if a removed node carried it); the server's structural
+ * write-back splices the statements out (11-W2, attached-comment policy).
+ */
+export function deleteElements(nodeIds: readonly string[], edges: readonly GraphEdge[]): void {
+  if (nodeIds.length === 0 && edges.length === 0) return;
+  const removed = new Set(nodeIds);
+  const writes: PendingWrite[] = [];
+  for (const nodeId of nodeIds) writes.push({ seq: nextSeq(), kind: 'removeNode', nodeId });
+  for (const edge of edges) {
+    // Skip edges a removeNode already cascades — no redundant overlay entries.
+    if (removed.has(edge.source) || removed.has(edge.target)) continue;
+    writes.push({ seq: nextSeq(), kind: 'removeEdge', edge });
+  }
+  if (writes.length === 0) return;
+  setState({ pending: [...state.pending, ...writes], writeError: null });
+  schedulePump();
+  void refreshEditValidation();
+}
+
+/**
+ * Adopt persisted node positions — the position-only save path's ingest
+ * (ADR 0008 position-save note; stream 11-W4). DELIBERATELY rev-neutral: it
+ * patches `graph.nodes[].position` in place and touches nothing else — no
+ * `rev` bump (a drag must never stale a run), no `pending` change (it never
+ * enters the source queue), no `run`/`incomplete` change. Positions are
+ * presentation state living in the `*.layout.json` sidecar, not the `.py`.
+ */
+export function ingestPositions(positions: ReadonlyMap<string, { x: number; y: number }>): void {
+  if (!state.graph || positions.size === 0) return;
+  const nodes = state.graph.nodes.map((n) => {
+    const p = positions.get(n.id);
+    return p ? { ...n, position: { x: p.x, y: p.y } } : n;
+  });
+  setState({ graph: { ...state.graph, nodes } });
+}
+
+/** Surface (or clear) the structural save's lossy-fallback warning (HD2 §4). */
+export function setWritebackWarning(warning: WritebackWarning | null): void {
+  if (warning !== state.writebackWarning) setState({ writebackWarning: warning });
 }
 
 /** The server rejected (or never heard) a write: drop the overlay → revert to truth. */

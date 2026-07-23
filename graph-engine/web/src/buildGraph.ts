@@ -1,5 +1,5 @@
 import type { Edge, Node } from '@xyflow/react';
-import { computeLayout, type LayoutEdge } from './layout';
+import { computeLayout, placeUnpinned, type LayoutEdge, type LayoutNode } from './layout';
 import type { GraphDoc, NodeSpec, NodeSpecs, SpecNodeData } from './types';
 
 // Handle ids are namespaced by direction so a socket that is both an input and
@@ -30,20 +30,40 @@ function estimateHeight(spec: NodeSpec | null): number {
  * Re-run the auto-layout over existing ReactFlow nodes, preferring their
  * measured dimensions (available once ReactFlow has rendered them) and falling
  * back to estimates. Returns new node objects with updated positions.
+ *
+ * With `pinnedIds` (ADR 0011 HD3), pinned nodes keep their current positions
+ * and only the rest are auto-placed relative to them (`placeUnpinned`); without
+ * it — the "Tidy layout" command and all-auto graphs — everything is laid out.
  */
 export function layoutFlowNodes(
   nodes: Node<SpecNodeData>[],
   edges: Edge[],
   /** Viewport aspect (width/height) the layout's row wrapping should target. */
   targetAspect?: number,
+  /** Node ids whose positions are user/sidecar-authoritative — never moved. */
+  pinnedIds?: ReadonlySet<string>,
 ): Node<SpecNodeData>[] {
   const layoutEdges: LayoutEdge[] = edges.map((e) => ({ source: e.source, target: e.target }));
+  const layoutNodes: LayoutNode[] = nodes.map((n) => ({
+    id: n.id,
+    width: n.measured?.width ?? NODE_WIDTH,
+    height: n.measured?.height ?? estimateHeight(n.data.spec),
+  }));
+
+  if (pinnedIds && pinnedIds.size > 0) {
+    if (nodes.every((n) => pinnedIds.has(n.id))) return nodes; // nothing to place
+    const pinned = new Map(
+      nodes.filter((n) => pinnedIds.has(n.id)).map((n) => [n.id, n.position]),
+    );
+    const positions = placeUnpinned(layoutNodes, layoutEdges, pinned);
+    return nodes.map((n) => {
+      const p = positions.get(n.id);
+      return p ? { ...n, position: p } : n;
+    });
+  }
+
   const positions = computeLayout(
-    nodes.map((n) => ({
-      id: n.id,
-      width: n.measured?.width ?? NODE_WIDTH,
-      height: n.measured?.height ?? estimateHeight(n.data.spec),
-    })),
+    layoutNodes,
     layoutEdges,
     targetAspect !== undefined ? { targetAspect } : {},
   );
@@ -53,12 +73,22 @@ export function layoutFlowNodes(
   });
 }
 
+/** Node ids whose served `position` is non-null — the sidecar-pinned set (HD3). */
+export function pinnedIdsOf(graph: GraphDoc): Set<string> {
+  const pinned = new Set<string>();
+  for (const n of graph.nodes) if (n.position !== null) pinned.add(n.id);
+  return pinned;
+}
+
 /**
  * Convert the engine's graph + node-spec JSON into ReactFlow nodes and edges.
  *
- * The engine emits `position: null`, so positions always come from the
- * auto-layout (layout.ts): estimated sizes here for the initial mount, then
- * refreshed with measured sizes in GraphView before the canvas is revealed.
+ * Positions are sidecar-authoritative (ADR 0011 HD3): a node with a served
+ * `position` (the server merges the `*.layout.json` sidecar in) keeps it;
+ * only `position: null` nodes are auto-placed — relative to the pinned ones
+ * (`layoutFlowNodes`). A graph with no pinned nodes (code-first authoring)
+ * gets the full auto-layout, exactly as before: estimated sizes here for the
+ * initial mount, refreshed with measured sizes in GraphView.
  */
 export function buildFlow(
   graph: GraphDoc,
@@ -91,7 +121,8 @@ export function buildFlow(
     return {
       id: gn.id,
       type: 'specNode',
-      position: { x: 0, y: 0 }, // replaced by layoutFlowNodes below
+      // Sidecar-authoritative (HD3); auto-layout below replaces the null case.
+      position: gn.position ?? { x: 0, y: 0 },
       data: {
         id: gn.id,
         type: gn.type,
@@ -100,12 +131,12 @@ export function buildFlow(
         wiredInputs: wiredByNode.get(gn.id) ?? new Set<string>(),
         wiredOutputs: wiredOutByNode.get(gn.id) ?? new Set<string>(),
         isOutput: graph.output?.node === gn.id,
-        // Run results are patched in after execution (see GraphView).
+        // Run results and edit-mode validation badges are patched in after the
+        // fact (see GraphView).
         result: null,
         hasError: false,
+        needsWiring: [],
       },
-      // Read-only: no graph mutations, but keep nodes draggable so a reviewer
-      // can rearrange while exploring.
     };
   });
 
@@ -119,5 +150,5 @@ export function buildFlow(
     animated: false,
   }));
 
-  return { nodes: layoutFlowNodes(nodes, edges), edges };
+  return { nodes: layoutFlowNodes(nodes, edges, undefined, pinnedIdsOf(graph)), edges };
 }

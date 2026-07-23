@@ -257,7 +257,7 @@ body,
   border-radius: 6px;
   padding: 6px 8px;
   color: var(--ge-text);
-  cursor: pointer;
+  cursor: grab; /* click places; dragging onto the canvas places at the point */
 }
 
 .ge-palette__entry:hover:not(:disabled),
@@ -412,6 +412,33 @@ body,
   user-select: none;
 }
 
+/* Canvas toolbar (11-W4): the "Tidy layout" command, floating over the flow. */
+.ge-canvas-tools {
+  margin: 12px;
+}
+
+/* Structural-save fallback warning (ADR 0011 HD2 §4): the wiring block was
+   regenerated and hand-written comments were dropped — worth a real banner. */
+.ge-writeback-warning {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 520px;
+  margin: 12px;
+  padding: 8px 12px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: #f4d9a0;
+  background: rgba(84, 62, 12, 0.92);
+  border: 1px solid #a8842f;
+  border-radius: 8px;
+  box-shadow: var(--ge-shadow);
+}
+
+.ge-writeback-warning__dismiss {
+  flex: none;
+}
+
 /* ---- custom node ---- */
 /* Fixed width (must match NODE_WIDTH in buildGraph.ts): content adapts to the
    card via ellipsis/clamping — nothing may ever render outside the border. */
@@ -514,6 +541,13 @@ body,
   background: var(--ge-output);
   color: #06231a;
   font-weight: 700;
+}
+
+/* A half-built node (ADR 0011 D6): required inputs not yet wired — an
+   amber "keep going" state, deliberately not the red of a run error. */
+.ge-node__badge--wiring {
+  background: #e0a93e;
+  color: #2a1d04;
 }
 
 .ge-node__doc {
