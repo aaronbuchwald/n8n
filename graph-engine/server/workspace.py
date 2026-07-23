@@ -331,17 +331,21 @@ class Workspace:
     # -- graph persistence (PUT /api/graph) -------------------------------
 
     def save_graph(self, graph: Graph) -> dict[str, Any]:
-        """Rewrite the composite's wiring from ``graph`` (ADR 0004 D5).
+        """Rewrite the composite's wiring from ``graph`` (ADR 0004 D5 / 0011 HD2).
 
-        Only the wiring statements that actually changed are re-emitted, spliced
-        in place by AST line span so every surrounding comment, blank line and
-        multi-line literal in the ``@main`` body survives byte-for-byte (see
-        :mod:`server.writeback`). A structural change (nodes added/removed, the
-        return appearing/disappearing) falls back to regenerating the whole
-        wiring block — the normalized projection ADR 0004 D5 permits — and is
-        logged so the normalization is never silent. Positions go to the layout
-        sidecar, never the Python. Returns the graph re-parsed from the rewritten
-        module — the round-trip proof that what was saved is what will be served.
+        Value/edge edits patch only the statements that changed; structural edits
+        splice new nodes in / removed nodes out by AST line span, so every
+        surrounding comment, blank line and multi-line literal in the ``@main``
+        body survives byte-for-byte (see :mod:`server.writeback`). A node type the
+        module can't yet call gains an import line. Only a save the statement model
+        can't express in place (a reorder, a duplicate target, an unparseable
+        body) falls back to regenerating the whole wiring block — the normalized
+        projection ADR 0004 D5 permits. That fallback is no longer silent: the
+        loss is logged **and** surfaced in the response under ``writeback`` (a
+        structured, UI-showable warning; ADR 0011 HD2 §4) so a canvas user sees
+        it. Positions go to the layout sidecar, never the Python. Returns the
+        graph re-parsed from the rewritten module — the round-trip proof that what
+        was saved is what will be served.
         """
         path = self.module_file()
         self._check_editable(path)
@@ -350,14 +354,13 @@ class Workspace:
             text = path.read_text(encoding="utf-8")
             result = compute_writeback(text, graph, self.registry, self.module_name)
 
-            if result.strategy == "regenerated" and result.dropped_comments:
+            if result.warning is not None:
                 logger.warning(
-                    "PUT /api/graph: %s changed the composite's node set, so the "
-                    "@main body was regenerated and its hand-written comments/blank "
-                    "lines in the wiring block were not preserved (ADR 0004 D5 "
-                    "normalization). Pure value/edge edits preserve formatting; "
-                    "structural edits normalize the wiring block.",
+                    "PUT /api/graph: %s could not be applied in place, so the @main "
+                    "wiring block was regenerated and its hand-written comments/blank "
+                    "lines were not preserved (ADR 0004 D5 normalization). %s",
                     self._repo_relative(path),
+                    result.reason or "",
                 )
 
             if result.text != text:
@@ -365,7 +368,14 @@ class Workspace:
                     path, result.text, previous=text, module=self.module_name
                 )
             self._save_layout(graph)
-        return self.parse_graph()
+        doc = self.parse_graph()
+        # W2→W3 seam: only the lossy fallback carries a warning; every lossless
+        # strategy returns the bare projection so the round-trip stays an identity
+        # (``GET == PUT`` holds). W3 lifts this onto the PUT envelope; until then
+        # the field rides alongside the graph the route already wraps.
+        if result.warning is not None:
+            doc["writeback"] = result.warning
+        return doc
 
     def _save_layout(self, graph: Graph) -> None:
         positions = {n.id: n.position for n in graph.nodes if n.position is not None}
