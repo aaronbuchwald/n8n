@@ -1,7 +1,7 @@
 import { Suspense, lazy, useCallback, useEffect, useState } from 'react';
 
 import { fetchSource, saveSource } from '../api';
-import { ingestSource, ingestSourceSave } from '../store/sync';
+import { ingestSource, ingestSourceSave, setSourceDirty } from '../store/sync';
 import { useSyncSelector } from '../store/useSyncSelector';
 
 // Monaco is heavy; load it as its own chunk only when the source editor opens.
@@ -29,6 +29,10 @@ export function SourceEditor({ specId, sharedNodeCount, onClose }: SourceEditorP
   // one shared value, so a wiring/source write elsewhere refreshes this label
   // instead of leaving a stale per-view snapshot. The editable draft stays local.
   const info = useSyncSelector((s) => s.sources[specId] ?? null);
+  // The selected entry point (ADR 0009): read from the store rather than
+  // threaded down as a prop, so App stays a thin shell — the id lives in one
+  // place and every scoped read/write (this one included) keys off it.
+  const graphId = useSyncSelector((s) => s.graphId);
   const [text, setText] = useState('');
   const [loaded, setLoaded] = useState(false); // has this editor seeded its draft?
   const [error, setError] = useState<string | null>(null);
@@ -43,7 +47,7 @@ export function SourceEditor({ specId, sharedNodeCount, onClose }: SourceEditorP
     setNotice(null);
     // Always fetch the authoritative source on open, then seed the draft from it
     // and cache it in the store for every other view.
-    fetchSource(specId)
+    fetchSource(specId, graphId)
       .then((data) => {
         if (cancelled) return;
         ingestSource(data);
@@ -56,14 +60,23 @@ export function SourceEditor({ specId, sharedNodeCount, onClose }: SourceEditorP
     return () => {
       cancelled = true;
     };
-  }, [specId]);
+  }, [specId, graphId]);
+
+  // Report the unsaved-buffer state to the store; the app's switch-graph guard
+  // is the one consumer (ADR 0009 D6). Closing/unmounting this editor clears it
+  // — there is nothing left open to lose.
+  const dirty = loaded && info !== null && text !== info.source;
+  useEffect(() => {
+    setSourceDirty(dirty);
+    return () => setSourceDirty(false);
+  }, [dirty]);
 
   const onSave = useCallback(async () => {
     setPending(true);
     setError(null);
     setNotice(null);
     try {
-      const result = await saveSource(specId, text);
+      const result = await saveSource(specId, text, graphId);
       // The response carries the re-introspected spec, the fresh source AND the
       // re-projected graph — ingest all three from the one write, no reload
       // (Gaps G1/G3/G4); rev bumps so run views read stale and a signature
@@ -82,7 +95,7 @@ export function SourceEditor({ specId, sharedNodeCount, onClose }: SourceEditorP
     } finally {
       setPending(false);
     }
-  }, [specId, text]);
+  }, [specId, text, graphId]);
 
   return (
     <div className="ge-source" data-testid="source-editor" aria-label={`Source of ${specId}`}>

@@ -1131,6 +1131,96 @@ body,
   tab-size: 4;
 }
 
+/* ---- graph picker (topbar) — switch between entry points (ADR 0009) ---- */
+.ge-picker {
+  position: relative;
+  display: inline-flex;
+}
+
+.ge-picker__button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border: 1px solid var(--ge-node-border);
+  border-radius: 999px;
+  background: var(--ge-node-bg);
+  color: var(--ge-text);
+  font-family: var(--ge-mono);
+  font-size: 11px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.ge-picker__button:hover {
+  border-color: var(--ge-node-border-strong);
+}
+
+.ge-picker__caret {
+  color: var(--ge-muted);
+  font-size: 9px;
+}
+
+.ge-picker__menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 40;
+  min-width: 240px;
+  max-width: 380px;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  border: 1px solid var(--ge-node-border-strong);
+  border-radius: 10px;
+  background: var(--ge-panel-glass);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+}
+
+.ge-picker__option {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  width: 100%;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ge-text);
+  text-align: left;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.ge-picker__option:hover:not(:disabled) {
+  background: var(--ge-accent-soft);
+}
+
+.ge-picker__option--current {
+  color: var(--ge-accent);
+}
+
+.ge-picker__option:disabled {
+  color: var(--ge-faint);
+  cursor: not-allowed;
+}
+
+.ge-picker__option-flag {
+  color: var(--ge-danger);
+  font-size: 10px;
+}
+
+.ge-picker__option-path {
+  font-family: var(--ge-mono);
+  font-size: 10px;
+  color: var(--ge-muted);
+}
+
+.ge-picker__option:disabled .ge-picker__option-path {
+  color: var(--ge-faint);
+}
+
 /* ---- branch badge (topbar) — where source edits land ---- */
 .ge-branch {
   display: inline-flex;

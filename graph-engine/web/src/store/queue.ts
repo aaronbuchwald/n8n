@@ -53,12 +53,19 @@ export async function pump(): Promise<void> {
   // Snapshot exactly what this PUT carries, so acceptance acks precisely these.
   const seqs = pending.map((w) => w.seq);
   const body = effective.graph; // authoritative ⊕ overlay — the rebase base
+  const graphId = snapshot.graphId; // the entry this overlay belongs to (ADR 0009)
   try {
-    const result = await saveGraph(body);
-    ingestGraph(result.graph, seqs); // seq-gated: only these overlay entries drop
+    const result = await saveGraph(body, graphId);
+    // The user may have switched entries while this PUT was in flight — `hydrate`
+    // already reset `pending`/`graph` for the new one, so a stale response here
+    // must never land on top of it (it belongs to an entry we've navigated away
+    // from, not the one now on screen).
+    if (getState().graphId === graphId) ingestGraph(result.graph, seqs);
   } catch (err: unknown) {
-    for (const seq of seqs) rejectWrite(seq); // overlay dropped → instant revert to truth
-    setWriteError(err instanceof Error ? err.message : String(err));
+    if (getState().graphId === graphId) {
+      for (const seq of seqs) rejectWrite(seq); // overlay dropped → instant revert to truth
+      setWriteError(err instanceof Error ? err.message : String(err));
+    }
   } finally {
     inflight = false;
     // Writes coalesced during the flight (or after a rejection) still pending.

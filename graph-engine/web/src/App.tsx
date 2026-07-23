@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 
-import { exportGraph, fetchLiveGraph, runGraph } from './api';
+import { exportGraph, fetchGraphs, fetchLiveGraph, runGraph } from './api';
 import { BranchBadge } from './components/BranchBadge';
+import { GraphPicker } from './components/GraphPicker';
 import { ExportPanel } from './components/ExportPanel';
 import { RunResultsPanel } from './components/RunResultsPanel';
 import { GraphView, type FocusRequest } from './GraphView';
@@ -21,6 +22,13 @@ import { WidgetEditingProvider } from './widgets';
 // read here via selectors — App no longer holds a copy of any of it, so there is
 // no cache to invalidate by hand. `rev`/`runRev`/`reloadSeq` from 8-P0 became
 // the store's `rev` + `run.forRev` + seq-gated `ingestGraph`.
+//
+// ADR 0009 layers the entry-point picker onto the same seam: `selection` below
+// is the plain URL-driven "input signal" the ADR describes. It never touches
+// the canvas directly — changing it re-fetches through the scoped routes and
+// calls `hydrate(live, id)`, which is also where the store resets every
+// per-entry cache (sources, pending writes, run, write errors). The picker
+// itself (GraphPicker) is store-less and self-contained, matching BranchBadge.
 type BootState = { status: 'loading' } | { status: 'error'; message: string } | { status: 'ready' };
 
 // One action's lifecycle (Run or Export). `error` here is a transport-level
@@ -32,8 +40,19 @@ interface ActionState {
 
 const IDLE: ActionState = { pending: false, error: null };
 
+/** The `?graph=` entry-point id in the current URL, if any (ADR 0009 D6). */
+function graphIdFromUrl(): string | null {
+  return new URLSearchParams(window.location.search).get('graph');
+}
+
+// The selected entry point. `null` (outer) = the catalog hasn't resolved yet;
+// `{ id: null }` = no catalog (legacy server, or a server too old to have one)
+// → the unscoped routes, which is also the single-program experience.
+type Selection = { id: string | null } | null;
+
 export default function App() {
   const [boot, setBoot] = useState<BootState>({ status: 'loading' });
+  const [selection, setSelection] = useState<Selection>(null);
   const [runState, setRunState] = useState<ActionState>(IDLE);
   const [python, setPython] = useState<string | null>(null);
   const [exportState, setExportState] = useState<ActionState>(IDLE);
@@ -53,17 +72,53 @@ export default function App() {
   // A failed widget commit lands here (the queue, being hookless, writes it to
   // the store). Auto-clears so it never lingers over the canvas.
   const writeError = useSyncSelector((s) => s.writeError);
+  // The one volatile surface a graph switch must confirm-discard (D6): an
+  // open source-editor buffer with unsaved changes. SourceEditor is the writer.
+  const sourceDirty = useSyncSelector((s) => s.sourceDirty);
 
-  // Boot: one authoritative load → hydrate the store. There is no more quiet
-  // reload (writes return truth and are ingested from their responses), so the
-  // seq-guarded reload race (G2) and the quiet-reload-unmounts-workspace bug
-  // (G7) are gone by construction.
+  const graphId = selection?.id ?? null;
+
+  // Resolve the entry-point selection once at boot: the URL's `?graph=` wins
+  // when it names a KNOWN entry; otherwise `null` — the legacy unscoped
+  // routes, not the catalog's default id. Those unscoped routes already alias
+  // the default entry server-side (ADR 0009 D4), and D4 keeps them specifically
+  // "so the current web bundle and tests keep working" — so a plain `/` with no
+  // `?graph=` must stay on them rather than silently becoming
+  // `/api/graphs/<default>/...`. Only an explicit pick (or a deep link) moves
+  // the app onto a scoped id; GraphPicker labels the button from its own
+  // `data.default` even while this stays `null`, so the UI still shows the
+  // right name. A failed catalog fetch (no catalog, or an older server) is the
+  // same `null` case — the single-program experience, pixel-identical to
+  // before this ADR.
   useEffect(() => {
     let cancelled = false;
-    fetchLiveGraph()
+    (async () => {
+      let id: string | null = null;
+      try {
+        const graphs = await fetchGraphs();
+        const urlId = graphIdFromUrl();
+        id = urlId !== null && graphs.entries.some((e) => e.id === urlId) ? urlId : null;
+      } catch {
+        id = null;
+      }
+      if (!cancelled) setSelection({ id });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // (Re)load whenever the selection resolves or the selected id changes — the
+  // id is the key everything is fetched under (the ADR 0008 seam). `hydrate`
+  // resets every per-entry store cache when the id actually changed.
+  useEffect(() => {
+    if (selection === null) return;
+    let cancelled = false;
+    setBoot({ status: 'loading' });
+    fetchLiveGraph(selection.id)
       .then((live) => {
         if (cancelled) return;
-        hydrate(live);
+        hydrate(live, selection.id);
         setBoot({ status: 'ready' });
       })
       .catch((err: unknown) => {
@@ -73,7 +128,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [selection]);
 
   // Selecting a node (or clearing the selection) always lands on the inspector
   // view first — the source editor is scoped to the node that opened it.
@@ -97,6 +152,46 @@ export default function App() {
     const timer = window.setTimeout(() => setWriteError(null), 6000);
     return () => window.clearTimeout(timer);
   }, [writeError]);
+
+  // Swap to another entry point: move the `?graph=` key (the store reacts via
+  // the reload effect above) and reset the UI-local surfaces the store doesn't
+  // own — the export dock and the transient run/export action banners. The
+  // store's own per-entry state (run results, sources, pending writes) is
+  // cleared by `hydrate` once the new entry's graph lands, not here.
+  const switchGraph = useCallback((id: string | null, opts?: { pushUrl?: boolean }) => {
+    setPython(null);
+    setExportState(IDLE);
+    setRunState(IDLE);
+    setSelectedNodeId(null);
+    setEditingSource(false);
+    if (opts?.pushUrl !== false) {
+      const url = new URL(window.location.href);
+      if (id === null) url.searchParams.delete('graph');
+      else url.searchParams.set('graph', id);
+      window.history.pushState({}, '', url);
+    }
+    setSelection({ id });
+  }, []);
+
+  const onPickGraph = useCallback(
+    (id: string) => {
+      if (id === graphId) return;
+      if (sourceDirty && !window.confirm('Discard the unsaved source edit and switch graphs?')) {
+        return;
+      }
+      switchGraph(id);
+    },
+    [graphId, sourceDirty, switchGraph],
+  );
+
+  // Back/forward re-applies the URL's selection (deep links stay live) —
+  // including back to a param-less URL, which means `null` (the unscoped
+  // routes), consistent with the boot resolution above.
+  useEffect(() => {
+    const onPopState = () => switchGraph(graphIdFromUrl(), { pushUrl: false });
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, [switchGraph]);
 
   // Escape dismisses the topmost open surface, one per press: the source
   // editor (back to the inspector), then the inspector, then the export dock,
@@ -133,7 +228,7 @@ export default function App() {
     if (!graph) return;
     setRunState({ pending: true, error: null });
     try {
-      const result = await runGraph(graph);
+      const result = await runGraph(graph, graphId);
       setRun(result); // stamped with the current rev inside the store (epoch)
     } catch (err: unknown) {
       // Transport failure (server down): clear stale results, show the banner.
@@ -142,7 +237,7 @@ export default function App() {
       return;
     }
     setRunState(IDLE);
-  }, [graph]);
+  }, [graph, graphId]);
 
   const onExport = useCallback(async () => {
     if (!graph) return;
@@ -167,6 +262,7 @@ export default function App() {
         <span className="ge-topbar__sub">
           live graph{version ? ` · contract v${version}` : ''}
         </span>
+        <GraphPicker selectedId={graphId} onSelect={onPickGraph} />
         <BranchBadge />
 
         <div className="ge-toolbar">
@@ -236,9 +332,14 @@ export default function App() {
           <div className="ge-workspace">
             {/* The commit seam (A-D5): the store's stable `commitLiteral` — a
                 module function, so no context churn re-renders every chip (R2).
-                Absence of a provider is still read-only (WidgetSlot). */}
+                Absence of a provider is still read-only (WidgetSlot).
+                Keyed by the entry id: an id change unmounts/remounts the
+                canvas (fresh mount, per-entry layout, fitView — ADR 0009 D6)
+                because `boot` cycles through 'loading' on every switch, which
+                already tears this whole subtree down and back up. */}
             <WidgetEditingProvider value={commitLiteral}>
               <GraphView
+                key={graphId ?? '(default)'}
                 selectedNodeId={selectedNodeId}
                 onSelectNode={selectNode}
                 focusRequest={focusRequest}

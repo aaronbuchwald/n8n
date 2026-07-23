@@ -19,7 +19,7 @@
 //      `ingest*` action, never component-local `useState`.
 
 import type { GraphDoc, GraphNode, NodeSpecs, SpecInput } from '../types';
-import type { LiveGraph, RunResult, SaveSourceResult, SourceInfo, WorkspaceInfo } from '../api';
+import type { GraphId, LiveGraph, RunResult, SaveSourceResult, SourceInfo, WorkspaceInfo } from '../api';
 // queue.ts imports actions from THIS module; the cycle is safe because
 // `schedulePump` is only *called* (inside commitLiteral), never at import time.
 import { schedulePump } from './queue';
@@ -52,6 +52,16 @@ export interface EffectiveGraph {
 }
 
 export interface SyncState {
+  // --- entry-point selection (ADR 0009 D6) --------------------------------
+  // The `?graph=` id everything below is scoped to. `null` = the legacy
+  // unscoped routes (no catalog, or the catalog hasn't resolved yet). Set only
+  // by `hydrate`, which is also the seam that resets the per-entry state below
+  // when the id changes — the picker just moves this key, the store reacts.
+  graphId: GraphId;
+  // Whether the open source-editor buffer has diverged from its saved source —
+  // the ONE volatile surface a graph switch must confirm-discard (ADR 0009 D6).
+  sourceDirty: boolean;
+
   // --- authoritative (server-confirmed) — replaced only by ingest*/hydrate ---
   specs: NodeSpecs;
   graph: GraphDoc | null;
@@ -75,6 +85,8 @@ export interface SyncState {
 const EMPTY_NODES: ReadonlyMap<string, GraphNode> = new Map();
 
 const INITIAL: SyncState = {
+  graphId: null,
+  sourceDirty: false,
   specs: {},
   graph: null,
   version: null,
@@ -167,13 +179,30 @@ function coalesce(pending: readonly PendingWrite[], next: PendingWrite): Pending
 
 // --- actions (the single mutation funnel; also the future CRDT seam, Part 3) --
 
-/** Boot / explicit refresh: adopt the served palette + graph as the new truth. */
-export function hydrate(live: LiveGraph): void {
+/**
+ * Boot, explicit refresh, or an entry-point switch (ADR 0009 D6): adopt the
+ * served palette + graph as the new truth, scoped to `graphId` (`null` = the
+ * unscoped/default entry). This is the seam the picker drives: it never
+ * touches the canvas itself, only the id passed here on the next call.
+ *
+ * A CHANGE of `graphId` also resets every per-entry cache — the previous
+ * entry's source buffers, pending literal writes, run/export results, and any
+ * write-error banner are meaningless for the newly selected program (D6:
+ * "run/export panels ... cleared on switch"; an in-flight write for the old
+ * entry must never land against the new one). Re-hydrating the SAME id (a
+ * plain refresh) leaves them alone.
+ */
+export function hydrate(live: LiveGraph, graphId: GraphId = null): void {
+  const switchingEntry = graphId !== state.graphId;
   setState({
     specs: live.specs,
     graph: live.graph,
     version: live.version,
+    graphId,
     rev: state.rev + 1,
+    ...(switchingEntry
+      ? { sources: {}, derived: {}, pending: [], run: null, writeError: null, sourceDirty: false }
+      : {}),
   });
 }
 
@@ -240,6 +269,16 @@ export function rejectWrite(seq: number): void {
 /** Surface a write failure on the banner (or clear it with null). */
 export function setWriteError(message: string | null): void {
   setState({ writeError: message });
+}
+
+/**
+ * The open source-editor buffer diverged from (or returned to) its saved
+ * source. The one thing App's switch-graph guard reads (ADR 0009 D6) — kept
+ * in the store rather than threaded through GraphView/NodeInspector props, so
+ * the picker's dirty check is a plain selector like everything else it reads.
+ */
+export function setSourceDirty(dirty: boolean): void {
+  if (dirty !== state.sourceDirty) setState({ sourceDirty: dirty });
 }
 
 /** A run finished: stamp it with the rev it executed against. */
