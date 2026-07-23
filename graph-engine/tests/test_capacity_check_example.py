@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import pytest
 
-from engine import UserError, run, to_python, validate_graph
+from engine import Graph, UserError, run, to_python, validate_graph
 
 HEAVY_DEPS = ("sympy", "handcalcs", "forallpeople", "latex2mathml")
 
@@ -131,6 +131,9 @@ def test_output_html_shows_values_and_verdict_and_is_self_contained():
     # handcalcs display: the substituted numbers are typeset as native MathML.
     assert "<math" in html and "</math>" in html
     assert "210.000" in html and "120.000" in html and "90.000" in html  # C_min, F_max, margin
+    # The caption (from calc_notes) restates each results symbol as `name = value`,
+    # generated from handcalc.results — one source of truth (ADR 0013 Change 2).
+    assert "C_min = 210" in html and "F_max = 120" in html and "margin = 90" in html
     # The separate check node's verdict is shown too (not just the numbers).
     assert "PASS" in html and "120 &lt; 210" in html
     # Self-contained: no external/CDN references, no script.
@@ -161,3 +164,84 @@ def test_graph_exports_python():
     assert namespace["_render_math_card"] == run(graph).value(
         graph.output["node"], graph.output["socket"]
     )
+
+
+# -- ADR 0013 Change 2: single source of truth for the caption ----------------
+
+
+def _edge_set(graph) -> set[tuple[str, str, str, str]]:
+    return {
+        (e["source"], e["sourceOutput"], e["target"], e["targetInput"])
+        for e in graph.to_dict()["edges"]
+    }
+
+
+def test_caption_is_wired_from_handcalc_results_through_calc_notes():
+    """2.1 — the handcalc → caption dependency is now an explicit wire.
+
+    handcalc.results feeds calc_notes, whose text reaches
+    render_math_card.caption via join_text — the diamond the ADR made honest.
+    """
+    from capacity_check import build_graph
+
+    edges = _edge_set(build_graph())
+    assert ("handcalc", "results", "calc_notes", "results") in edges
+    assert ("calc_notes", "result", "join_text", "a") in edges
+    assert ("join_text", "result", "render_math_card", "caption") in edges
+
+
+def test_example_source_no_longer_redeclares_the_symbols():
+    """2.2 — no describe() and no re-declared symbol labels outside the equation."""
+    import capacity_check
+
+    with open(capacity_check.__file__, encoding="utf-8") as fh:
+        source = fh.read()
+
+    assert "describe(" not in source
+    assert "sym.describe" not in source
+    # The symbols are declared exactly once — inside the lines= equation. No
+    # double-quoted "F_max"/"C_min" string literals (the old describe labels).
+    assert '"F_max"' not in source and '"C_min"' not in source
+    # Sanity: the equation itself still carries the symbols.
+    assert 'lines="margin = C_min - F_max"' in source
+
+
+@needs_sym_extra
+def test_caption_follows_a_renamed_symbol_with_no_further_edits():
+    """2.3 — rename F_max → F_app in the equation and the caption follows.
+
+    Nothing else changes: calc_notes reads whatever keys results carries.
+    """
+    import sym  # noqa: F401 - registers sym.* into the default registry
+
+    g = Graph()
+    g.add(
+        "steps",
+        "sym.handcalc",
+        inputs={"lines": "margin = C_min - F_app", "C_min": 210.0, "F_app": 120.0},
+    )
+    g.add("notes", "sym.calc_notes")
+    g.connect("steps", "results", "notes", "results")
+    g.output = {"node": "notes", "socket": "result"}
+
+    caption = run(g).value("notes")
+    assert "F_app = 120" in caption
+    assert "F_max" not in caption
+    assert "C_min = 210" in caption and "margin = 90" in caption
+
+
+@needs_sym_extra
+def test_caption_covers_exactly_the_results_symbols():
+    """2.4 — every results symbol appears as `symbol = value`; none is absent."""
+    from capacity_check import build_graph
+
+    result = run(build_graph())
+    results = result.value("handcalc", "results")
+    caption = result.value("calc_notes")
+
+    for symbol in results:
+        assert f"{symbol} = " in caption
+    # No symbol in the caption that is absent from results: the caption's LHS
+    # tokens are exactly the results keys.
+    caption_symbols = {part.split(" = ")[0] for part in caption.split(" · ")}
+    assert caption_symbols == set(results)

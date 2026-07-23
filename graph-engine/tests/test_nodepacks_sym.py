@@ -55,7 +55,7 @@ def test_import_and_spec_listing_need_no_heavy_deps():
         import sym  # must not touch any blocked module
 
         specs = [n.spec for n in sym.NODES]
-        assert len(specs) == 13, specs
+        assert len(specs) == 14, specs
         assert all(s["id"].startswith("sym.") for s in specs)
         assert all(s["outputs"] for s in specs)
         loaded = {m.split(".")[0] for m in sys.modules}
@@ -72,9 +72,10 @@ def test_import_and_spec_listing_need_no_heavy_deps():
 
 def test_every_node_has_a_registered_spec():
     ids = {n.spec["id"] for n in sym.NODES}
-    assert len(ids) == len(sym.NODES) == 13
+    assert len(ids) == len(sym.NODES) == 14
     assert "sym.typeset_calc" in ids
     assert "sym.handcalc" in ids
+    assert "sym.calc_notes" in ids
     # typeset_calc is the pack's one multi-output node.
     typeset = next(n.spec for n in sym.NODES if n.spec["id"] == "sym.typeset_calc")
     assert [o["name"] for o in typeset["outputs"]] == ["latex", "results"]
@@ -247,13 +248,72 @@ def test_handcalc_spec_marks_dynamic_and_calc_widget():
     assert "symbols" not in {i["name"] for i in handcalc_spec["inputs"]}
 
 
+def test_handcalc_declares_latex_renderer_on_the_latex_socket():
+    """ADR 0013 D5: the card shows the substituted typeset output post-run.
+
+    Frozen contract with the frontend stream: kind ``"latex"``, socket
+    ``"latex"`` (handcalc's existing latex output).
+    """
+    handcalc_spec = next(n.spec for n in sym.NODES if n.spec["id"] == "sym.handcalc")
+    assert handcalc_spec["renderer"] == {
+        "kind": "latex",
+        "config": {"socket": "latex"},
+    }
+
+
 def test_handcalc_runs_end_to_end_and_typesets_substituted_calc():
     pytest.importorskip("handcalcs")
     out = sym.handcalc("margin = C_min - F_max", C_min=210.0, F_max=120.0)
     assert out["results"]["margin"] == 90.0
+    # ADR 0013 D6: results carries only the calc's own names — input symbols in
+    # appearance order, then the computed LHS. The injected math whitelist
+    # (sqrt/…/pi) and its function-object noise is filtered out.
+    assert set(out["results"]) == {"C_min", "F_max", "margin"}
+    assert list(out["results"]) == ["C_min", "F_max", "margin"]
     # The LaTeX shows the symbolic form AND the substituted numbers.
     assert "margin" in out["latex"]
     assert "210" in out["latex"] and "120" in out["latex"] and "90" in out["latex"]
+
+
+# -- calc_notes: single source of truth for the caption (ADR 0013 D7) --------
+
+
+def test_calc_notes_formats_each_results_entry_as_symbol_equals_value():
+    notes = sym.calc_notes({"C_min": 210.0, "F_max": 120.0, "margin": 90.0})
+    assert notes == "C_min = 210 · F_max = 120 · margin = 90"
+
+
+def test_calc_notes_preserves_dict_appearance_order():
+    # The symbol IS the label; order is whatever the results dict carries.
+    notes = sym.calc_notes({"F_app": 120.0, "C_min": 210.0})
+    assert notes == "F_app = 120 · C_min = 210"
+
+
+def test_calc_notes_respects_precision_for_floats():
+    assert sym.calc_notes({"x": 0.30000000000004}) == "x = 0.3"
+    assert sym.calc_notes({"x": 3.14159}, precision=3) == "x = 3.14"
+
+
+def test_calc_notes_custom_separator():
+    notes = sym.calc_notes({"a": 1.0, "b": 2.0}, sep=" | ")
+    assert notes == "a = 1 | b = 2"
+
+
+def test_calc_notes_str_fallback_for_non_numeric_values():
+    # Non-numeric entries degrade to str() — visible, not dropped.
+    notes = sym.calc_notes({"label": "hi", "n": 2.0})
+    assert notes == "label = hi · n = 2"
+
+
+def test_calc_notes_empty_results_is_empty_string():
+    assert sym.calc_notes({}) == ""
+
+
+def test_calc_notes_rejects_non_dict_input():
+    from engine import UserError
+
+    with pytest.raises(UserError, match="results dict"):
+        sym.calc_notes(["C_min", 210.0])
 
 
 def test_typeset_calc_substitutes_values():
