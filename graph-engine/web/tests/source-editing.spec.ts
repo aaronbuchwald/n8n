@@ -227,6 +227,10 @@ test('a node with no matching spec disables "Edit source" with a reason', async 
     return route.continue();
   });
 
+  // The extra node auto-lays-out into the bottom-right corner, where the
+  // default 1280px viewport (minus the W5 palette rail) puts it under the
+  // minimap — widen so its header stays clickable.
+  await page.setViewportSize({ width: 1600, height: 900 });
   await gotoAndSettle(page);
   await selectNode(page, 'ghost');
   const editButton = page.getByTestId('inspector-edit-source');

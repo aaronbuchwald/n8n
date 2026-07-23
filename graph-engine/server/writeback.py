@@ -561,7 +561,12 @@ def compute_writeback(
     indent = _indent_of(composite)
 
     # Bind once; emit from the bound graph so line order matches node order.
-    bound = bind(graph, registry)
+    # Partial (ADR 0011 D6): a freshly placed node with unwired required inputs
+    # must still SAVE — emit already tolerates missing inputs (`_arg_exprs`
+    # emits only provided ones), so the written Python is honest: `v = fn()`.
+    # Genuinely broken wiring (unknown type/socket, double-wire, cycle) still
+    # raises and reaches the caller as a 422 with the file untouched.
+    bound = bind(graph, registry, partial=True)
 
     # Import management first, so a freshly placed type is callable when we emit.
     reserved = (

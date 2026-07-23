@@ -4,6 +4,7 @@ import { exportGraph, fetchGraphs, fetchLiveGraph, runGraph } from './api';
 import { BranchBadge } from './components/BranchBadge';
 import { GraphPicker } from './components/GraphPicker';
 import { ExportPanel } from './components/ExportPanel';
+import { Palette } from './components/Palette';
 import { RunResultsPanel } from './components/RunResultsPanel';
 import { GraphView, type FocusRequest } from './GraphView';
 import {
@@ -329,6 +330,8 @@ export default function App() {
 
       {ready && (
         <div className="ge-main">
+          {/* ADR 0011 W5: click-to-place palette; W4 adds drag-drop onto the canvas. */}
+          <Palette />
           <div className="ge-workspace">
             {/* The commit seam (A-D5): the store's stable `commitLiteral` — a
                 module function, so no context churn re-renders every chip (R2).

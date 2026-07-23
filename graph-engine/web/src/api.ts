@@ -203,12 +203,12 @@ export interface SaveGraphResult {
   graph: GraphDoc; // re-parsed from the rewritten module (the round-trip proof)
 }
 
-/** PUT a JSON payload; a non-2xx `{message}` (or `{detail}`) rejects with it. */
-async function putJson<T>(path: string, payload: unknown): Promise<T> {
+/** Send a JSON payload; a non-2xx `{message}` (or `{detail}`) rejects with it. */
+async function sendJson<T>(method: 'PUT' | 'POST', path: string, payload: unknown): Promise<T> {
   let res: Response;
   try {
     res = await fetch(path, {
-      method: 'PUT',
+      method,
       headers: { accept: 'application/json', 'content-type': 'application/json' },
       body: JSON.stringify(payload),
     });
@@ -225,6 +225,11 @@ async function putJson<T>(path: string, payload: unknown): Promise<T> {
     throw new Error(first.message);
   }
   return body as T;
+}
+
+/** PUT a JSON payload; a non-2xx `{message}` (or `{detail}`) rejects with it. */
+async function putJson<T>(path: string, payload: unknown): Promise<T> {
+  return sendJson<T>('PUT', path, payload);
 }
 
 /** Current git branch + which module files edits land on (`GET /api/workspace`). */
@@ -249,4 +254,53 @@ export async function saveSource(
 /** Rewrite the module's @main wiring from the graph (`PUT /api/graph`). */
 export async function saveGraph(graph: GraphDoc, graphId: GraphId = null): Promise<SaveGraphResult> {
   return putJson<SaveGraphResult>(graphPath(graphId), { graph });
+}
+
+// --- whole-graph editing (ADR 0011, stream W5) ------------------------------
+
+/**
+ * One unsatisfied required input on a draft graph — the structured
+ * `{code, message, nodeId, input}` diagnostic `bind(partial=True)` collects
+ * instead of raising (ADR 0011 D6). `code` is always `"incompleteInput"`.
+ */
+export interface IncompleteInputWarning {
+  code: string;
+  message: string;
+  nodeId: string;
+  input: string;
+}
+
+interface MintIdResponse {
+  id: string;
+}
+
+interface ValidateEditResponse {
+  ok: boolean;
+  warnings?: IncompleteInputWarning[];
+}
+
+/**
+ * Mint a collision-free node id for a registered spec `type`
+ * (`POST /api/graph/mint-id`, ADR 0011 HD4). Server-assisted because the
+ * collision set lives in the authoring module's namespace (call names, the
+ * composite's parameters, builtins) — data the client never sees.
+ */
+export async function mintNodeId(type: string): Promise<string> {
+  const res = await sendJson<MintIdResponse>('POST', '/api/graph/mint-id', { type });
+  return res.id;
+}
+
+/**
+ * Edit-mode validation (`POST /api/graphs/validate` with `mode:"edit"`,
+ * ADR 0011 D6): a draft whose required inputs are not all wired/set comes back
+ * 200 with structured warnings instead of a hard error, so a half-built canvas
+ * badges "needs wiring" rather than failing. Genuinely broken wiring (unknown
+ * type/socket, double-wire, cycle) still rejects.
+ */
+export async function validateGraphEdit(graph: GraphDoc): Promise<IncompleteInputWarning[]> {
+  const res = await sendJson<ValidateEditResponse>('POST', '/api/graphs/validate', {
+    graph,
+    mode: 'edit',
+  });
+  return res.warnings ?? [];
 }
