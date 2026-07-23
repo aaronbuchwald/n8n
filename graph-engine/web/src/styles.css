@@ -140,6 +140,20 @@ body,
   overflow-wrap: anywhere;
 }
 
+/* What an equation commit disconnected (ADR 0007 D8 prune-with-toast). Same
+   banner slot as the action error, in the value accent rather than danger —
+   it reports a deliberate edit's side effect, not a failure. */
+.ge-toast {
+  padding: 8px 18px;
+  background: var(--ge-value-soft);
+  border-bottom: 1px solid var(--ge-value);
+  color: var(--ge-value);
+  font-size: 12px;
+  font-family: var(--ge-mono);
+  overflow-wrap: anywhere;
+  white-space: pre-line;
+}
+
 /* ---- stale-run affordance (ADR 0008 Phase 0, G1) ----
    The last run's values predate the current edit: a banner offers a one-click
    re-run, and the run-derived values on the canvas + results panel are dimmed

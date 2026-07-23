@@ -17,6 +17,10 @@ export interface SpecInput {
   required: boolean;
   default: unknown;
   widget: Widget | null;
+  // True on an input entry derived from a dynamic node's literal (ADR 0007 D3).
+  // Absent on the static spec entries GET /api/specs serves; present on the
+  // entries POST /api/specs/{id}/derive returns.
+  derived?: boolean;
 }
 
 export interface SpecOutput {
@@ -45,6 +49,10 @@ export interface NodeSpec {
   // Optional whole-node renderer declaration (ADR 0010). Absent/null on specs
   // from engines that predate the field — the UI falls back to result chips.
   renderer?: RendererDecl | null;
+  // Additive marker (ADR 0007 D1): present on a dynamic node type whose extra
+  // input sockets are derived from the value of one literal parameter. The
+  // derivation itself is server-side (POST /api/specs/{id}/derive).
+  dynamicInputs?: { param: string } | null;
 }
 
 export type NodeSpecs = Record<string, NodeSpec>;

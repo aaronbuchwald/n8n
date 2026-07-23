@@ -168,6 +168,7 @@ export function WidgetSlot({ input, value, hasLiteral, nodeId }: WidgetSlotProps
           value={value}
           config={input.widget.config ?? {}}
           input={input}
+          nodeId={nodeId}
           // onCommit persists the literal but leaves the editor OPEN — the user
           // dismisses via Done / click-outside / toggling the chip.
           onCommit={(next) => commit(nodeId, input.name, next)}

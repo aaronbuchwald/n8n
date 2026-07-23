@@ -23,6 +23,14 @@ export interface WidgetEditorProps<V = unknown> {
   input: SpecInput;
   /** Commit an edited literal; the shell writes it and PUTs `/api/graph`. */
   onCommit: (next: V) => void;
+  /**
+   * The graph node id this editor is editing (additive extension, ADR 0007
+   * stream W). Editors that only edit their own literal ignore it; the calc
+   * editor uses it to resolve its node's spec id for the derive endpoint and
+   * to name the node in the prune-on-commit path. Optional so pre-existing
+   * editors and tests that mount editors directly stay valid.
+   */
+  nodeId?: string;
 }
 
 export type WidgetEditor = ComponentType<WidgetEditorProps>;

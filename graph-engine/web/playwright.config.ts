@@ -26,7 +26,12 @@ export default defineConfig({
     {
       name: 'chromium',
       use: { ...devices['Desktop Chrome'] },
-      testIgnore: [/server-mount\.spec\.ts/, /palette\.spec\.ts/, /canvas-editing\.spec\.ts/],
+      testIgnore: [
+        /server-mount\.spec\.ts/,
+        /palette\.spec\.ts/,
+        /canvas-editing\.spec\.ts/,
+        /calc-widget\.spec\.ts/,
+      ],
     },
     {
       // The palette create-flow spec REALLY rewrites the demo module (ADR 0011
@@ -48,6 +53,15 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'] },
       testMatch: /canvas-editing\.spec\.ts/,
       dependencies: ['palette'],
+    },
+    {
+      // The calc widget (ADR 0007 W) commits equations against capacity_check,
+      // REALLY rewriting its module and restoring it afterwards — it must own
+      // the workspace alone too. Run alone with: --project=calc --no-deps
+      name: 'calc',
+      use: { ...devices['Desktop Chrome'] },
+      testMatch: /calc-widget\.spec\.ts/,
+      dependencies: ['editing'],
     },
   ],
   // Boot the LIVE stack the app renders from:

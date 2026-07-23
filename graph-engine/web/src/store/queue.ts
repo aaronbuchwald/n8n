@@ -69,8 +69,11 @@ export async function pump(): Promise<void> {
     }
   } catch (err: unknown) {
     if (getState().graphId === graphId) {
-      for (const seq of seqs) rejectWrite(seq); // overlay dropped → instant revert to truth
-      setWriteError(err instanceof Error ? err.message : String(err));
+      const message = err instanceof Error ? err.message : String(err);
+      // Overlay dropped → instant revert to truth; the message also settles any
+      // per-write waiter (the calc editor's inline commit error, ADR 0007 D8).
+      for (const seq of seqs) rejectWrite(seq, message);
+      setWriteError(message);
     }
   } finally {
     inflight = false;
