@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
 from .errors import DuplicateNodeType, UnknownNodeType
-from .spec import DerivedInputs, Widget, node_spec
+from .spec import DerivedInputs, Renderer, Widget, node_spec
 
 
 @dataclass(frozen=True)
@@ -53,6 +53,7 @@ class NodeRegistry:
         outputs: Optional[list] = None,
         widgets: Optional[dict[str, Widget]] = None,
         dynamic: Optional[DerivedInputs] = None,
+        renderer: Optional[Renderer] = None,
         module: Optional[str] = None,
         qualname: Optional[str] = None,
         replace: bool = False,
@@ -70,6 +71,7 @@ class NodeRegistry:
             outputs=outputs,
             widgets=widgets,
             dynamic=dynamic,
+            renderer=renderer,
             module=module,
             qualname=qualname,
         )
