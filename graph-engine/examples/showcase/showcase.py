@@ -34,7 +34,7 @@ from __future__ import annotations
 import html
 from pathlib import Path
 
-from engine import main, node
+from engine import Renderer, main, node
 from sym import (
     describe,
     join_text,
@@ -53,7 +53,9 @@ CSV_PATH = HERE / "showcase.csv"
 # -- a local composing node (its own @node, so it is source-editable too) ------
 
 
-@node
+# ADR 0010 D6: the composed report renders inline (canvas + results panel)
+# via the `html-card` kind — a sandbox="" srcDoc iframe at the declared height.
+@node(renderer=Renderer("html-card", socket="result", height=420))
 def dashboard(table_html: str = "", math_html: str = "", title: str = "Widget showcase") -> str:
     """Compose the table card and the math card into one self-contained page.
 

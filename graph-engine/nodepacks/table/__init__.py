@@ -31,7 +31,7 @@ import csv
 import html
 import io
 
-from engine import UserError, Widget, node
+from engine import Renderer, UserError, Widget, node
 
 from .recipe import StdlibInterpreter, interpret, validate_table_shape
 
@@ -103,7 +103,9 @@ def _fmt_cell(value: object) -> str:
     return html.escape(str(value))
 
 
-@node
+# ADR 0010 D6: render the card inline (canvas + results panel) via the
+# `html-card` kind — a sandbox="" srcDoc iframe at the declared height.
+@node(renderer=Renderer("html-card", socket="result", height=200))
 def table_summary(table: dict, title: str = "Table") -> str:
     """Render ``table`` as a small, self-contained HTML card (inline CSS).
 

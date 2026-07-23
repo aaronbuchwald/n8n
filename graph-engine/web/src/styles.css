@@ -1278,3 +1278,19 @@ body,
   justify-content: flex-end;
   padding: 10px 14px 12px;
 }
+
+/* ---- html-card renderer kind (ADR 0010 10-K): sandboxed srcDoc iframe ---- */
+
+.ge-html-card {
+  border-top: 1px solid var(--ge-node-border);
+  padding: 6px;
+  background: var(--ge-output-soft);
+}
+
+.ge-html-card__frame {
+  display: block;
+  width: 100%;
+  border: 1px solid var(--ge-node-border);
+  border-radius: 6px;
+  background: #fff;
+}

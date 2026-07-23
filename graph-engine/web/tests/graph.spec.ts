@@ -88,12 +88,15 @@ test('runs the showcase graph and exports it to Python from the UI', async ({ pa
   await runResponse;
 
   // The declared output socket (dashboard.result) is an HTML card in the
-  // sandboxed iframe, composing BOTH chains.
-  const frame = page.frameLocator('[data-testid="run-result-frame"]');
+  // sandboxed iframe, composing BOTH chains. Since ADR 0010 10-K the dashboard
+  // node declares the `html-card` kind, so the panel mounts that renderer's
+  // frame (same sandbox posture) instead of the old string-iframe special case.
+  const panel = page.getByTestId('run-results');
+  const frame = panel.frameLocator('[data-testid="html-card-frame"]');
   await expect(frame.getByText('Sales by region')).toBeVisible();
   await expect(frame.getByText('Quadratic roots')).toBeVisible();
 
-  await expect(page.getByTestId('run-result-frame')).toHaveAttribute('sandbox', '');
+  await expect(panel.getByTestId('html-card-frame')).toHaveAttribute('sandbox', '');
 
   // Per-node outputs are surfaced (nodes appear by their graph id).
   const results = page.getByTestId('run-results');

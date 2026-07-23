@@ -160,7 +160,11 @@ test('editing a node\'s function, saving, and re-running reflects the change', a
     );
     await page.getByTestId('run-button').click();
     await run;
-    const frame = page.frameLocator('[data-testid="run-result-frame"]');
+    // The dashboard output renders in the panel's html-card frame (ADR 0010
+    // 10-K) — the same sandboxed surface the old run-result-frame provided.
+    const frame = page
+      .getByTestId('run-results')
+      .frameLocator('[data-testid="html-card-frame"]');
     await expect(frame.getByText(MARKER)).toBeVisible();
   } finally {
     // Restore the pristine function so the shared demo server (and the repo
