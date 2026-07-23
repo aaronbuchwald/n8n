@@ -1,6 +1,8 @@
+import { Suspense } from 'react';
 import type { RunResult } from '../api';
+import { rendererFor } from '../node-renderers';
 import { previewType, previewValue } from '../preview';
-import type { GraphDoc, NodeSpecs } from '../types';
+import type { GraphDoc, GraphNode, NodeSpec, NodeSpecs } from '../types';
 
 interface RunResultsPanelProps {
   run: RunResult;
@@ -18,6 +20,18 @@ interface RunResultsPanelProps {
 function outputValue(run: RunResult): unknown {
   if (!run.output) return undefined;
   return run.outputs[run.output.node]?.[run.output.socket];
+}
+
+/** The output node's graph entry + spec, when both resolve (ADR 0010 D7). */
+function outputNodeOf(
+  run: RunResult,
+  graph: GraphDoc,
+  specs: NodeSpecs,
+): { node: GraphNode; spec: NodeSpec } | null {
+  if (!run.output) return null;
+  const node = graph.nodes.find((n) => n.id === run.output?.node);
+  const spec = node ? specs[node.type] : undefined;
+  return node && spec ? { node, spec } : null;
 }
 
 /** Node ids with outputs, in execution order (ids missing from `order` last). */
@@ -46,6 +60,12 @@ export function RunResultsPanel({
   // Only a string can be a self-contained HTML document; anything else (a
   // number, a $repr preview) is shown as text rather than fed to the iframe.
   const html = typeof output === 'string' ? output : null;
+
+  // ADR 0010 D7: the output node's declared renderer resolves the SAME registry
+  // the node card uses (`surface: 'panel'`); no declaration (or an unshipped
+  // kind) falls back to the string-iframe / preview-text behavior below.
+  const outputNode = outputNodeOf(run, graph, specs);
+  const OutputRenderer = outputNode ? rendererFor(outputNode.spec.renderer) : null;
 
   // id → spec title, so rows can carry the same label the node cards show.
   const titleOf = (nodeId: string): string | null => {
@@ -93,7 +113,26 @@ export function RunResultsPanel({
       <div className="ge-results__body">
         <div className="ge-results__render">
           <div className="ge-results__label">output render</div>
-          {html !== null ? (
+          {OutputRenderer && outputNode ? (
+            <Suspense fallback={<div className="ge-results__empty">…</div>}>
+              <OutputRenderer
+                nodeId={outputNode.node.id}
+                spec={outputNode.spec}
+                config={outputNode.spec.renderer?.config ?? {}}
+                boundInputs={outputNode.node.inputs}
+                wiredInputs={
+                  new Set(
+                    graph.edges
+                      .filter((e) => e.target === outputNode.node.id)
+                      .map((e) => e.targetInput),
+                  )
+                }
+                result={run.outputs[outputNode.node.id] ?? null}
+                hasError={run.errors.some((err) => err.nodeId === outputNode.node.id)}
+                surface="panel"
+              />
+            </Suspense>
+          ) : html !== null ? (
             <iframe
               className="ge-results__frame"
               data-testid="run-result-frame"
