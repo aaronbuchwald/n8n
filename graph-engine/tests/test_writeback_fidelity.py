@@ -532,10 +532,13 @@ def test_reorder_falls_back_and_surfaces_warning_in_response(
         res = sb.client.put("/api/graph", json={"graph": graph})
     assert res.status_code == 200, res.text
 
-    body = res.json()["graph"]
-    # The fallback is surfaced structurally in the response (not just logged).
-    assert body["writeback"]["code"] == "wiring-block-regenerated"
-    assert body["writeback"]["droppedComments"] is True
+    envelope = res.json()
+    # The fallback is surfaced structurally on the PUT envelope (ADR 0011 W3),
+    # not nested under `graph` — so a lossless `graph` stays byte-for-byte what
+    # GET serves, and a canvas client can look for one top-level field.
+    assert envelope["writeback"]["code"] == "wiring-block-regenerated"
+    assert envelope["writeback"]["droppedComments"] is True
+    assert "writeback" not in envelope["graph"]
     # And it is still logged, naming the file.
     assert any(
         sb.module_name in rec.getMessage() for rec in caplog.records
