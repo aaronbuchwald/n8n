@@ -262,7 +262,15 @@ def create_app(
             result = workspace.replace_function_source(spec_id, source)
         except SourceEditError as exc:
             return JSONResponse(status_code=exc.status, content={"message": str(exc)})
+        # A code edit reparses to the graph (ADR 0004 D2): refresh the served
+        # projection from the rewritten module and return it beside `spec`, so
+        # the client can invalidate run-derived views instead of reading a
+        # boot-time cache (ADR 0008 G3; "writes return truth", mirroring
+        # PUT /api/graph → {graph}). `_rebind_current_graph` now binds the fresh
+        # projection.
+        state["graph"] = workspace.parse_graph()
         result["spec"] = registry.spec(spec_id)  # re-introspected after reload
+        result["graph"] = state["graph"]
         result["graphErrors"] = _rebind_current_graph()
         return JSONResponse(status_code=200, content=result)
 

@@ -23,7 +23,9 @@ export const useWidgetCommit = (): CommitInput | null => useContext(WidgetEditin
  * Build a {@link CommitInput} that writes the literal into a graph node's
  * `inputs` and persists via `PUT /api/graph` (A-D5). The value rides an ordinary
  * literal — the server rewrites the composite's wiring line and reparses it
- * (the round-trip proof), so `onSaved` receives the re-served graph.
+ * (the round-trip proof), so `onSaved` receives the re-served graph. The shell
+ * ingests that `SaveGraphResult.graph` straight into its state — no post-commit
+ * reload (ADR 0008 Phase 0, G4): the PUT response IS the authoritative graph.
  *
  * **Lost-update safety (review 0005, finding #1).** A naive committer PUTs a
  * whole-graph snapshot captured at the last reload. Two quick edits on
@@ -41,8 +43,8 @@ export const useWidgetCommit = (): CommitInput | null => useContext(WidgetEditin
  *      `graph` is deliberately not the write source.
  *
  * The shell owns *when* this is mounted; Stream A only defines the mechanism.
- * `onSaved`/`onError` and the {@link CommitInput} signature are unchanged, so
- * the shell (App.tsx) needs no changes.
+ * `onSaved`/`onError` and the {@link CommitInput} signature are unchanged; the
+ * shell simply consumes `onSaved`'s result instead of triggering a reload.
  */
 export function makeGraphCommitter(
   graph: GraphDoc,

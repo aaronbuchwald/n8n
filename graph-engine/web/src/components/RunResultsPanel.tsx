@@ -7,6 +7,8 @@ interface RunResultsPanelProps {
   /** The graph the run executed — used to label rows "id · title". */
   graph: GraphDoc;
   specs: NodeSpecs;
+  /** The run's values predate the current graph (an edit landed since the run). */
+  runIsStale: boolean;
   /** Focus (select + centre) a node on the canvas. */
   onFocusNode: (nodeId: string) => void;
   onClose: () => void;
@@ -31,7 +33,14 @@ function orderedNodeIds(run: RunResult): string[] {
  * per-node table of every socket value. Run errors are surfaced here too — and
  * a failed run still lists whatever the nodes that DID execute produced.
  */
-export function RunResultsPanel({ run, graph, specs, onFocusNode, onClose }: RunResultsPanelProps) {
+export function RunResultsPanel({
+  run,
+  graph,
+  specs,
+  runIsStale,
+  onFocusNode,
+  onClose,
+}: RunResultsPanelProps) {
   const hasErrors = run.errors.length > 0;
   const output = outputValue(run);
   // Only a string can be a self-contained HTML document; anything else (a
@@ -49,13 +58,20 @@ export function RunResultsPanel({ run, graph, specs, onFocusNode, onClose }: Run
   const total = graph.nodes.length;
 
   return (
-    <section className="ge-results" data-testid="run-results" aria-label="Run results">
+    <section
+      className={`ge-results${runIsStale ? ' ge-results--stale' : ''}`}
+      data-testid="run-results"
+      data-run-stale={runIsStale ? 'true' : undefined}
+      aria-label="Run results"
+    >
       <div className="ge-results__head">
         <span className="ge-results__title">run results</span>
         <span className="ge-results__sub">
-          {hasErrors
-            ? `run failed · ${executed.length} of ${total} nodes completed`
-            : `${run.order.length} nodes executed`}
+          {runIsStale
+            ? 'from before your edit — run again'
+            : hasErrors
+              ? `run failed · ${executed.length} of ${total} nodes completed`
+              : `${run.order.length} nodes executed`}
         </span>
         <button type="button" className="ge-btn ge-btn--ghost" onClick={onClose}>
           Close

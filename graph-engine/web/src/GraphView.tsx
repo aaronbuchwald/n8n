@@ -70,6 +70,9 @@ interface GraphViewProps {
   specs: NodeSpecs;
   // Per-node socket values from the latest run (null before any run).
   runOutputs: Record<string, SocketValues> | null;
+  // The latest run's values predate the current graph (an edit landed since):
+  // the result chips are kept for context but rendered dimmed (ADR 0008 G1).
+  runIsStale: boolean;
   // The node the latest run failed at, if any.
   errorNodeId: string | null;
   // Selection is owned by the caller so panels outside the canvas (results
@@ -92,6 +95,7 @@ function GraphCanvas({
   graph,
   specs,
   runOutputs,
+  runIsStale,
   errorNodeId,
   selectedNodeId,
   onSelectNode,
@@ -299,6 +303,7 @@ function GraphCanvas({
       className="ge-canvas"
       data-testid="flow-canvas"
       data-layout-ready={phase === 'ready'}
+      data-run-stale={runIsStale ? 'true' : undefined}
     >
       <ReactFlow
         nodes={nodes}
