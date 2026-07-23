@@ -52,13 +52,21 @@ const LOCAL_HOSTS = new Set(['127.0.0.1', 'localhost']);
 interface Probes {
   /** URLs of any request that left localhost. */
   external: string[];
-  /** Console errors + uncaught page errors (unhandled rejections included). */
-  errors: string[];
+  /** Browser console.error lines (may include benign network 4xx logs). */
+  consoleErrors: string[];
+  /** Uncaught page errors / unhandled rejections — always fatal. */
+  pageErrors: string[];
 }
+
+// A console.error the browser emits for a failed network fetch. When an action's
+// whole point is a rejected request (expectsServerRejection), the corresponding
+// 4xx line is expected and not an app error. 5xx / non-network console.errors and
+// all pageerrors stay fatal.
+const NETWORK_4XX_CONSOLE = /Failed to load resource.*status of 4\d\d/i;
 
 /** Attach request/console/pageerror probes to a page for a whole test. */
 function attachProbes(page: Page): Probes {
-  const probes: Probes = { external: [], errors: [] };
+  const probes: Probes = { external: [], consoleErrors: [], pageErrors: [] };
   page.on('request', (req) => {
     try {
       const { hostname } = new URL(req.url());
@@ -68,12 +76,26 @@ function attachProbes(page: Page): Probes {
     }
   });
   page.on('console', (msg) => {
-    if (msg.type() === 'error') probes.errors.push(`console.error: ${msg.text()}`);
+    if (msg.type() === 'error') probes.consoleErrors.push(msg.text());
   });
   page.on('pageerror', (err) => {
-    probes.errors.push(`pageerror: ${err.message}`);
+    probes.pageErrors.push(err.message);
   });
   return probes;
+}
+
+/**
+ * The error lines that should FAIL an action: every pageerror (uncaught /
+ * unhandled rejection), plus every console.error EXCEPT — for an action whose
+ * point is a rejected request — the expected network 4xx line.
+ */
+function fatalErrors(probes: Probes, action: PanelAction): string[] {
+  const fatal = probes.pageErrors.map((e) => `pageerror: ${e}`);
+  for (const line of probes.consoleErrors) {
+    if (action.expectsServerRejection && NETWORK_4XX_CONSOLE.test(line)) continue;
+    fatal.push(`console.error: ${line}`);
+  }
+  return fatal;
 }
 
 /** Boot the app at `url` and wait for the canvas to reach layout-ready. */
@@ -221,7 +243,8 @@ for (const panel of PANELS) {
         // Reset probe tallies per action so one action's external requests /
         // console errors don't spill into the next action's assertions.
         probes.external.length = 0;
-        probes.errors.length = 0;
+        probes.consoleErrors.length = 0;
+        probes.pageErrors.length = 0;
 
         // Fresh boot for every action so they are independent.
         await boot(page, action.url ?? '/');
@@ -229,8 +252,10 @@ for (const panel of PANELS) {
         if (isAutoDrivable(action)) {
           for (const step of action.steps) await runInteraction(page, step, notes);
           for (const check of action.checks) await runAssertion(page, check, probes, notes);
-          // An action is only clean if nothing errored in the console/page.
-          expect(probes.errors, `console/page errors: ${probes.errors.join(' | ')}`).toHaveLength(0);
+          // An action is only clean if nothing errored in the console/page
+          // (expected validation 4xx is filtered for expectsServerRejection).
+          const fatal = fatalErrors(probes, action);
+          expect(fatal, `console/page errors: ${fatal.join(' | ')}`).toHaveLength(0);
         } else {
           // Review action: run any declarative steps/checks we CAN (they are
           // read-only preludes), record the custom notes for a human, and skip

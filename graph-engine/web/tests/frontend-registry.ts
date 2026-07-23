@@ -91,6 +91,14 @@ export interface PanelAction {
    * human, and still runs any non-destructive `checks` it can.
    */
   review?: boolean;
+  /**
+   * This action's whole point is a REJECTED server request (an expected non-2xx,
+   * e.g. a 4xx validation refusal). The harness then ignores the browser's
+   * "Failed to load resource … status of 4xx" console error for THIS action only
+   * — an expected validation 4xx is not an app error. Real page errors / uncaught
+   * exceptions and unexpected 5xx still fail the action.
+   */
+  expectsServerRejection?: boolean;
 }
 
 export interface Panel {
@@ -905,15 +913,15 @@ export const PANELS: Panel[] = [
       {
         id: 'widget-slot',
         description: 'An unwired widget input renders its editor slot in the inspector.',
-        trigger: 'Select read_table; read the path input slot.',
+        trigger:
+          'Select the read_table node (graph id "raw"); read the path input slot.',
         expect:
-          '[data-testid="inspector-widget-slot"] with a widget editor renders (read_table has a path text slot).',
-        steps: [{ kind: 'click', target: nodeHeader('read') }],
+          '[data-testid="inspector-widget-slot"] with a widget editor renders (read_table\'s unwired path/text are text slots).',
+        steps: [{ kind: 'click', target: nodeHeader('raw') }],
         checks: [
           { kind: 'countAtLeast', target: { testid: 'inspector-widget-slot' }, min: 1 },
           { kind: 'externalRequestsZero' },
         ],
-        review: true,
       },
       {
         id: 'derived-sockets-inspectable',
@@ -1114,6 +1122,10 @@ export const PANELS: Panel[] = [
         description: 'An invalid equation shows the inline derive error and refuses to commit.',
         trigger: 'Open the calc editor, fill an invalid equation ("margin = = C_min").',
         expect: '[data-testid="calc-derive-error"] is visible and no PUT persists (served equation unchanged).',
+        // The /derive POST returns 422 by design (that IS the refusal); the
+        // browser logs a "Failed to load resource … 422" console error which is
+        // expected here, so the probe ignores it for this action only.
+        expectsServerRejection: true,
         url: '/?graph=capacity_check',
         steps: [
           { kind: 'click', target: { selector: '.react-flow__node[data-id="steps"] [data-testid="node-title"]' } },
@@ -1195,8 +1207,19 @@ export const PANELS: Panel[] = [
           { kind: 'fill', target: { testid: 'widget-editor-math-input' }, value: 'x**(y+1)' },
         ],
         checks: [
-          { kind: 'visible', target: { testid: 'widget-math-fallback-cue' }, timeoutMs: 8000 },
-          { kind: 'containsText', target: { testid: 'widget-math-preview' }, text: 'x**(y+1)' },
+          // ADR 0013 renders the math preview in BOTH the card (node-previews)
+          // and the inspector's widget slot — scope to the inspector (the
+          // fallback one, class mw-fallback) to avoid a strict-mode ambiguity.
+          {
+            kind: 'visible',
+            target: { testid: 'widget-math-fallback-cue', within: 'node-inspector' },
+            timeoutMs: 8000,
+          },
+          {
+            kind: 'containsText',
+            target: { testid: 'widget-math-preview', within: 'node-inspector' },
+            text: 'x**(y+1)',
+          },
           { kind: 'externalRequestsZero' },
         ],
       },
