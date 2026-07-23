@@ -185,7 +185,7 @@ function GraphCanvas({ selectedNodeId, onSelectNode, focusRequest }: GraphViewPr
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
 
   const nodesInitialized = useNodesInitialized();
-  const { fitView, screenToFlowPosition } = useReactFlow();
+  const { fitView, screenToFlowPosition, getViewport, setViewport } = useReactFlow();
   const [phase, setPhase] = useState<LayoutPhase>('measuring');
   const canvasRef = useRef<HTMLDivElement>(null);
   // Latest edges for callbacks that must not re-bind per edge change.
@@ -282,13 +282,56 @@ function GraphCanvas({ selectedNodeId, onSelectNode, focusRequest }: GraphViewPr
     };
   }, [phase, fitView]);
 
-  // Resize policy (ADR 0014 #5 override): PRESERVE the viewport on container
-  // resize. A panel/sash drag must NOT re-zoom the graph — ReactFlow keeps its
-  // current pan/zoom and simply reveals more/less canvas as the box changes.
-  // `fitView` is reserved for initial mount / entry-switch (the framing phase
-  // above), the Controls fit button, run-row focus, and Tidy layout — never a
-  // container resize. There is deliberately no ResizeObserver→fitView here; W2
-  // owns any further refinement of the canvas' resize integration.
+  // Resize policy (ADR 0014 #5 override), owned by W2. On a container resize the
+  // viewport is PRESERVED: a panel/sash drag reveals more/less canvas at the SAME
+  // pan+zoom and must never re-fit. `fitView` stays reserved for initial mount /
+  // entry-switch (the framing phase above), the Controls fit button, run-row
+  // focus, and Tidy layout — never a resize. An ordinary resize needs no code:
+  // ReactFlow leaves its transform in place while its own observer re-reads the
+  // box. The one case it can't self-recover from is a collapse→expand round-trip
+  // that drives the host to ~0px and back — ReactFlow's internal sizing can stick
+  // at 0 (blank canvas / stuck zoom). This rAF-throttled observer watches for
+  // exactly that transition and re-asserts the remembered viewport, forcing a
+  // recompute against the restored dimensions WITHOUT touching pan or zoom (no
+  // fitView). A steady, non-zero resize only refreshes the remembered viewport,
+  // so the framing above and the #5 no-refit contract are both left intact.
+  useEffect(() => {
+    // Only watch once the initial framing has settled, so the first layout pass
+    // (measuring→framing→fitView) owns the view and this never fires during it.
+    if (phase !== 'ready') return;
+    const host = canvasRef.current;
+    if (!host) return;
+    const isCollapsed = () => host.clientWidth < 1 || host.clientHeight < 1;
+    // Seed from the (framed, non-zero) box and its current view.
+    let wasCollapsed = isCollapsed();
+    let remembered = getViewport();
+    let raf = 0;
+    const observer = new ResizeObserver(() => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        if (!canvasRef.current) return;
+        const collapsed = isCollapsed();
+        if (!collapsed && wasCollapsed) {
+          // Recovered from a collapse: re-apply the pre-collapse view so
+          // ReactFlow re-syncs its internal dimensions. Same x/y/zoom → the
+          // transform is unchanged, only the stuck sizing is nudged loose.
+          setViewport(remembered);
+        } else if (!collapsed) {
+          // Steady resize: transform is intact; keep the remembered view fresh.
+          remembered = getViewport();
+        } else if (!wasCollapsed) {
+          // Just collapsed: snapshot the still-intact view for the recovery.
+          remembered = getViewport();
+        }
+        wasCollapsed = collapsed;
+      });
+    });
+    observer.observe(host);
+    return () => {
+      observer.disconnect();
+      cancelAnimationFrame(raf);
+    };
+  }, [phase, getViewport, setViewport]);
 
   // The store's edit-mode validation, regrouped per node (the on-canvas
   // "needs wiring" badge source — ADR 0011 D6, mirrored from W5's palette strip).
