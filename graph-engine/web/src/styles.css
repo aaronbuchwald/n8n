@@ -183,6 +183,131 @@ body,
   flex-direction: column;
 }
 
+/* ---- node palette (ADR 0011 W5) ---- */
+.ge-palette {
+  flex: 0 0 236px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--ge-node-border);
+  background: var(--ge-panel);
+}
+
+.ge-palette__head {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--ge-node-border);
+}
+
+.ge-palette__title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ge-muted);
+}
+
+.ge-palette__search {
+  background: var(--ge-node-bg);
+  border: 1px solid var(--ge-node-border);
+  border-radius: 6px;
+  color: var(--ge-text);
+  font-size: 12px;
+  padding: 6px 8px;
+  outline: none;
+}
+
+.ge-palette__search:focus {
+  border-color: var(--ge-accent);
+}
+
+.ge-palette__groups {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 8px 12px;
+}
+
+.ge-palette__group-name {
+  margin: 10px 4px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  font-family: var(--ge-mono);
+  color: var(--ge-muted);
+}
+
+.ge-palette__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ge-palette__entry {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-align: left;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 6px 8px;
+  color: var(--ge-text);
+  cursor: pointer;
+}
+
+.ge-palette__entry:hover:not(:disabled),
+.ge-palette__entry:focus-visible {
+  background: var(--ge-accent-soft);
+  border-color: var(--ge-node-border);
+}
+
+.ge-palette__entry:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.ge-palette__entry-name {
+  font-size: 12.5px;
+  font-family: var(--ge-mono);
+}
+
+.ge-palette__entry-doc {
+  font-size: 11px;
+  color: var(--ge-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ge-palette__empty {
+  padding: 12px 8px;
+  font-size: 12px;
+  color: var(--ge-muted);
+}
+
+.ge-palette__wiring {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  border-top: 1px solid var(--ge-node-border);
+}
+
+.ge-palette__wiring-badge {
+  font-size: 11px;
+  font-family: var(--ge-mono);
+  color: var(--ge-value);
+  background: var(--ge-value-soft);
+  border: 1px solid rgba(227, 178, 98, 0.35);
+  border-radius: 6px;
+  padding: 4px 6px;
+}
+
 .ge-canvas {
   flex: 1;
   min-height: 0;

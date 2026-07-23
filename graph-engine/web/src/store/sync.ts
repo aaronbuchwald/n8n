@@ -20,18 +20,29 @@
 
 import type { GraphDoc, GraphNode, NodeSpecs, SpecInput } from '../types';
 import type { LiveGraph, RunResult, SaveSourceResult, SourceInfo, WorkspaceInfo } from '../api';
+import { mintNodeId, validateGraphEdit, type IncompleteInputWarning } from '../api';
 // queue.ts imports actions from THIS module; the cycle is safe because
-// `schedulePump` is only *called* (inside commitLiteral), never at import time.
+// `schedulePump` is only *called* (inside commitLiteral/createNode), never at
+// import time.
 import { schedulePump } from './queue';
 
 /** One optimistic literal write, awaiting server confirmation. */
-export interface PendingWrite {
+export interface PendingLiteralWrite {
   seq: number; // client-assigned, monotone
-  kind: 'literal'; // v1: widget commits only; source saves are not optimistic
+  kind: 'literal';
   nodeId: string;
   param: string;
   value: unknown;
 }
+
+/** One optimistic node creation (a palette place / canvas drop, ADR 0011 W5). */
+export interface PendingAddNodeWrite {
+  seq: number; // client-assigned, monotone
+  kind: 'addNode';
+  node: GraphNode;
+}
+
+export type PendingWrite = PendingLiteralWrite | PendingAddNodeWrite;
 
 /** A cached source buffer, tagged with the `rev` it was fetched/served at. */
 export interface StoredSource extends SourceInfo {
@@ -64,6 +75,10 @@ export interface SyncState {
   // Last widget-commit rejection (A-D5 banner surface). Lives here because the
   // write queue (plain async, no React) reports it.
   writeError: string | null;
+  // The latest edit-mode validation (ADR 0011 D6): one entry per unsatisfied
+  // required input in the draft. The "needs wiring" badge source — W5's palette
+  // status strip today, W4's canvas badges later.
+  incomplete: IncompleteInputWarning[];
 
   // --- optimistic overlay ---
   pending: PendingWrite[];
@@ -84,6 +99,7 @@ const INITIAL: SyncState = {
   run: null,
   workspace: null,
   writeError: null,
+  incomplete: [],
   pending: [],
   effective: { graph: null, nodesById: EMPTY_NODES },
 };
@@ -95,10 +111,10 @@ function indexNodes(nodes: readonly GraphNode[]): ReadonlyMap<string, GraphNode>
 }
 
 /**
- * Compose authoritative graph ⊕ pending literals. Untouched node objects keep
- * their identity (so `sameGraphData`/ReactFlow skip them, and a per-node
- * selector re-renders only its own card). Empty overlay → the authoritative
- * graph object is returned unchanged (max stability).
+ * Compose authoritative graph ⊕ pending writes (literals + created nodes).
+ * Untouched node objects keep their identity (so `sameGraphData`/ReactFlow skip
+ * them, and a per-node selector re-renders only its own card). Empty overlay →
+ * the authoritative graph object is returned unchanged (max stability).
  */
 function computeEffective(graph: GraphDoc | null, pending: readonly PendingWrite[]): EffectiveGraph {
   if (!graph) return { graph: null, nodesById: EMPTY_NODES };
@@ -108,6 +124,7 @@ function computeEffective(graph: GraphDoc | null, pending: readonly PendingWrite
   // but one node can carry pending writes on several params.
   const overrides = new Map<string, Map<string, unknown>>();
   for (const write of pending) {
+    if (write.kind !== 'literal') continue;
     let byParam = overrides.get(write.nodeId);
     if (!byParam) {
       byParam = new Map();
@@ -123,6 +140,16 @@ function computeEffective(graph: GraphDoc | null, pending: readonly PendingWrite
     for (const [param, value] of byParam) inputs[param] = value;
     return { ...node, inputs };
   });
+  // Created nodes append after the authoritative ones. The id guard covers the
+  // window where the authoritative graph already contains the node (the PUT
+  // landed) but its overlay entry has not been acked/dropped yet.
+  const existing = new Set(nodes.map((n) => n.id));
+  for (const write of pending) {
+    if (write.kind === 'addNode' && !existing.has(write.node.id)) {
+      nodes.push(write.node);
+      existing.add(write.node.id);
+    }
+  }
   const effectiveGraph: GraphDoc = { ...graph, nodes };
   return { graph: effectiveGraph, nodesById: indexNodes(nodes) };
 }
@@ -159,8 +186,10 @@ let seqCounter = 0;
 const nextSeq = (): number => ++seqCounter;
 
 /** Latest value wins per (nodeId, param): drop the superseded write, append the new. */
-function coalesce(pending: readonly PendingWrite[], next: PendingWrite): PendingWrite[] {
-  const kept = pending.filter((w) => w.nodeId !== next.nodeId || w.param !== next.param);
+function coalesce(pending: readonly PendingWrite[], next: PendingLiteralWrite): PendingWrite[] {
+  const kept = pending.filter(
+    (w) => w.kind !== 'literal' || w.nodeId !== next.nodeId || w.param !== next.param,
+  );
   kept.push(next);
   return kept;
 }
@@ -230,6 +259,63 @@ export function commitLiteral(nodeId: string, param: string, value: unknown): vo
     writeError: null,
   });
   schedulePump();
+}
+
+/**
+ * Create a node of registered spec `type` at canvas `position` — THE W5→W4
+ * CONTRACT (ADR 0011). W5's palette calls it on click-to-place today; 11-W4's
+ * canvas calls the SAME action on drag-drop, passing the drop position. Flow:
+ *
+ *   1. `POST /api/graph/mint-id {type}` mints a collision-free id (HD4 —
+ *      server-assisted, because the collision set lives in the module).
+ *   2. The node `{id, type, inputs: {}, position}` enters the optimistic
+ *      overlay, so every surface shows it immediately.
+ *   3. The write queue persists it through the store's normal funnel
+ *      (`PUT /api/graph`, single-flight, seq-gated ack via `ingestGraph` —
+ *      D2: whole-graph save, the server diffs and splices one line in).
+ *   4. Edit-mode validation (`mode:"edit"`, D6) refreshes `incomplete`, so the
+ *      node's unwired required inputs badge "needs wiring" instead of erroring
+ *      (bind-partial tolerates them; validation is advisory and never blocks
+ *      the save).
+ *
+ * Resolves with the minted id once the node is in the store (persistence
+ * continues in the queue; a failed PUT reverts the overlay and surfaces
+ * `writeError`, like any write). Rejects — after surfacing `writeError` — only
+ * when the id could not be minted: in that case nothing was added.
+ */
+export async function createNode(
+  type: string,
+  position: { x: number; y: number },
+): Promise<{ id: string }> {
+  let id: string;
+  try {
+    id = await mintNodeId(type);
+  } catch (err: unknown) {
+    setWriteError(err instanceof Error ? err.message : String(err));
+    throw err;
+  }
+  const node: GraphNode = { id, type, inputs: {}, position };
+  setState({
+    pending: [...state.pending, { seq: nextSeq(), kind: 'addNode', node }],
+    writeError: null,
+  });
+  schedulePump();
+
+  // Advisory badge refresh on the draft that now includes the node.
+  const draft = state.effective.graph;
+  if (draft) {
+    try {
+      ingestEditValidation(await validateGraphEdit(draft));
+    } catch {
+      // Best-effort: a failed validation never blocks creation/persistence.
+    }
+  }
+  return { id };
+}
+
+/** Adopt the latest edit-mode validation result (the "needs wiring" source). */
+export function ingestEditValidation(warnings: IncompleteInputWarning[]): void {
+  setState({ incomplete: warnings });
 }
 
 /** The server rejected (or never heard) a write: drop the overlay → revert to truth. */

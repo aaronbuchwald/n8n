@@ -26,6 +26,18 @@ export default defineConfig({
     {
       name: 'chromium',
       use: { ...devices['Desktop Chrome'] },
+      testIgnore: /palette\.spec\.ts/,
+    },
+    {
+      // The palette create-flow spec REALLY rewrites the demo module (ADR 0011
+      // W5) and restores it afterwards — but while its half-wired node exists,
+      // any spec that boots against the shared server serves a graph whose
+      // full-bind /api/run 422s. Sequence it after the parallel pack instead of
+      // racing it. Run alone with: --project=palette --no-deps
+      name: 'palette',
+      use: { ...devices['Desktop Chrome'] },
+      testMatch: /palette\.spec\.ts/,
+      dependencies: ['chromium'],
     },
   ],
   // Boot the LIVE stack the app renders from:
