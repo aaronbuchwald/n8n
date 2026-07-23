@@ -35,7 +35,7 @@ import webbrowser
 import uvicorn
 
 from .app import WEB_DIST, create_app
-from .demo import SHOWCASE_RUN_PATH_OVERRIDES, load_showcase_graph, make_showcase_workspace
+from .demo import DEFAULT_EXAMPLE, EXAMPLES, example_dir, load_graph, make_workspace
 
 
 def view_url(host: str, port: int) -> str:
@@ -65,7 +65,13 @@ def main() -> None:
         "--demo",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="serve the bundled minimal example's specs + sample graph (default: on)",
+        help="serve a bundled example's specs + sample graph (default: on)",
+    )
+    parser.add_argument(
+        "--example",
+        default=DEFAULT_EXAMPLE,
+        choices=sorted(EXAMPLES),
+        help="which bundled program to serve + display (default: %(default)s)",
     )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
@@ -85,11 +91,22 @@ def main() -> None:
     for module in args.library:
         importlib.import_module(module)
 
-    # Preflight: the bundled showcase runs sym.* nodes at /api/run. Their deps are
-    # lazy-imported, so without them the server starts and lists specs but a run
-    # fails deep in the browser with a bare ModuleNotFoundError. Catch it here and
-    # tell the user exactly how to fix it, instead.
+    # Select which program to serve. `--demo` on → the `--example` program;
+    # off → nothing (empty registry). Everything is generic off the example
+    # name, so pointing at a different program is just `--example NAME`.
     if args.demo:
+        workspace = make_workspace(args.example)
+        sample_graph = load_graph(args.example, workspace)
+        # Relative CSV `path`s resolve against the example's dir at /api/run only;
+        # the served/persisted graph keeps them relative (review 0005 #3).
+        run_base_dir = example_dir(args.example)
+    else:
+        workspace = sample_graph = run_base_dir = None
+
+    # Preflight: if the served program runs sym.* nodes, its deps are lazy-imported,
+    # so without them the server starts and lists specs but a run fails deep in the
+    # browser with a bare ModuleNotFoundError. Catch it here with the exact fix.
+    if sample_graph is not None and any(n["type"].startswith("sym.") for n in sample_graph["nodes"]):
         import importlib.util
 
         missing = [
@@ -99,20 +116,14 @@ def main() -> None:
         ]
         if missing:
             print(
-                f"\n✗ The bundled --demo (showcase) runs symbolic-math nodes that need extra\n"
+                f"\n✗ The '{args.example}' program runs symbolic-math nodes that need extra\n"
                 f"  deps, and these are missing: {', '.join(missing)}.\n\n"
                 f"  Re-run with the `demo` extra (bundles the server + sym deps):\n\n"
-                f"      uv run --extra demo python -m server --demo\n\n"
+                f"      uv run --extra demo python -m server --example {args.example}\n\n"
                 f"  (Use --no-demo to serve an empty registry without them.)\n",
                 file=sys.stderr,
             )
             raise SystemExit(1)
-
-    workspace = make_showcase_workspace() if args.demo else None
-    sample_graph = load_showcase_graph(workspace) if args.demo else None
-    # Absolute CSV path applied at /api/run time only — the served/persisted
-    # graph keeps the relative path the module authors (review 0005 #3).
-    run_path_overrides = SHOWCASE_RUN_PATH_OVERRIDES if args.demo else None
 
     url = args.open_url or view_url(args.host, args.port)
 
@@ -140,7 +151,7 @@ def main() -> None:
         threading.Thread(target=_wait_for_enter_then_open, args=(url,), daemon=True).start()
 
     uvicorn.run(
-        create_app(sample_graph=sample_graph, workspace=workspace, run_path_overrides=run_path_overrides),
+        create_app(sample_graph=sample_graph, workspace=workspace, run_base_dir=run_base_dir),
         host=args.host,
         port=args.port,
     )

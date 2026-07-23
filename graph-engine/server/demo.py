@@ -1,26 +1,25 @@
-"""Demo wiring — give the app real data to serve.
+"""Demo wiring — pick which program the server serves and displays.
 
-Importing an example module registers its ``@node`` types on the default
-registry. Per ADR 0004 D2/D4 the module is the source of truth, so the sample
-graph is the **AST parse** of its ``@main`` composite (node id = variable name)
-— the same projection ``PUT /api/graph`` writes back through, and it is served
-**pristine**: CSV ``path`` literals stay exactly what the module authors (e.g.
-a relative ``"showcase.csv"``), never rewritten here. ``*_RUN_PATH_OVERRIDES``
-below is passed to ``create_app(run_path_overrides=...)`` instead, so the
-absolute path only ever exists on the copy of the graph ``/api/run`` executes
-— the served graph, and anything a widget commit persists back through
-``PUT /api/graph``, never sees it (review 0005 #3). Examples live outside the
-installed packages, so we add each one's directory to ``sys.path``.
+Any bundled example under ``examples/<name>/`` whose module defines an ``@main``
+composite can be served: the sample graph is the **AST parse** of that composite
+(ADR 0004 D2/D4, node id = variable name) — the same projection ``PUT
+/api/graph`` writes back through — and the app binds a :class:`Workspace` to the
+module so ``/api/source`` + ``PUT /api/graph`` edit its real ``.py``.
 
-Two demos:
+The graph is served **pristine**: relative CSV ``path`` literals stay exactly
+what the module authors (e.g. ``"forces.csv"``). ``create_app`` resolves them
+against the program's own directory only on ``/api/run`` (via ``run_base_dir``),
+so nothing machine-specific is ever persisted (review 0005 #3) — and this is
+modular: a program with any number of file reads just works.
 
-* **showcase** (the default, ADR 0005) — surfaces every editable widget kind
-  (math, table-recipe, text, number) so opening the app shows live editors.
-* **minimal** — the smallest end-to-end graph; kept for the focused tests.
+``--example NAME`` selects the program; ``--demo`` serves the default. Pointing
+at a new program is one :data:`EXAMPLES` entry away — everything around it
+(workspace, run-path resolution, source editing) is generic.
 """
 
 from __future__ import annotations
 
+import importlib
 import sys
 from pathlib import Path
 
@@ -29,50 +28,57 @@ from engine import DEFAULT_REGISTRY
 from .workspace import Workspace
 
 _EXAMPLES = Path(__file__).resolve().parents[1] / "examples"
-_MINIMAL_DIR = _EXAMPLES / "minimal"
-_SHOWCASE_DIR = _EXAMPLES / "showcase"
 
-# node type -> absolute CSV path, for `create_app(run_path_overrides=...)`.
-# Run-time only (see module docstring) — never applied to the served/persisted
-# graph itself.
-MINIMAL_RUN_PATH_OVERRIDES: dict[str, str] = {
-    "minimal.read_values": str(_MINIMAL_DIR / "readings.csv"),
+# name -> the example's directory. Its module is ``<name>.py`` inside it, and its
+# ``@main`` composite is what gets served. Add an entry to serve a new program.
+EXAMPLES: dict[str, Path] = {
+    "showcase": _EXAMPLES / "showcase",
+    "capacity_check": _EXAMPLES / "capacity_check",
+    "minimal": _EXAMPLES / "minimal",
 }
-SHOWCASE_RUN_PATH_OVERRIDES: dict[str, str] = {
-    "table.read_table": str(_SHOWCASE_DIR / "showcase.csv"),
-}
+DEFAULT_EXAMPLE = "showcase"
 
 
-def make_minimal_workspace() -> Workspace:
-    """Import the minimal example and bind a workspace to its module."""
-    if str(_MINIMAL_DIR) not in sys.path:
-        sys.path.insert(0, str(_MINIMAL_DIR))
-    import minimal  # noqa: F401  — import side effect registers minimal.* @node types
+def example_dir(name: str) -> Path:
+    """The directory of bundled example ``name`` (its ``run_base_dir``)."""
+    try:
+        return EXAMPLES[name]
+    except KeyError:
+        raise KeyError(f"unknown example {name!r}; choose from {sorted(EXAMPLES)}") from None
 
-    return Workspace(DEFAULT_REGISTRY, "minimal")
+
+def make_workspace(name: str = DEFAULT_EXAMPLE) -> Workspace:
+    """Import example ``name`` and bind a workspace to its module.
+
+    Importing the module registers its ``@node`` types **and** any node pack it
+    imports (e.g. ``table``/``sym``) — the palette the served graph resolves
+    against. The example's directory is added to ``sys.path`` first.
+    """
+    directory = example_dir(name)
+    if str(directory) not in sys.path:
+        sys.path.insert(0, str(directory))
+    importlib.import_module(name)  # side effect: registers <name>.* (+ imported packs)
+    return Workspace(DEFAULT_REGISTRY, name)
 
 
-def load_minimal_graph(workspace: Workspace | None = None) -> dict:
-    """Parse the minimal module's composite into engine graph JSON, as authored."""
-    ws = workspace or make_minimal_workspace()
+def load_graph(name: str = DEFAULT_EXAMPLE, workspace: Workspace | None = None) -> dict:
+    """Parse example ``name``'s ``@main`` composite into engine graph JSON, as authored."""
+    ws = workspace or make_workspace(name)
     return ws.parse_graph()
 
 
+# --- back-compat thin wrappers (existing callers/tests) --------------------
 def make_showcase_workspace() -> Workspace:
-    """Import the showcase example and bind a workspace to its module.
-
-    Importing ``showcase`` pulls in the ``table`` and ``sym`` packs (its own
-    imports), so their ``@node`` types are registered too — the palette the
-    editable widgets resolve against.
-    """
-    if str(_SHOWCASE_DIR) not in sys.path:
-        sys.path.insert(0, str(_SHOWCASE_DIR))
-    import showcase  # noqa: F401  — import side effect registers showcase/table/sym @node types
-
-    return Workspace(DEFAULT_REGISTRY, "showcase")
+    return make_workspace("showcase")
 
 
 def load_showcase_graph(workspace: Workspace | None = None) -> dict:
-    """Parse the showcase module's composite into engine graph JSON, as authored."""
-    ws = workspace or make_showcase_workspace()
-    return ws.parse_graph()
+    return load_graph("showcase", workspace)
+
+
+def make_minimal_workspace() -> Workspace:
+    return make_workspace("minimal")
+
+
+def load_minimal_graph(workspace: Workspace | None = None) -> dict:
+    return load_graph("minimal", workspace)

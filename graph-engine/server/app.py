@@ -69,22 +69,25 @@ def _graph_from(body: dict) -> Graph:
     return Graph.from_dict(raw)
 
 
-def _with_run_path_overrides(graph: Graph, overrides: dict[str, str]) -> Graph:
-    """A copy of ``graph`` with ``path`` inputs of ``overrides``-matched nodes rewritten.
+def _resolve_run_paths(graph: Graph, base_dir: Optional[Path]) -> Graph:
+    """A copy of ``graph`` with relative ``path`` inputs resolved against ``base_dir``.
 
     Applied **only** to the graph handed to :func:`engine.run` inside
     ``/api/run`` — never to what ``GET /api/graph`` serves or what
-    ``PUT /api/graph`` persists, which both keep the literal exactly as
-    authored (review 0005 #3). ``overrides`` maps node ``type`` -> the
-    replacement ``path`` value.
+    ``PUT /api/graph`` persists, which both keep the literal exactly as authored
+    (review 0005 #3). This is the modular replacement for per-example path lists:
+    any node input named ``path`` that is a *relative* string is resolved against
+    the served program's own directory, so a program with N CSV reads (each a
+    different relative file) runs from any working directory, unchanged, with no
+    absolute path ever reaching the source.
     """
-    if not overrides:
+    if base_dir is None:
         return graph
     patched = Graph.from_dict(graph.to_dict())  # deep copy; never mutate the caller's graph
     for node in patched.nodes:
-        override = overrides.get(node.type)
-        if override is not None and "path" in node.inputs:
-            node.inputs["path"] = override
+        value = node.inputs.get("path")
+        if isinstance(value, str) and value and not Path(value).is_absolute():
+            node.inputs["path"] = str(base_dir / value)
     return patched
 
 
@@ -93,7 +96,7 @@ def create_app(
     sample_graph: Optional[Any] = None,
     web_dist: Optional[Path] = WEB_DIST,
     workspace: Optional[Workspace] = None,
-    run_path_overrides: Optional[dict[str, str]] = None,
+    run_base_dir: Optional[Path] = None,
 ) -> FastAPI:
     """Build the app over ``registry`` (defaults to the process registry).
 
@@ -109,11 +112,11 @@ def create_app(
     composite's wiring lines (ADR 0004 D2/D5). Without it those routes keep
     replying 501, as before.
 
-    ``run_path_overrides`` — ``{node_type: path}`` rewrites applied to a graph's
-    matching ``path`` inputs **only** while executing ``/api/run``, so a demo
+    ``run_base_dir`` — the served program's directory; relative ``path`` inputs
+    are resolved against it **only** while executing ``/api/run``, so a program
     can run from any working directory without the absolute path ever reaching
     the served graph, a widget commit, or ``PUT /api/graph`` (review 0005 #3;
-    see ``server/demo.py``).
+    see ``server/demo.py``). Modular: works for any number of file reads.
 
     ``web_dist`` — if the directory exists, the built web app is mounted at
     ``/`` (``html=True``) so the SPA is served **same-origin** with ``/api/*``
@@ -122,7 +125,6 @@ def create_app(
     to skip the mount — e.g. when the web is served separately via ``pnpm dev``.
     """
     registry = registry or DEFAULT_REGISTRY
-    run_path_overrides = run_path_overrides or {}
     # Normalise to the engine graph JSON dict once; accept a Graph or a dict.
     # Kept in a one-slot dict so PUT /api/graph can swap in the saved graph.
     state: dict[str, Optional[dict]] = {
@@ -162,9 +164,9 @@ def create_app(
         except EngineError as exc:
             raise HTTPException(status_code=422, detail=[_error_payload(exc)]) from exc
         try:
-            # environment honoured by stream C later; run_path_overrides never
-            # touch `graph` itself, only the copy handed to the executor.
-            result = run(_with_run_path_overrides(graph, run_path_overrides), registry)
+            # environment honoured by stream C later; path resolution never
+            # touches `graph` itself, only the copy handed to the executor.
+            result = run(_resolve_run_paths(graph, run_base_dir), registry)
         except NodeExecutionError as exc:
             # ADR 0002's shape is additive on failure: `errors` is unchanged,
             # but `outputs`/`order` now carry every node that ran before the

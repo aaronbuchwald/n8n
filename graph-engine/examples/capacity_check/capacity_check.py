@@ -129,12 +129,14 @@ def capacity_check_report(
     # Logic concern: a separate node decides PASS/FAIL.
     verdict = check_capacity(force=max_force.value, capacity=min_capacity.value)
 
-    caption = join_text(
-        describe(max_force.value, label="F_max"),
-        describe(min_capacity.value, label="C_min"),
-        verdict.text,
-    )
-    return render_math_card(title="Capacity check", mathml=mathml, caption=caption)
+    # Straight-line form (ADR 0004 D7): each call is its own assignment — no
+    # nested calls in arguments — so the composite round-trips through the
+    # graph⟷source bijection and can be served + edited in the UI.
+    f_note = describe(max_force.value, label="F_max")
+    c_note = describe(min_capacity.value, label="C_min")
+    caption = join_text(f_note, c_note, verdict.text)
+    report = render_math_card(title="Capacity check", mathml=mathml, caption=caption)
+    return report
 
 
 def build_graph(forces_csv: Path | str = FORCES_CSV, members_csv: Path | str = MEMBERS_CSV):

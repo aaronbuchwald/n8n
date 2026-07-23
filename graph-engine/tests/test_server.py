@@ -246,11 +246,11 @@ def test_graph_accepts_a_graph_object():
 def demo_client() -> TestClient:
     from engine import DEFAULT_REGISTRY
 
-    from server.demo import MINIMAL_RUN_PATH_OVERRIDES, load_minimal_graph
+    from server.demo import example_dir, load_minimal_graph
 
     graph = load_minimal_graph()  # imports minimal → registers minimal.* on DEFAULT_REGISTRY
     return TestClient(
-        create_app(DEFAULT_REGISTRY, sample_graph=graph, run_path_overrides=MINIMAL_RUN_PATH_OVERRIDES)
+        create_app(DEFAULT_REGISTRY, sample_graph=graph, run_base_dir=example_dir("minimal"))
     )
 
 

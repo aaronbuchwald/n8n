@@ -72,7 +72,7 @@ def test_showcase_graph_types_are_all_in_the_palette():
 
 
 def test_showcase_graph_binds_and_runs_to_one_html_card():
-    from server.demo import SHOWCASE_RUN_PATH_OVERRIDES, load_showcase_graph
+    from server.demo import example_dir, load_showcase_graph
 
     graph = load_showcase_graph()
     client = TestClient(
@@ -80,7 +80,7 @@ def test_showcase_graph_binds_and_runs_to_one_html_card():
             DEFAULT_REGISTRY,
             sample_graph=graph,
             web_dist=None,
-            run_path_overrides=SHOWCASE_RUN_PATH_OVERRIDES,
+            run_base_dir=example_dir("showcase"),
         )
     )
 
@@ -181,7 +181,7 @@ def test_showcase_widget_commit_round_trips(showcase_sandbox):
 def showcase_sandbox_pristine(tmp_path: Path):
     """Like ``showcase_sandbox``, but the served graph is never pre-baked with
     an absolute path — it mirrors the real ``load_showcase_graph`` +
-    ``run_path_overrides`` flow, to prove a widget commit can't leak the
+    ``run_base_dir`` flow, to prove a widget commit can't leak the
     sandbox's absolute path into the persisted source (review 0005 #3).
     """
     name = f"showcase_{uuid.uuid4().hex[:8]}"
@@ -196,9 +196,8 @@ def showcase_sandbox_pristine(tmp_path: Path):
     workspace = Workspace(DEFAULT_REGISTRY, name, allowed_roots=[tmp_path])
 
     graph = workspace.parse_graph()  # pristine: relative "showcase.csv", as authored
-    run_overrides = {"table.read_table": str(tmp_path / "showcase.csv")}
     client = TestClient(
-        create_app(DEFAULT_REGISTRY, graph, workspace=workspace, run_path_overrides=run_overrides)
+        create_app(DEFAULT_REGISTRY, graph, workspace=workspace, run_base_dir=tmp_path)
     )
     yield client, module_file, tmp_path
 

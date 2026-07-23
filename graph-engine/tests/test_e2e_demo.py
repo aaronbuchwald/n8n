@@ -15,14 +15,14 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 
 from server.app import create_app
-from server.demo import SHOWCASE_RUN_PATH_OVERRIDES, load_showcase_graph, make_showcase_workspace
+from server.demo import example_dir, load_showcase_graph, make_showcase_workspace
 
 
 def _demo_client() -> TestClient:
     workspace = make_showcase_workspace()
     graph = load_showcase_graph(workspace)
     return TestClient(
-        create_app(sample_graph=graph, workspace=workspace, run_path_overrides=SHOWCASE_RUN_PATH_OVERRIDES)
+        create_app(sample_graph=graph, workspace=workspace, run_base_dir=example_dir("showcase"))
     )
 
 
