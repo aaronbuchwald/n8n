@@ -16,7 +16,7 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 
-import type { SocketValues } from './api';
+import type { GraphId, SocketValues } from './api';
 import { buildFlow, layoutFlowNodes } from './buildGraph';
 import { NodeInspector } from './components/NodeInspector';
 import { SpecNode } from './components/SpecNode';
@@ -68,6 +68,8 @@ export interface FocusRequest {
 interface GraphViewProps {
   graph: GraphDoc;
   specs: NodeSpecs;
+  // The selected entry point (ADR 0009) — scopes source reads/writes.
+  graphId: GraphId;
   // Per-node socket values from the latest run (null before any run).
   runOutputs: Record<string, SocketValues> | null;
   // The node the latest run failed at, if any.
@@ -83,6 +85,9 @@ interface GraphViewProps {
   editingSource: boolean;
   onEditSourceChange: (open: boolean) => void;
   onSourceSaved: () => void;
+  // The source editor's unsaved-buffer state, consumed by the app's
+  // switch-graph guard (ADR 0009 D6).
+  onSourceDirtyChange?: (dirty: boolean) => void;
 }
 
 // mount → nodes measured → final layout applied → graph framed → visible.
@@ -91,6 +96,7 @@ type LayoutPhase = 'measuring' | 'framing' | 'ready';
 function GraphCanvas({
   graph,
   specs,
+  graphId,
   runOutputs,
   errorNodeId,
   selectedNodeId,
@@ -99,6 +105,7 @@ function GraphCanvas({
   editingSource,
   onEditSourceChange,
   onSourceSaved,
+  onSourceDirtyChange,
 }: GraphViewProps) {
   const { nodes: initialNodes, edges: initialEdges } = useMemo(
     () => buildFlow(graph, specs),
@@ -329,9 +336,11 @@ function GraphCanvas({
         <NodeInspector
           node={inspected}
           sharedNodeCount={sharedNodeCount}
+          graphId={graphId}
           editingSource={editingSource}
           onEditSource={onEditSourceChange}
           onSourceSaved={onSourceSaved}
+          onSourceDirtyChange={onSourceDirtyChange}
           onClose={() => onSelectNode(null)}
         />
       )}

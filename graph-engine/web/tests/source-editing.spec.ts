@@ -147,7 +147,7 @@ test('editing a node\'s function, saving, and re-running reflects the change', a
       original.replace('{html.escape(title)}', `{html.escape(title)} ${MARKER}`),
     );
     const put = page.waitForResponse(
-      (r) => r.url().includes('/api/source/') && r.request().method() === 'PUT',
+      (r) => /\/api\/(graphs\/[^/]+\/)?source\//.test(new URL(r.url()).pathname) && r.request().method() === 'PUT',
     );
     await page.getByTestId('source-save-button').click();
     expect((await put).status()).toBe(200);
@@ -156,7 +156,7 @@ test('editing a node\'s function, saving, and re-running reflects the change', a
 
     // Re-run: the output card now carries the marker — the edit is live.
     const run = page.waitForResponse(
-      (r) => r.url().includes('/api/run') && r.status() === 200,
+      (r) => /\/api\/(graphs\/[^/]+\/)?run$/.test(new URL(r.url()).pathname) && r.status() === 200,
     );
     await page.getByTestId('run-button').click();
     await run;
@@ -186,7 +186,7 @@ test('a rejected save (syntax error) surfaces inline and never corrupts the file
 
   await setMonacoValue(page, 'def parse_expr(: this does not parse');
   const put = page.waitForResponse(
-    (r) => r.url().includes('/api/source/') && r.request().method() === 'PUT',
+    (r) => /\/api\/(graphs\/[^/]+\/)?source\//.test(new URL(r.url()).pathname) && r.request().method() === 'PUT',
   );
   await page.getByTestId('source-save-button').click();
   expect((await put).status()).toBe(400);
@@ -212,7 +212,8 @@ test('a node with no matching spec disables "Edit source" with a reason', async 
       { id: 'ghost', type: 'nope.missing', inputs: {}, position: null },
     ],
   };
-  await page.route('**/api/graph', async (route) => {
+  // Match the graph route in both shapes: unscoped and id-scoped (ADR 0009).
+  await page.route(/\/api\/(graphs\/[^/]+\/)?graph$/, async (route) => {
     if (route.request().method() === 'GET') {
       return route.fulfill({
         status: 200,

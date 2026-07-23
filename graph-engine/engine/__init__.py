@@ -29,7 +29,9 @@ data model, so the JSON contract in :mod:`engine.schema` is unchanged.
 """
 
 from .authoring import (
+    ENTRY_POINTS,
     Composite,
+    EntryPointRegistry,
     NodeHandle,
     NodePrimitive,
     graph,
@@ -96,6 +98,8 @@ __all__ = [
     "NodeHandle",
     "NodePrimitive",
     "Composite",
+    "ENTRY_POINTS",
+    "EntryPointRegistry",
     # model
     "Node",
     "Edge",

@@ -26,6 +26,7 @@ import json
 import logging
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from typing import Any, Optional
 
@@ -35,6 +36,15 @@ from .writeback import compute_writeback
 
 # The graph-engine tree — the default boundary for source writes.
 ENGINE_ROOT = Path(__file__).resolve().parents[1]
+
+# ADR 0009 "Concurrency strategy": with several coexisting workspaces over one
+# branch, two tabs can write concurrently. Every write-back is a read-modify-
+# write of a real file (and a shared module reload), so ALL of them serialize
+# on one process-wide lock — global, not per-workspace, because two entries can
+# edit the same file through a shared node pack. Between whole operations the
+# policy is last-write-wins; reads reparse from disk. Optimistic version/ETag
+# gating is deliberately deferred to ADR 0008's seq-gated store.
+_WRITE_LOCK = threading.Lock()
 
 logger = logging.getLogger(__name__)
 
@@ -310,11 +320,12 @@ class Workspace:
         self._check_editable(path)
         self._validate_replacement(spec, new_source)
 
-        text = path.read_text(encoding="utf-8")
-        fn = _find_def(ast.parse(text), spec["qualname"])
-        start, end = _def_span(fn)
-        new_text = _splice_lines(text, start, end, new_source.splitlines())
-        self._write_and_reload(path, new_text, previous=text, module=spec["module"])
+        with _WRITE_LOCK:  # serialize the read-modify-write (ADR 0009)
+            text = path.read_text(encoding="utf-8")
+            fn = _find_def(ast.parse(text), spec["qualname"])
+            start, end = _def_span(fn)
+            new_text = _splice_lines(text, start, end, new_source.splitlines())
+            self._write_and_reload(path, new_text, previous=text, module=spec["module"])
         return self.function_source(spec_id)
 
     # -- graph persistence (PUT /api/graph) -------------------------------
@@ -335,24 +346,25 @@ class Workspace:
         path = self.module_file()
         self._check_editable(path)
 
-        text = path.read_text(encoding="utf-8")
-        result = compute_writeback(text, graph, self.registry, self.module_name)
+        with _WRITE_LOCK:  # serialize the read-modify-write (ADR 0009)
+            text = path.read_text(encoding="utf-8")
+            result = compute_writeback(text, graph, self.registry, self.module_name)
 
-        if result.strategy == "regenerated" and result.dropped_comments:
-            logger.warning(
-                "PUT /api/graph: %s changed the composite's node set, so the "
-                "@main body was regenerated and its hand-written comments/blank "
-                "lines in the wiring block were not preserved (ADR 0004 D5 "
-                "normalization). Pure value/edge edits preserve formatting; "
-                "structural edits normalize the wiring block.",
-                self._repo_relative(path),
-            )
+            if result.strategy == "regenerated" and result.dropped_comments:
+                logger.warning(
+                    "PUT /api/graph: %s changed the composite's node set, so the "
+                    "@main body was regenerated and its hand-written comments/blank "
+                    "lines in the wiring block were not preserved (ADR 0004 D5 "
+                    "normalization). Pure value/edge edits preserve formatting; "
+                    "structural edits normalize the wiring block.",
+                    self._repo_relative(path),
+                )
 
-        if result.text != text:
-            self._write_and_reload(
-                path, result.text, previous=text, module=self.module_name
-            )
-        self._save_layout(graph)
+            if result.text != text:
+                self._write_and_reload(
+                    path, result.text, previous=text, module=self.module_name
+                )
+            self._save_layout(graph)
         return self.parse_graph()
 
     def _save_layout(self, graph: Graph) -> None:

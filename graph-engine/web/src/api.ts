@@ -36,6 +36,50 @@ export interface ExportResult {
   python: string;
 }
 
+// --- entry points (ADR 0009) ------------------------------------------------
+// The server lists every viewable `@main` entry point; the selected id scopes
+// the graph/run/source calls below. `null` = the legacy unscoped routes (a
+// server without an entry catalog), which serve the default entry.
+
+export type GraphId = string | null;
+
+export interface GraphEntry {
+  id: string;
+  title: string;
+  module: string;
+  qualname: string | null;
+  path: string | null; // repo-relative authoring-module path
+  dir: string | null; // repo-relative run_base_dir
+  status: 'ok' | 'error';
+  error?: string; // present when status === 'error'
+}
+
+export interface GraphsResponse {
+  version: string;
+  default: string | null; // what --example chose; the UI's initial selection
+  entries: GraphEntry[];
+}
+
+/** List every viewable entry point (`GET /api/graphs`). */
+export async function fetchGraphs(): Promise<GraphsResponse> {
+  return getJson<GraphsResponse>('/api/graphs');
+}
+
+function graphPath(graphId: GraphId): string {
+  return graphId === null ? '/api/graph' : `/api/graphs/${encodeURIComponent(graphId)}/graph`;
+}
+
+function runPath(graphId: GraphId): string {
+  return graphId === null ? '/api/run' : `/api/graphs/${encodeURIComponent(graphId)}/run`;
+}
+
+function sourcePath(specId: string, graphId: GraphId): string {
+  const suffix = `/source/${encodeURIComponent(specId)}`;
+  return graphId === null
+    ? `/api${suffix}`
+    : `/api/graphs/${encodeURIComponent(graphId)}${suffix}`;
+}
+
 async function getJson<T>(path: string): Promise<T> {
   let res: Response;
   try {
@@ -81,8 +125,8 @@ function errorsFromDetail(body: unknown, fallback: string): EngineErrorItem[] {
  *  - a schema/bind failure comes back 422 with `{detail: EngineErrorItem[]}`.
  * A network failure still rejects (surfaced as a global banner, not a run error).
  */
-export async function runGraph(graph: GraphDoc): Promise<RunResult> {
-  const res = await postGraph('/api/run', graph);
+export async function runGraph(graph: GraphDoc, graphId: GraphId = null): Promise<RunResult> {
+  const res = await postGraph(runPath(graphId), graph);
   const body: unknown = await res.json().catch(() => ({}));
   if (!res.ok) {
     return {
@@ -111,10 +155,10 @@ export async function exportGraph(graph: GraphDoc): Promise<ExportResult> {
  * and `/api/graph` in parallel; either failing rejects so the UI can show an
  * error state instead of a blank canvas.
  */
-export async function fetchLiveGraph(): Promise<LiveGraph> {
+export async function fetchLiveGraph(graphId: GraphId = null): Promise<LiveGraph> {
   const [specsRes, graph] = await Promise.all([
     getJson<SpecsResponse>('/api/specs'),
-    getJson<GraphDoc>('/api/graph'),
+    getJson<GraphDoc>(graphPath(graphId)),
   ]);
   return { version: specsRes.version, specs: specsRes.specs, graph };
 }
@@ -184,16 +228,20 @@ export async function fetchWorkspace(): Promise<WorkspaceInfo> {
 }
 
 /** The exact source of one @node function (`GET /api/source/{spec_id}`). */
-export async function fetchSource(specId: string): Promise<SourceInfo> {
-  return getJson<SourceInfo>(`/api/source/${encodeURIComponent(specId)}`);
+export async function fetchSource(specId: string, graphId: GraphId = null): Promise<SourceInfo> {
+  return getJson<SourceInfo>(sourcePath(specId, graphId));
 }
 
 /** Write an edited @node def back into its real .py file (`PUT /api/source/{spec_id}`). */
-export async function saveSource(specId: string, source: string): Promise<SaveSourceResult> {
-  return putJson<SaveSourceResult>(`/api/source/${encodeURIComponent(specId)}`, { source });
+export async function saveSource(
+  specId: string,
+  source: string,
+  graphId: GraphId = null,
+): Promise<SaveSourceResult> {
+  return putJson<SaveSourceResult>(sourcePath(specId, graphId), { source });
 }
 
 /** Rewrite the module's @main wiring from the graph (`PUT /api/graph`). */
-export async function saveGraph(graph: GraphDoc): Promise<SaveGraphResult> {
-  return putJson<SaveGraphResult>('/api/graph', { graph });
+export async function saveGraph(graph: GraphDoc, graphId: GraphId = null): Promise<SaveGraphResult> {
+  return putJson<SaveGraphResult>(graphPath(graphId), { graph });
 }

@@ -113,7 +113,7 @@ test('clicking a node reveals its inputs and outputs, live after a run', async (
 
   // Run the graph; the open inspector picks up the resolved values.
   const runResponse = page.waitForResponse(
-    (r) => r.url().includes('/api/run') && r.status() === 200,
+    (r) => /\/api\/(graphs\/[^/]+\/)?run$/.test(new URL(r.url()).pathname) && r.status() === 200,
   );
   await page.getByTestId('run-button').click();
   await runResponse;

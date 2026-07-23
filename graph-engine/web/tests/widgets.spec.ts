@@ -36,7 +36,9 @@ test('a math chip opens its editor, keeps it open on commit, and reflects the ne
   for (const node of edited.nodes) {
     if (node.type === 'sym.parse_expr') node.inputs.text = NEW_EXPR;
   }
-  await page.route('**/api/graph', async (route) => {
+  // Match the graph route in both shapes: unscoped and id-scoped (ADR 0009),
+  // so the commit PUT stays mocked and never writes the real file.
+  await page.route(/\/api\/(graphs\/[^/]+\/)?graph$/, async (route) => {
     const method = route.request().method();
     if (method === 'PUT') {
       return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ graph: edited }) });
@@ -58,7 +60,11 @@ test('a math chip opens its editor, keeps it open on commit, and reflects the ne
 
   // Commit (Enter). With the WidgetSlot fix the editor stays OPEN — it must not
   // collapse back to a chip mid-edit.
-  const put = page.waitForResponse((r) => r.url().includes('/api/graph') && r.request().method() === 'PUT');
+  const put = page.waitForResponse(
+    (r) =>
+      /\/api\/(graphs\/[^/]+\/)?graph$/.test(new URL(r.url()).pathname) &&
+      r.request().method() === 'PUT',
+  );
   await input.press('Enter');
   await put;
   await expect(page.getByTestId('widget-slot')).toBeVisible();

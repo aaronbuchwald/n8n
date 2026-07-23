@@ -14,7 +14,9 @@ test('renders the showcase graph fetched live from the API (not fixtures)', asyn
     (r) => r.url().includes('/api/specs') && r.status() === 200,
   );
   const graphResponse = page.waitForResponse(
-    (r) => r.url().includes('/api/graph') && r.status() === 200,
+    // The app fetches the id-scoped graph route when the entry catalog is
+    // live (/api/graphs/{id}/graph, ADR 0009); match either shape.
+    (r) => /\/api\/(graphs\/[^/]+\/)?graph$/.test(new URL(r.url()).pathname) && r.status() === 200,
   );
 
   await page.goto('/');
@@ -82,7 +84,7 @@ test('runs the showcase graph and exports it to Python from the UI', async ({ pa
 
   // --- Run: POST /api/run, then the composed output card renders in the iframe.
   const runResponse = page.waitForResponse(
-    (r) => r.url().includes('/api/run') && r.status() === 200,
+    (r) => /\/api\/(graphs\/[^/]+\/)?run$/.test(new URL(r.url()).pathname) && r.status() === 200,
   );
   await runButton.click();
   await runResponse;

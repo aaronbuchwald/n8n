@@ -1,13 +1,15 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
   exportGraph,
+  fetchGraphs,
   fetchLiveGraph,
   runGraph,
   type LiveGraph,
   type RunResult,
 } from './api';
 import { BranchBadge } from './components/BranchBadge';
+import { GraphPicker } from './components/GraphPicker';
 import { ExportPanel } from './components/ExportPanel';
 import { RunResultsPanel } from './components/RunResultsPanel';
 import { GraphView, type FocusRequest } from './GraphView';
@@ -27,8 +29,23 @@ interface ActionState {
 
 const IDLE: ActionState = { pending: false, error: null };
 
+/** The `?graph=` entry-point id in the current URL, if any (ADR 0009 D6). */
+function graphIdFromUrl(): string | null {
+  return new URLSearchParams(window.location.search).get('graph');
+}
+
+// The selected entry point. `null` (outer) = the catalog hasn't resolved yet;
+// `{ id: null }` = no catalog (legacy server) → the unscoped routes.
+type Selection = { id: string | null } | null;
+
 export default function App() {
   const [state, setState] = useState<LoadState>({ status: 'loading' });
+  const [selection, setSelection] = useState<Selection>(null);
+  // Whether the source editor holds an unsaved buffer — the ONE volatile
+  // surface a graph switch must confirm before discarding (ADR 0009 D6).
+  const [sourceDirty, setSourceDirty] = useState(false);
+  // The server's default entry id, kept for back/forward to a param-less URL.
+  const defaultIdRef = useRef<string | null>(null);
   const [run, setRun] = useState<RunResult | null>(null);
   const [runState, setRunState] = useState<ActionState>(IDLE);
   const [python, setPython] = useState<string | null>(null);
@@ -61,21 +78,93 @@ export default function App() {
     [selectNode],
   );
 
-  // `quiet` refreshes in place (no loading flash) — used after a source save
-  // so the open editor panel isn't unmounted mid-edit.
-  const reload = useCallback(async (opts?: { quiet?: boolean }) => {
-    if (!opts?.quiet) setState({ status: 'loading' });
-    try {
-      const data = await fetchLiveGraph();
-      setState({ status: 'ready', data });
-    } catch (err: unknown) {
-      setState({ status: 'error', message: err instanceof Error ? err.message : String(err) });
-    }
+  const graphId = selection?.id ?? null;
+
+  // Resolve the entry-point selection once at boot: the URL's `?graph=` wins,
+  // else the server's advertised default. A server without the catalog (or a
+  // failed listing) falls back to the legacy unscoped routes (`id: null`).
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      let id: string | null = null;
+      try {
+        const graphs = await fetchGraphs();
+        defaultIdRef.current = graphs.default;
+        const urlId = graphIdFromUrl();
+        const known = urlId !== null && graphs.entries.some((e) => e.id === urlId);
+        id = known ? urlId : graphs.default;
+      } catch {
+        id = null;
+      }
+      if (!cancelled) setSelection({ id });
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
+  // `quiet` refreshes in place (no loading flash) — used after a source save
+  // so the open editor panel isn't unmounted mid-edit.
+  const reload = useCallback(
+    async (opts?: { quiet?: boolean }) => {
+      if (!opts?.quiet) setState({ status: 'loading' });
+      try {
+        const data = await fetchLiveGraph(graphId);
+        setState({ status: 'ready', data });
+      } catch (err: unknown) {
+        setState({ status: 'error', message: err instanceof Error ? err.message : String(err) });
+      }
+    },
+    [graphId],
+  );
+
+  // (Re)load whenever the selection resolves or the selected id changes —
+  // the id is the key everything is fetched under (the ADR 0008 seam).
   useEffect(() => {
-    void reload();
-  }, [reload]);
+    if (selection !== null) void reload();
+  }, [selection, reload]);
+
+  // Swap to another entry point: confirm-if-dirty (an unsaved source buffer is
+  // the one volatile surface), move the `?graph=` key, clear per-entry panels.
+  const switchGraph = useCallback(
+    (id: string, opts?: { pushUrl?: boolean }) => {
+      setRun(null);
+      setRunState(IDLE);
+      setPython(null);
+      setExportState(IDLE);
+      setSelectedNodeId(null);
+      setEditingSource(false);
+      setSourceDirty(false);
+      if (opts?.pushUrl !== false) {
+        const url = new URL(window.location.href);
+        url.searchParams.set('graph', id);
+        window.history.pushState({}, '', url);
+      }
+      setSelection({ id });
+    },
+    [],
+  );
+
+  const onPickGraph = useCallback(
+    (id: string) => {
+      if (id === graphId) return;
+      if (sourceDirty && !window.confirm('Discard the unsaved source edit and switch graphs?')) {
+        return;
+      }
+      switchGraph(id);
+    },
+    [graphId, sourceDirty, switchGraph],
+  );
+
+  // Back/forward re-applies the URL's selection (deep links stay live).
+  useEffect(() => {
+    const onPopState = () => {
+      const id = graphIdFromUrl() ?? defaultIdRef.current;
+      if (id !== null) switchGraph(id, { pushUrl: false });
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, [switchGraph]);
 
   const onSourceSaved = useCallback(() => {
     void reload({ quiet: true });
@@ -135,8 +224,8 @@ export default function App() {
   // live on the ready canvas and read-only otherwise. Recreated when the graph
   // identity changes so a commit always diffs against the freshest served graph.
   const commit = useMemo(
-    () => (graph ? makeGraphCommitter(graph, onWidgetSaved, onWidgetError) : null),
-    [graph, onWidgetSaved, onWidgetError],
+    () => (graph ? makeGraphCommitter(graph, onWidgetSaved, onWidgetError, graphId) : null),
+    [graph, onWidgetSaved, onWidgetError, graphId],
   );
   // Contract version comes from /api/specs (the palette contract), per ADR 0002.
   const version = state.status === 'ready' ? state.data.version : null;
@@ -145,7 +234,7 @@ export default function App() {
     if (!graph) return;
     setRunState({ pending: true, error: null });
     try {
-      const result = await runGraph(graph);
+      const result = await runGraph(graph, graphId);
       setRun(result);
     } catch (err: unknown) {
       // Transport failure (server down): clear stale results, show the banner.
@@ -154,7 +243,7 @@ export default function App() {
       return;
     }
     setRunState(IDLE);
-  }, [graph]);
+  }, [graph, graphId]);
 
   const onExport = useCallback(async () => {
     if (!graph) return;
@@ -180,6 +269,7 @@ export default function App() {
         <span className="ge-topbar__sub">
           live graph{version ? ` · contract v${version}` : ''}
         </span>
+        <GraphPicker selectedId={graphId} onSelect={onPickGraph} />
         <BranchBadge />
 
         <div className="ge-toolbar">
@@ -233,9 +323,13 @@ export default function App() {
         <div className="ge-main">
           <div className="ge-workspace">
             <WidgetEditingProvider value={commit}>
+              {/* Keyed by the entry id: switching swaps the canvas entirely —
+                  fresh mount, per-entry layout, fitView (ADR 0009 D6). */}
               <GraphView
+                key={graphId ?? '(default)'}
                 graph={state.data.graph}
                 specs={state.data.specs}
+                graphId={graphId}
                 runOutputs={run?.outputs ?? null}
                 errorNodeId={errorNodeId}
                 selectedNodeId={selectedNodeId}
@@ -244,6 +338,7 @@ export default function App() {
                 editingSource={editingSource}
                 onEditSourceChange={setEditingSource}
                 onSourceSaved={onSourceSaved}
+                onSourceDirtyChange={setSourceDirty}
               />
             </WidgetEditingProvider>
             {run && (

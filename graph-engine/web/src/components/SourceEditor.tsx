@@ -1,6 +1,6 @@
 import { Suspense, lazy, useCallback, useEffect, useState } from 'react';
 
-import { fetchSource, saveSource, type SourceInfo } from '../api';
+import { fetchSource, saveSource, type GraphId, type SourceInfo } from '../api';
 
 // Monaco is heavy; load it as its own chunk only when the source editor opens.
 const MonacoEditor = lazy(() => import('../monaco/MonacoEditor'));
@@ -10,8 +10,13 @@ interface SourceEditorProps {
   specId: string;
   /** How many canvas nodes share this type — the honesty label when > 1. */
   sharedNodeCount: number;
+  /** The selected entry point the read/write is scoped to (null = unscoped). */
+  graphId: GraphId;
   onSaved: () => void; // refresh specs/graph after a successful write
   onClose: () => void; // back to the inspector view
+  /** The buffer diverged from (or returned to) the saved source — the app's
+   *  switch-graph guard is the one consumer (ADR 0009 D6 confirm-if-dirty). */
+  onDirtyChange?: (dirty: boolean) => void;
 }
 
 /**
@@ -23,7 +28,14 @@ interface SourceEditorProps {
  * module, so signature changes flow into the palette. The body is a Monaco
  * editor with Python highlighting, fully bundled offline (see monaco/setup.ts).
  */
-export function SourceEditor({ specId, sharedNodeCount, onSaved, onClose }: SourceEditorProps) {
+export function SourceEditor({
+  specId,
+  sharedNodeCount,
+  graphId,
+  onSaved,
+  onClose,
+  onDirtyChange,
+}: SourceEditorProps) {
   const [info, setInfo] = useState<SourceInfo | null>(null);
   const [text, setText] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -35,7 +47,7 @@ export function SourceEditor({ specId, sharedNodeCount, onSaved, onClose }: Sour
     setInfo(null);
     setError(null);
     setNotice(null);
-    fetchSource(specId)
+    fetchSource(specId, graphId)
       .then((data) => {
         if (cancelled) return;
         setInfo(data);
@@ -47,14 +59,21 @@ export function SourceEditor({ specId, sharedNodeCount, onSaved, onClose }: Sour
     return () => {
       cancelled = true;
     };
-  }, [specId]);
+  }, [specId, graphId]);
+
+  // Report the unsaved-buffer state upward; closing the editor clears it.
+  const dirty = info !== null && text !== info.source;
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+    return () => onDirtyChange?.(false);
+  }, [dirty, onDirtyChange]);
 
   const onSave = useCallback(async () => {
     setPending(true);
     setError(null);
     setNotice(null);
     try {
-      const result = await saveSource(specId, text);
+      const result = await saveSource(specId, text, graphId);
       setInfo(result);
       setText(result.source);
       setNotice(
@@ -70,7 +89,7 @@ export function SourceEditor({ specId, sharedNodeCount, onSaved, onClose }: Sour
     } finally {
       setPending(false);
     }
-  }, [specId, text, onSaved]);
+  }, [specId, text, graphId, onSaved]);
 
   return (
     <div className="ge-source" data-testid="source-editor" aria-label={`Source of ${specId}`}>

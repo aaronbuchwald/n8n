@@ -227,9 +227,72 @@ def graph(fn: Optional[Callable[..., Any]] = None, *, entry: bool = False) -> An
     return wrap if fn is None else wrap(fn)
 
 
-def main(fn: Optional[Callable[..., Any]] = None) -> Any:
-    """A composite flagged as a top-level entry/view: ``graph(entry=True)``."""
-    return graph(fn, entry=True) if fn is not None else graph(entry=True)
+def _derive_title(qualname: str) -> str:
+    """Un-snake-case a composite's function name (``readings_report`` → ``Readings report``)."""
+    words = qualname.replace("_", " ").strip()
+    return (words[:1].upper() + words[1:]) if words else qualname
+
+
+class EntryPointRegistry:
+    """Process-wide registry of ``@main`` composites — the viewable entry points.
+
+    A sibling of :data:`~engine.registry.DEFAULT_REGISTRY` for *composites*
+    (ADR 0009 D2): whatever is imported and marked ``@main`` is an entry point.
+    ``@graph`` composites stay unlisted. The dedup key is the **module** —
+    re-importing an edited module re-registers, mirroring
+    ``NodeRegistry.unregister_module`` semantics for nodes.
+    """
+
+    def __init__(self) -> None:
+        self._by_module: dict[str, dict[str, Any]] = {}
+
+    def register(self, composite: Composite, *, title: Optional[str] = None) -> dict[str, Any]:
+        fn = composite.fn
+        module = getattr(fn, "__module__", None) or "?"
+        qualname = getattr(fn, "__qualname__", None) or getattr(fn, "__name__", "?")
+        doc = inspect.getdoc(fn)
+        entry: dict[str, Any] = {
+            "module": module,
+            "qualname": qualname,
+            "file": inspect.getsourcefile(fn),
+            "doc": doc.splitlines()[0] if doc else None,
+            "title": title if title is not None else _derive_title(qualname),
+        }
+        self._by_module[module] = entry
+        return entry
+
+    def entries(self) -> list[dict[str, Any]]:
+        """All registered entry points (copies), ordered by module name."""
+        return [dict(e) for _, e in sorted(self._by_module.items())]
+
+    def get(self, module: str) -> dict[str, Any]:
+        return dict(self._by_module[module])
+
+    def __contains__(self, module: str) -> bool:
+        return module in self._by_module
+
+    def unregister_module(self, module: str) -> bool:
+        """Drop the entry registered by ``module``; True when one existed."""
+        return self._by_module.pop(module, None) is not None
+
+
+ENTRY_POINTS = EntryPointRegistry()
+
+
+def main(fn: Optional[Callable[..., Any]] = None, *, title: Optional[str] = None) -> Any:
+    """A composite flagged as a top-level entry/view: ``graph(entry=True)``.
+
+    Registers the composite in :data:`ENTRY_POINTS` at decoration time (ADR
+    0009 D2) so a server can list every viewable program. ``title`` overrides
+    the derived display title (the un-snake-cased function name).
+    """
+
+    def wrap(target: Callable[..., Any]) -> Composite:
+        composite = graph(target, entry=True)
+        ENTRY_POINTS.register(composite, title=title)
+        return composite
+
+    return wrap if fn is None else wrap(fn)
 
 
 def trace(composite: Composite, **inputs: Any) -> Graph:

@@ -6,7 +6,7 @@
 
 import { createContext, useContext } from 'react';
 import type { GraphDoc } from '../types';
-import { fetchLiveGraph, saveGraph, type SaveGraphResult } from '../api';
+import { fetchLiveGraph, saveGraph, type GraphId, type SaveGraphResult } from '../api';
 
 /** Commit one input's literal on a node. Provided by the shell; null = read-only. */
 export type CommitInput = (nodeId: string, param: string, value: unknown) => void;
@@ -48,6 +48,7 @@ export function makeGraphCommitter(
   graph: GraphDoc,
   onSaved: (result: SaveGraphResult) => void,
   onError?: (error: Error) => void,
+  graphId: GraphId = null,
 ): CommitInput {
   // The captured snapshot is intentionally not the write source (see above):
   // every PUT rebases on a fresh GET. Kept as a parameter so the shell's call
@@ -63,7 +64,7 @@ export function makeGraphCommitter(
       .catch(() => undefined)
       .then(async () => {
         // Rebase on the latest served graph, not the closed-over snapshot.
-        const { graph: latest } = await fetchLiveGraph();
+        const { graph: latest } = await fetchLiveGraph(graphId);
         const next: GraphDoc = {
           ...latest,
           nodes: latest.nodes.map((node) =>
@@ -72,7 +73,7 @@ export function makeGraphCommitter(
               : node,
           ),
         };
-        const result = await saveGraph(next);
+        const result = await saveGraph(next, graphId);
         onSaved(result);
       })
       .catch((error: unknown) => {

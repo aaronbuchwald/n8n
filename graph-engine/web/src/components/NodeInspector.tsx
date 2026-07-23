@@ -1,3 +1,4 @@
+import type { GraphId } from '../api';
 import type { InspectedInput, InspectedNode, InputSource, ResolvedValue } from '../inspect';
 import { previewType, previewValue } from '../preview';
 import { SourceEditor } from './SourceEditor';
@@ -6,11 +7,15 @@ interface NodeInspectorProps {
   node: InspectedNode;
   /** How many canvas nodes share this node's type (>= 1). */
   sharedNodeCount: number;
+  /** The selected entry point source reads/writes are scoped to. */
+  graphId: GraphId;
   /** True while the inspector is expanded into the node's source editor. */
   editingSource: boolean;
   onEditSource: (open: boolean) => void;
   /** A source save landed — the app refreshes specs/graph quietly. */
   onSourceSaved: () => void;
+  /** The source-editor buffer's unsaved state changed (ADR 0009 D6). */
+  onSourceDirtyChange?: (dirty: boolean) => void;
   onClose: () => void;
 }
 
@@ -93,9 +98,11 @@ function InputRow({ input }: { input: InspectedInput }) {
 export function NodeInspector({
   node,
   sharedNodeCount,
+  graphId,
   editingSource,
   onEditSource,
   onSourceSaved,
+  onSourceDirtyChange,
   onClose,
 }: NodeInspectorProps) {
   const editing = editingSource && !node.missingSpec;
@@ -160,8 +167,10 @@ export function NodeInspector({
         <SourceEditor
           specId={node.typeName}
           sharedNodeCount={sharedNodeCount}
+          graphId={graphId}
           onSaved={onSourceSaved}
           onClose={() => onEditSource(false)}
+          onDirtyChange={onSourceDirtyChange}
         />
       ) : (
       <div className="ge-inspector__body">
