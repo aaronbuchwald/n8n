@@ -53,14 +53,29 @@ class BoundNode:
         return self.entry.id
 
 
+# Diagnostic code for a required input left unsatisfied in a draft graph.
+# Reuses the ``{code, message, nodeId, ...}`` structured-error vocabulary so a UI
+# can badge it the same way it badges bind errors — here scoped to the exact
+# input rather than an edge (a missing input has no wire to point at).
+INCOMPLETE_INPUT = "incompleteInput"
+
+
 @dataclass
 class BoundGraph:
-    """Topologically ordered, reference-linked, validated graph."""
+    """Topologically ordered, reference-linked, validated graph.
+
+    ``incomplete`` is always empty after a full ``bind`` (a missing required
+    input is a hard :class:`BindError` then). Under ``bind(..., partial=True)``
+    it collects one structured diagnostic per unsatisfied required input instead
+    of raising, so an in-progress draft can still validate and be saved (ADR 0011
+    D6). Each diagnostic is ``{"code", "message", "nodeId", "input"}``.
+    """
 
     nodes: list[BoundNode]
     by_id: dict[str, BoundNode]
     registry: NodeRegistry
     output: Optional[tuple[BoundNode, str]] = None
+    incomplete: list[dict] = field(default_factory=list)
 
 
 def _edge_dict(edge: Edge) -> dict:
@@ -81,14 +96,31 @@ def _ensure_json(node_id: str, param: str, value: Any) -> None:
         ) from None
 
 
-def bind(graph: Graph, registry: Optional[NodeRegistry] = None) -> BoundGraph:
+def bind(
+    graph: Graph,
+    registry: Optional[NodeRegistry] = None,
+    *,
+    partial: bool = False,
+) -> BoundGraph:
     """Validate ``graph`` against ``registry`` and return a :class:`BoundGraph`.
+
+    Args:
+        partial: draft/edit-mode validation (ADR 0011 D6). When ``True``, a
+            required input that is neither wired nor given a literal is
+            **tolerated** — collected on ``BoundGraph.incomplete`` as a structured
+            ``{"code", "message", "nodeId", "input"}`` diagnostic instead of
+            raising. Every other check (unknown type/socket/param, non-serialisable
+            literal, double-wire, cycle, bad output) stays a hard error, so a
+            half-built graph can validate and save while genuinely broken wiring
+            still fails loudly. ``False`` (the default) is unchanged: the first
+            unsatisfied required input is a :class:`BindError`.
 
     Raises:
         UnknownNodeType: a node references an unregistered type.
         BindError: a literal is non-serialisable / targets an unknown input, an
             edge references an unknown node/socket/param, an input is wired
-            twice, or a required input is unprovided.
+            twice, or (when ``partial`` is ``False``) a required input is
+            unprovided.
         CycleError: the graph contains a cycle.
     """
     registry = registry or DEFAULT_REGISTRY
@@ -186,16 +218,29 @@ def bind(graph: Graph, registry: Optional[NodeRegistry] = None) -> BoundGraph:
     # Derived sockets inherit Python's required/optional semantics (ADR 0007 #5):
     # a socket with no default is required and fails loudly when unsatisfied; one
     # with a default is optional and binds unsatisfied (execute uses the default).
+    # In ``partial`` mode this pass is collected, not fatal (ADR 0011 D6): the only
+    # difference between run-validation and edit-validation is whether an
+    # unsatisfied required input hard-fails or is badged for the UI.
+    incomplete: list[dict] = []
     for bound in bound_by_id.values():
         for inp in bound.inputs_spec:
             if not inp["required"]:
                 continue
             name = inp["name"]
             if name not in bound.wired and name not in bound.literals:
-                raise BindError(
+                message = (
                     f"required input {name!r} of node {bound.id!r} "
-                    f"({bound.type}) is neither wired nor given a value",
-                    node_id=bound.id,
+                    f"({bound.type}) is neither wired nor given a value"
+                )
+                if not partial:
+                    raise BindError(message, node_id=bound.id)
+                incomplete.append(
+                    {
+                        "code": INCOMPLETE_INPUT,
+                        "message": message,
+                        "nodeId": bound.id,
+                        "input": name,
+                    }
                 )
 
     # -- pass 4: order + resolve the output socket ------------------------
@@ -217,4 +262,26 @@ def bind(graph: Graph, registry: Optional[NodeRegistry] = None) -> BoundGraph:
             )
         output = (onode, socket)
 
-    return BoundGraph(nodes=ordered, by_id=bound_by_id, registry=registry, output=output)
+    return BoundGraph(
+        nodes=ordered,
+        by_id=bound_by_id,
+        registry=registry,
+        output=output,
+        incomplete=incomplete,
+    )
+
+
+def validate_edit(
+    graph: Graph, registry: Optional[NodeRegistry] = None
+) -> list[dict]:
+    """Edit-mode validation entry: the draft's incomplete-input diagnostics.
+
+    Binds ``graph`` in ``partial`` mode and returns the structured ``incomplete``
+    list (``{"code", "message", "nodeId", "input"}`` per unsatisfied required
+    input). Hard structural errors (unknown type/socket/param, double-wire,
+    cycle, bad output) still raise, exactly as in a run-mode bind — edit mode
+    only softens the *missing required input* case. This is the engine capability
+    the ``POST /api/graphs/validate`` ``mode:"edit"`` path (ADR 0011 W3) sits on
+    top of; the empty list means "complete enough to run".
+    """
+    return bind(graph, registry, partial=True).incomplete

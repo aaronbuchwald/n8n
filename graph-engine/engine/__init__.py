@@ -37,7 +37,7 @@ from .authoring import (
     node,
     trace,
 )
-from .bind import BoundGraph, BoundNode, bind
+from .bind import INCOMPLETE_INPUT, BoundGraph, BoundNode, bind, validate_edit
 from .errors import (
     BindError,
     CycleError,
@@ -60,6 +60,7 @@ from .composite import (
     wiring_lines,
 )
 from .graph import Edge, Graph, Node
+from .mint import mint_node_id, module_collision_set
 from .ordering import topological_order, topological_sort
 from .registry import DEFAULT_REGISTRY, NodeRegistry, RegisteredNode
 from .schema import (
@@ -88,6 +89,11 @@ __all__ = [
     "wiring_lines",
     "find_composite",
     "composite_call_names",
+    # edit-mode validation + id minting (ADR 0011 W1)
+    "validate_edit",
+    "INCOMPLETE_INPUT",
+    "mint_node_id",
+    "module_collision_set",
     # authoring (decorators + tracing)
     "node",
     "graph",
