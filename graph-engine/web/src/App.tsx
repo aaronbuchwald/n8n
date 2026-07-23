@@ -331,7 +331,6 @@ export default function App() {
             sharedNodeCount={sharedNodeCount}
             editingSource={editingSource}
             onEditSource={setEditingSource}
-            onClose={() => selectNode(null)}
           />
         ),
       });

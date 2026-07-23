@@ -14,7 +14,6 @@ interface NodeInspectorProps {
   /** True while the inspector is expanded into the node's definition editor. */
   editingSource: boolean;
   onEditSource: (open: boolean) => void;
-  onClose: () => void;
 }
 
 function sourceLabel(source: InputSource): string {
@@ -172,7 +171,6 @@ export function NodeInspector({
   sharedNodeCount,
   editingSource,
   onEditSource,
-  onClose,
 }: NodeInspectorProps) {
   const editing = editingSource && !node.missingSpec;
   // The calc / table-recipe editors are physically large (multi-line, grids):
@@ -218,14 +216,8 @@ export function NodeInspector({
           </span>
         </div>
         {node.isOutput && <span className="ge-node__badge">output</span>}
-        <button
-          type="button"
-          className="ge-inspector__close"
-          onClick={onClose}
-          aria-label="Close inspector"
-        >
-          &times;
-        </button>
+        {/* The inspector is closed via its dock tab's × (ADR 0014 D3) — the
+            workbench-native close — so no redundant in-panel close button. */}
       </div>
 
       {editing ? (

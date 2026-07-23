@@ -73,7 +73,7 @@ test('a shape-changing source save re-lays-out the card via the store (G6)', asy
   // Close the inspector; the CARD itself now carries the new socket row — the
   // shape change reached the canvas (not just the panel) and the layout stayed
   // coherent (re-measured, still framed and ready — G6, no stale geometry).
-  await page.getByLabel('Close inspector').click();
+  await page.getByTestId('dock-tab-close-inspector').click();
   await expect(card.getByText('shape_probe')).toBeVisible();
   await expect(
     page.locator('[data-testid="flow-canvas"][data-layout-ready="true"]'),
