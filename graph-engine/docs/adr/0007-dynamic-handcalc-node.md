@@ -1,6 +1,6 @@
 # ADR 0007 — Dynamic handcalc node (value-derived input sockets)
 
-Status: **proposed** (2026-07) · Scope: `graph-engine/` · Relates to: ADR 0001
+Status: **accepted** (2026-07) · Scope: `graph-engine/` · Relates to: ADR 0001
 (engine core, spec seam), ADR 0004 (graph ⟷ source bijection), ADR 0005
 (node-declared UI widgets), ADR 0006 (collapsible composites, deferred)
 
@@ -479,7 +479,18 @@ W merges one registration line (same shape as ADR 0005's B/C-ui streams).
 - Engine stays pure stdlib; nothing new is serialized into graph or source
   beyond ordinary literals and kwargs.
 
-## Open confirmations (need a human decision to move to "accepted")
+## Open confirmations — RESOLVED
+
+**Accepted (2026-07): all as recommended EXCEPT #5, amended below.** #5 was
+changed to inherit Python's own required/optional semantics rather than a flat
+"always required" rule: a derived socket is satisfied by a wire **or** an inline
+value; **no default + unsatisfied → required → bind fails loudly** (the default
+for a freshly-typed symbol), while **a default makes the symbol optional** — it
+binds unsatisfied and uses the default. So the loud-failure property Fable
+wanted is the *default behaviour*, and optionality is opt-in via a per-symbol
+default (`has-a-default ⇒ optional`, exactly as in Python — where a default may
+sit on a positional *or* keyword parameter; required-vs-optional is the presence
+of a default, not the positional/keyword axis). No silent `0`.
 
 1. **Model = hybrid dynamic sockets (option c)** — real derived sockets,
    each wired or inline-valued — vs widget-only (b) or bare parametric (a).
@@ -498,10 +509,13 @@ W merges one registration line (same shape as ADR 0005's B/C-ui streams).
    `free_symbols`. *(Recommend: ast — the calc is Python (handcalcs execs
    it), the deriver stays stdlib/cheap enough for bind + keystroke use, and
    sympy stays out of the derive path.)*
-5. **Derived sockets are required, keyword-only, `float`-hinted with a
-   `number` widget** — vs optional with default `0`. *(Recommend: required —
-   a default of 0 typesets confidently wrong results; bind's existing
-   required-input error names the missing symbol.)*
+5. **Derived sockets inherit Python required/optional semantics**, keyword-only,
+   `float`-hinted with a `number` widget: a socket satisfied by neither a wire
+   nor an inline value **and with no default is required → bind fails loudly**
+   (naming the symbol); a socket **with a default is optional** → binds
+   unsatisfied and uses the default. A freshly-typed symbol defaults to
+   **required** (no silent `0`). *(ACCEPTED as amended — the loud failure is the
+   default; optionality is opt-in via a per-symbol default, mirroring Python.)*
 6. **UI derives sockets via `POST /api/specs/{id}/derive`** (Python
    authoritative, debounced) — vs a duplicate JS parser. *(Recommend:
    endpoint — one implementation, per ADR 0005 A-D5; a JS parser is the
