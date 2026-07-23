@@ -34,9 +34,4 @@ export {
   type WidgetEditor,
   type WidgetEditorProps,
 } from './registry';
-export {
-  makeGraphCommitter,
-  useWidgetCommit,
-  WidgetEditingProvider,
-  type CommitInput,
-} from './context';
+export { useWidgetCommit, WidgetEditingProvider, type CommitInput } from './context';

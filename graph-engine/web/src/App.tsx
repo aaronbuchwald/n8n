@@ -1,23 +1,27 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
-import {
-  exportGraph,
-  fetchLiveGraph,
-  runGraph,
-  type LiveGraph,
-  type RunResult,
-  type SaveGraphResult,
-} from './api';
+import { exportGraph, fetchLiveGraph, runGraph } from './api';
 import { BranchBadge } from './components/BranchBadge';
 import { ExportPanel } from './components/ExportPanel';
 import { RunResultsPanel } from './components/RunResultsPanel';
 import { GraphView, type FocusRequest } from './GraphView';
-import { makeGraphCommitter, WidgetEditingProvider } from './widgets';
+import {
+  clearRun,
+  commitLiteral,
+  hydrate,
+  selectRunIsStale,
+  setRun,
+  setWriteError,
+} from './store/sync';
+import { useSyncSelector } from './store/useSyncSelector';
+import { WidgetEditingProvider } from './widgets';
 
-type LoadState =
-  | { status: 'loading' }
-  | { status: 'error'; message: string }
-  | { status: 'ready'; data: LiveGraph };
+// The shell owns only the boot lifecycle + transient action state. Every shared
+// value (graph, specs, version, run, staleness) lives in the store (8-S1) and is
+// read here via selectors — App no longer holds a copy of any of it, so there is
+// no cache to invalidate by hand. `rev`/`runRev`/`reloadSeq` from 8-P0 became
+// the store's `rev` + `run.forRev` + seq-gated `ingestGraph`.
+type BootState = { status: 'loading' } | { status: 'error'; message: string } | { status: 'ready' };
 
 // One action's lifecycle (Run or Export). `error` here is a transport-level
 // failure (server unreachable) — engine-level run errors travel inside RunResult.
@@ -29,31 +33,47 @@ interface ActionState {
 const IDLE: ActionState = { pending: false, error: null };
 
 export default function App() {
-  const [state, setState] = useState<LoadState>({ status: 'loading' });
-  const [run, setRun] = useState<RunResult | null>(null);
-  // A monotone revision of the authoritative graph — bumps on every user edit
-  // (source save or widget commit). `run` is stamped with the revision it
-  // executed against (`runRev`); when they diverge the run's values predate the
-  // edit and every surface that shows them renders honestly stale (ADR 0008 G1).
-  const [rev, setRev] = useState(0);
-  const [runRev, setRunRev] = useState<number | null>(null);
-  // A *quiet* reload (after a source save) that fails must not tear the live
-  // workspace down into a full-screen error (ADR 0008 G7) — it surfaces here as
-  // a banner instead, over a canvas that still shows the just-saved state.
-  const [reloadError, setReloadError] = useState<string | null>(null);
+  const [boot, setBoot] = useState<BootState>({ status: 'loading' });
   const [runState, setRunState] = useState<ActionState>(IDLE);
   const [python, setPython] = useState<string | null>(null);
   const [exportState, setExportState] = useState<ActionState>(IDLE);
-  // A failed widget commit surfaces here as a transient banner (A-D5: PUT
-  // /api/graph rejected). Auto-clears so it never lingers over the canvas.
-  const [widgetError, setWidgetError] = useState<string | null>(null);
   // The inspected node. Owned here (not in GraphView) so run-results rows can
   // select it and the Escape handler below can close it.
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   // Whether the inspector is expanded into the selected node's source editor.
-  // Owned here so a selection change resets it and Escape can step it closed.
   const [editingSource, setEditingSource] = useState(false);
   const [focusRequest, setFocusRequest] = useState<FocusRequest | null>(null);
+
+  // --- store reads (selectors return stored refs or primitives) ---------------
+  const graph = useSyncSelector((s) => s.effective.graph);
+  const specs = useSyncSelector((s) => s.specs);
+  const version = useSyncSelector((s) => s.version);
+  const run = useSyncSelector((s) => s.run);
+  const runIsStale = useSyncSelector(selectRunIsStale);
+  // A failed widget commit lands here (the queue, being hookless, writes it to
+  // the store). Auto-clears so it never lingers over the canvas.
+  const writeError = useSyncSelector((s) => s.writeError);
+
+  // Boot: one authoritative load → hydrate the store. There is no more quiet
+  // reload (writes return truth and are ingested from their responses), so the
+  // seq-guarded reload race (G2) and the quiet-reload-unmounts-workspace bug
+  // (G7) are gone by construction.
+  useEffect(() => {
+    let cancelled = false;
+    fetchLiveGraph()
+      .then((live) => {
+        if (cancelled) return;
+        hydrate(live);
+        setBoot({ status: 'ready' });
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setBoot({ status: 'error', message: err instanceof Error ? err.message : String(err) });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Selecting a node (or clearing the selection) always lands on the inspector
   // view first — the source editor is scoped to the node that opened it.
@@ -72,67 +92,11 @@ export default function App() {
     [selectNode],
   );
 
-  // Guards every reload against the last one it issued: two overlapping quiet
-  // reloads (rapid edits) can resolve out of order, and without this the older
-  // response would overwrite the newer graph and stick a stale canvas (G2).
-  const reloadSeq = useRef(0);
-
-  // `quiet` refreshes in place (no loading flash) — used after a source save
-  // so the open editor panel isn't unmounted mid-edit.
-  const reload = useCallback(async (opts?: { quiet?: boolean }) => {
-    const seq = ++reloadSeq.current;
-    if (!opts?.quiet) setState({ status: 'loading' });
-    try {
-      const data = await fetchLiveGraph();
-      if (seq !== reloadSeq.current) return; // a newer reload superseded this one
-      setState({ status: 'ready', data });
-      setReloadError(null);
-    } catch (err: unknown) {
-      if (seq !== reloadSeq.current) return;
-      const message = err instanceof Error ? err.message : String(err);
-      // A quiet reload runs AFTER a write the server already accepted — failing
-      // to re-fetch is a transient read error, not a reason to unmount the
-      // workspace (G7). Loud (boot) reloads still show the full error state.
-      if (opts?.quiet) setReloadError(message);
-      else setState({ status: 'error', message });
-    }
-  }, []);
-
   useEffect(() => {
-    void reload();
-  }, [reload]);
-
-  // A source save rewrote the .py: bump the revision so the last run's values
-  // read as stale immediately (G1), then quietly re-fetch the re-projected graph
-  // the server now serves (G3) without unmounting the open editor.
-  const onSourceSaved = useCallback(() => {
-    setRev((r) => r + 1);
-    void reload({ quiet: true });
-  }, [reload]);
-
-  // A widget commit persisted: the PUT response already carries the authoritative
-  // re-served graph, so patch it straight onto `state.data` (GraphView folds the
-  // new literals onto the canvas in place) — no post-commit reload (G4). Bump the
-  // revision so run-derived values read as stale until the next run (G1). A
-  // failed commit surfaces the message; the banner self-dismisses.
-  const onWidgetSaved = useCallback((result: SaveGraphResult) => {
-    setWidgetError(null);
-    setRev((r) => r + 1);
-    setState((prev) =>
-      prev.status === 'ready'
-        ? { status: 'ready', data: { ...prev.data, graph: result.graph } }
-        : prev,
-    );
-  }, []);
-  const onWidgetError = useCallback((error: Error) => {
-    setWidgetError(error.message);
-  }, []);
-
-  useEffect(() => {
-    if (!widgetError) return;
-    const timer = window.setTimeout(() => setWidgetError(null), 6000);
+    if (!writeError) return;
+    const timer = window.setTimeout(() => setWriteError(null), 6000);
     return () => window.clearTimeout(timer);
-  }, [widgetError]);
+  }, [writeError]);
 
   // Escape dismisses the topmost open surface, one per press: the source
   // editor (back to the inspector), then the inspector, then the export dock,
@@ -155,7 +119,7 @@ export default function App() {
       } else if (python !== null) {
         setPython(null);
       } else if (run) {
-        setRun(null);
+        clearRun();
       } else {
         return;
       }
@@ -165,33 +129,20 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [selectedNodeId, editingSource, python, run]);
 
-  const graph = state.status === 'ready' ? state.data.graph : null;
-
-  // The commit seam (A-D5): mounted only when a graph is loaded, so editors are
-  // live on the ready canvas and read-only otherwise. Recreated when the graph
-  // identity changes so a commit always diffs against the freshest served graph.
-  const commit = useMemo(
-    () => (graph ? makeGraphCommitter(graph, onWidgetSaved, onWidgetError) : null),
-    [graph, onWidgetSaved, onWidgetError],
-  );
-  // Contract version comes from /api/specs (the palette contract), per ADR 0002.
-  const version = state.status === 'ready' ? state.data.version : null;
-
   const onRun = useCallback(async () => {
     if (!graph) return;
     setRunState({ pending: true, error: null });
     try {
       const result = await runGraph(graph);
-      setRun(result);
-      setRunRev(rev); // stamp the run with the graph revision it executed against
+      setRun(result); // stamped with the current rev inside the store (epoch)
     } catch (err: unknown) {
       // Transport failure (server down): clear stale results, show the banner.
-      setRun(null);
+      clearRun();
       setRunState({ pending: false, error: err instanceof Error ? err.message : String(err) });
       return;
     }
     setRunState(IDLE);
-  }, [graph, rev]);
+  }, [graph]);
 
   const onExport = useCallback(async () => {
     if (!graph) return;
@@ -207,14 +158,7 @@ export default function App() {
     setExportState(IDLE);
   }, [graph]);
 
-  // The node an engine run error points at (marked on the canvas).
-  const errorNodeId = run?.errors.find((e) => e.nodeId)?.nodeId ?? null;
-
-  // The current run's values predate the latest edit: every surface that shows
-  // them (canvas result chips, run-results value lines) renders them dimmed and
-  // the banner below offers a one-click re-run (ADR 0008 G1; keep-dimmed over
-  // setRun(null) — confirmation 1 — so context survives the edit and never lies).
-  const runIsStale = run !== null && runRev !== rev;
+  const ready = boot.status === 'ready' && graph !== null;
 
   return (
     <div className="ge-app">
@@ -230,7 +174,7 @@ export default function App() {
             type="button"
             className="ge-btn ge-btn--primary"
             data-testid="run-button"
-            disabled={state.status !== 'ready' || runState.pending}
+            disabled={!ready || runState.pending}
             onClick={onRun}
           >
             {runState.pending ? 'Running…' : 'Run'}
@@ -239,7 +183,7 @@ export default function App() {
             type="button"
             className="ge-btn"
             data-testid="export-button"
-            disabled={state.status !== 'ready' || exportState.pending}
+            disabled={!ready || exportState.pending}
             onClick={onExport}
           >
             {exportState.pending ? 'Exporting…' : 'Export Python'}
@@ -251,9 +195,9 @@ export default function App() {
         </span>
       </header>
 
-      {(runState.error || exportState.error || widgetError || reloadError) && (
+      {(runState.error || exportState.error || writeError) && (
         <div className="ge-actionbar-error" data-testid="action-error" role="alert">
-          {runState.error ?? exportState.error ?? widgetError ?? reloadError}
+          {runState.error ?? exportState.error ?? writeError}
         </div>
       )}
 
@@ -264,7 +208,7 @@ export default function App() {
             type="button"
             className="ge-btn ge-btn--primary ge-run-stale__rerun"
             data-testid="run-stale-rerun"
-            disabled={state.status !== 'ready' || runState.pending}
+            disabled={!ready || runState.pending}
             onClick={onRun}
           >
             {runState.pending ? 'Running…' : 'Run again'}
@@ -272,47 +216,44 @@ export default function App() {
         </div>
       )}
 
-      {state.status === 'loading' && (
+      {boot.status === 'loading' && (
         <div className="ge-status" data-testid="app-loading">
           <span className="ge-status__spinner" aria-hidden="true" />
           Loading graph from the server…
         </div>
       )}
 
-      {state.status === 'error' && (
+      {boot.status === 'error' && (
         <div className="ge-status ge-status--error" data-testid="app-error" role="alert">
           <strong className="ge-status__title">Couldn’t load the graph</strong>
-          <span className="ge-status__detail">{state.message}</span>
+          <span className="ge-status__detail">{boot.message}</span>
           <span className="ge-status__hint">Check that the API server is running, then reload.</span>
         </div>
       )}
 
-      {state.status === 'ready' && (
+      {ready && (
         <div className="ge-main">
           <div className="ge-workspace">
-            <WidgetEditingProvider value={commit}>
+            {/* The commit seam (A-D5): the store's stable `commitLiteral` — a
+                module function, so no context churn re-renders every chip (R2).
+                Absence of a provider is still read-only (WidgetSlot). */}
+            <WidgetEditingProvider value={commitLiteral}>
               <GraphView
-                graph={state.data.graph}
-                specs={state.data.specs}
-                runOutputs={run?.outputs ?? null}
-                runIsStale={runIsStale}
-                errorNodeId={errorNodeId}
                 selectedNodeId={selectedNodeId}
                 onSelectNode={selectNode}
                 focusRequest={focusRequest}
                 editingSource={editingSource}
                 onEditSourceChange={setEditingSource}
-                onSourceSaved={onSourceSaved}
               />
             </WidgetEditingProvider>
-            {run && (
+            {run && graph && (
               <RunResultsPanel
                 run={run}
-                graph={state.data.graph}
-                specs={state.data.specs}
+                graph={graph}
+                specs={specs}
                 runIsStale={runIsStale}
                 onFocusNode={onFocusNode}
-                onClose={() => setRun(null)}
+                onClose={clearRun}
               />
             )}
           </div>

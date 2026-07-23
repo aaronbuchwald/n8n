@@ -9,8 +9,6 @@ interface NodeInspectorProps {
   /** True while the inspector is expanded into the node's source editor. */
   editingSource: boolean;
   onEditSource: (open: boolean) => void;
-  /** A source save landed — the app refreshes specs/graph quietly. */
-  onSourceSaved: () => void;
   onClose: () => void;
 }
 
@@ -95,7 +93,6 @@ export function NodeInspector({
   sharedNodeCount,
   editingSource,
   onEditSource,
-  onSourceSaved,
   onClose,
 }: NodeInspectorProps) {
   const editing = editingSource && !node.missingSpec;
@@ -160,7 +157,6 @@ export function NodeInspector({
         <SourceEditor
           specId={node.typeName}
           sharedNodeCount={sharedNodeCount}
-          onSaved={onSourceSaved}
           onClose={() => onEditSource(false)}
         />
       ) : (
