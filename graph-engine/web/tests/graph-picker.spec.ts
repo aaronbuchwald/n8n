@@ -48,7 +48,7 @@ test('switches entries via the picker: URL key, full canvas swap, cleared run pa
 
   // Showcase-specific nodes are on the canvas; capacity_check's are not.
   await expect(nodeCard(page, 'parse_expr')).toBeVisible();
-  await expect(nodeCard(page, 'check_capacity')).toHaveCount(0);
+  await expect(nodeCard(page, 'check_verdict')).toHaveCount(0);
 
   const badgeBefore = await page.getByTestId('branch-badge').textContent();
 
@@ -74,7 +74,7 @@ test('switches entries via the picker: URL key, full canvas swap, cleared run pa
   await expect(page.locator('[data-testid="flow-canvas"][data-layout-ready="true"]')).toBeVisible({
     timeout: 15_000,
   });
-  await expect(nodeCard(page, 'check_capacity')).toBeVisible();
+  await expect(nodeCard(page, 'check_verdict')).toBeVisible();
   await expect(nodeCard(page, 'select_extreme').first()).toBeVisible();
   await expect(nodeCard(page, 'parse_expr')).toHaveCount(0);
 
