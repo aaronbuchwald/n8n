@@ -1,13 +1,17 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { exportGraph, fetchGraphs, fetchLiveGraph, runGraph } from './api';
 import { BranchBadge } from './components/BranchBadge';
 import { GraphPicker } from './components/GraphPicker';
 import { ExportPanel } from './components/ExportPanel';
+import { NodeInspector } from './components/NodeInspector';
 import { Palette } from './components/Palette';
 import { NewNodePanel } from './components/NewNodePanel';
 import { RunResultsPanel } from './components/RunResultsPanel';
+import { Workbench, type WorkbenchHandle } from './components/workbench/Workbench';
+import type { DockTab } from './components/workbench/RightDock';
 import { GraphView, type FocusRequest } from './GraphView';
+import { inspectNode } from './inspect';
 import {
   clearRun,
   commitLiteral,
@@ -68,6 +72,9 @@ export default function App() {
   // Stand-in trigger until the palette (11-W5) grows its own "New node" entry.
   const [creatingSource, setCreatingSource] = useState(false);
   const [focusRequest, setFocusRequest] = useState<FocusRequest | null>(null);
+  // Imperative handle to the workbench shell — the "Reset layout" affordance
+  // snaps every region back to defaults without a reload (ADR 0014 D5).
+  const workbenchRef = useRef<WorkbenchHandle>(null);
 
   // --- store reads (selectors return stored refs or primitives) ---------------
   const graph = useSyncSelector((s) => s.effective.graph);
@@ -75,6 +82,10 @@ export default function App() {
   const version = useSyncSelector((s) => s.version);
   const run = useSyncSelector((s) => s.run);
   const runIsStale = useSyncSelector(selectRunIsStale);
+  // The committed derived sockets per dynamic node (ADR 0007), needed to inspect
+  // a node's derived inputs now that the inspector is composed here (not inside
+  // the canvas) and mounted into the right dock (ADR 0014 D1).
+  const derivedByNode = useSyncSelector((s) => s.derivedByNode);
   // A failed widget commit lands here (the queue, being hookless, writes it to
   // the store). Auto-clears so it never lingers over the canvas.
   const writeError = useSyncSelector((s) => s.writeError);
@@ -275,6 +286,56 @@ export default function App() {
 
   const ready = boot.status === 'ready' && graph !== null;
 
+  // The inspected node, composed HERE now (ADR 0013 = the one editing surface,
+  // ADR 0014 = it lives in the right dock, not floating over the canvas). Folds
+  // in the store's committed derived inputs exactly as the canvas' buildFlow
+  // does, so derived symbols (C_min/F_max) are inspectable.
+  const runOutputs = run?.outputs ?? null;
+  const inspected = useMemo(
+    () =>
+      graph && selectedNodeId
+        ? inspectNode(
+            graph,
+            specs,
+            selectedNodeId,
+            runOutputs,
+            runIsStale,
+            derivedByNode.get(selectedNodeId),
+          )
+        : null,
+    [graph, specs, selectedNodeId, runOutputs, runIsStale, derivedByNode],
+  );
+  // Several nodes may share one @node function; the source editor says so.
+  const sharedNodeCount = useMemo(
+    () => (graph && inspected ? graph.nodes.filter((n) => n.type === inspected.typeName).length : 0),
+    [graph, inspected],
+  );
+
+  // The right-dock tab registry (ADR 0014 D3). W1 mounts only the Inspector tab;
+  // W3 pushes Export and New-node entries onto this same array. Closing the tab
+  // deselects the node (D3: "Closing the tab = deselect").
+  const dockTabs = useMemo<DockTab[]>(() => {
+    const tabs: DockTab[] = [];
+    if (inspected) {
+      tabs.push({
+        id: 'inspector',
+        kind: 'inspector',
+        label: 'Inspector',
+        onClose: () => selectNode(null),
+        content: (
+          <NodeInspector
+            node={inspected}
+            sharedNodeCount={sharedNodeCount}
+            editingSource={editingSource}
+            onEditSource={setEditingSource}
+            onClose={() => selectNode(null)}
+          />
+        ),
+      });
+    }
+    return tabs;
+  }, [inspected, sharedNodeCount, editingSource, selectNode]);
+
   return (
     <div className="ge-app">
       <header className="ge-topbar">
@@ -314,6 +375,18 @@ export default function App() {
             onClick={() => setCreatingSource(true)}
           >
             + New node
+          </button>
+          {/* Reset the workbench layout to defaults without a reload — also the
+              escape hatch for a corrupt saved layout (ADR 0014 D5). */}
+          <button
+            type="button"
+            className="ge-btn ge-btn--ghost"
+            data-testid="reset-layout"
+            disabled={!ready}
+            title="Reset the panel layout to defaults"
+            onClick={() => workbenchRef.current?.reset()}
+          >
+            Reset layout
           </button>
         </div>
 
@@ -366,37 +439,41 @@ export default function App() {
 
       {ready && (
         <div className="ge-main">
-          {/* ADR 0011 W5: click-to-place palette; W4 adds drag-drop onto the canvas. */}
-          <Palette />
-          <div className="ge-workspace">
-            {/* The commit seam (A-D5): the store's stable `commitLiteral` — a
-                module function, so no context churn re-renders every chip (R2).
-                Absence of a provider is still read-only (WidgetSlot).
-                Keyed by the entry id: an id change unmounts/remounts the
-                canvas (fresh mount, per-entry layout, fitView — ADR 0009 D6)
-                because `boot` cycles through 'loading' on every switch, which
-                already tears this whole subtree down and back up. */}
-            <WidgetEditingProvider value={commitLiteral}>
-              <GraphView
-                key={graphId ?? '(default)'}
-                selectedNodeId={selectedNodeId}
-                onSelectNode={selectNode}
-                focusRequest={focusRequest}
-                editingSource={editingSource}
-                onEditSourceChange={setEditingSource}
-              />
-            </WidgetEditingProvider>
-            {run && graph && (
-              <RunResultsPanel
-                run={run}
-                graph={graph}
-                specs={specs}
-                runIsStale={runIsStale}
-                onFocusNode={onFocusNode}
-                onClose={clearRun}
-              />
-            )}
-          </div>
+          {/* The VS Code-style workbench (ADR 0014 W1): resizable/collapsible
+              regions around the canvas. The commit seam (A-D5) wraps the whole
+              shell so BOTH the canvas widgets and the now-docked inspector's
+              widget slot resolve the store's stable `commitLiteral`.
+              The Palette (11-W5), GraphView, RunResults, and the inspector are
+              passed in as layout-ignorant slots (D6). Export and New-node stay
+              today's right columns — W3 relocates them into the dock. */}
+          <WidgetEditingProvider value={commitLiteral}>
+            <Workbench
+              ref={workbenchRef}
+              palette={<Palette />}
+              canvas={
+                <GraphView
+                  key={graphId ?? '(default)'}
+                  selectedNodeId={selectedNodeId}
+                  onSelectNode={selectNode}
+                  focusRequest={focusRequest}
+                />
+              }
+              bottom={
+                run && graph ? (
+                  <RunResultsPanel
+                    run={run}
+                    graph={graph}
+                    specs={specs}
+                    runIsStale={runIsStale}
+                    onFocusNode={onFocusNode}
+                    onClose={clearRun}
+                  />
+                ) : null
+              }
+              bottomBadge={run ? run.order.length : undefined}
+              dockTabs={dockTabs}
+            />
+          </WidgetEditingProvider>
           {python !== null && <ExportPanel python={python} onClose={() => setPython(null)} />}
           {creatingSource && <NewNodePanel onClose={() => setCreatingSource(false)} />}
         </div>

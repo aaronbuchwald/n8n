@@ -23,10 +23,8 @@ import {
 import '@xyflow/react/dist/style.css';
 
 import { buildFlow, layoutFlowNodes, pinnedIdsOf } from './buildGraph';
-import { NodeInspector } from './components/NodeInspector';
 import { PALETTE_SPEC_MIME } from './components/Palette';
 import { SpecNode } from './components/SpecNode';
-import { inspectNode } from './inspect';
 import {
   connectEdge,
   createNode,
@@ -148,22 +146,12 @@ interface GraphViewProps {
   onSelectNode: (nodeId: string | null) => void;
   // A request (e.g. from a run-results row) to select + centre a node.
   focusRequest: FocusRequest | null;
-  // Source editing for the selected node's type, owned by the app so the
-  // Escape cascade and selection changes can close it.
-  editingSource: boolean;
-  onEditSourceChange: (open: boolean) => void;
 }
 
 // mount → nodes measured → final layout applied → graph framed → visible.
 type LayoutPhase = 'measuring' | 'framing' | 'ready';
 
-function GraphCanvas({
-  selectedNodeId,
-  onSelectNode,
-  focusRequest,
-  editingSource,
-  onEditSourceChange,
-}: GraphViewProps) {
+function GraphCanvas({ selectedNodeId, onSelectNode, focusRequest }: GraphViewProps) {
   // The single source of truth (8-S1). `effective.graph` is authoritative ⊕ the
   // optimistic overlay, so an in-flight literal edit is on the canvas instantly;
   // each of these selectors returns a stored reference or a primitive, so the
@@ -294,21 +282,13 @@ function GraphCanvas({
     };
   }, [phase, fitView]);
 
-  // Keep the graph framed when the canvas itself resizes (e.g. the run-results
-  // panel opening below it, or the export dock beside it).
-  useEffect(() => {
-    if (phase !== 'ready' || !canvasRef.current) return;
-    let first = true;
-    const observer = new ResizeObserver(() => {
-      if (first) {
-        first = false; // ignore the initial observe callback
-        return;
-      }
-      requestAnimationFrame(() => void fitView(FIT_VIEW));
-    });
-    observer.observe(canvasRef.current);
-    return () => observer.disconnect();
-  }, [phase, fitView]);
+  // Resize policy (ADR 0014 #5 override): PRESERVE the viewport on container
+  // resize. A panel/sash drag must NOT re-zoom the graph — ReactFlow keeps its
+  // current pan/zoom and simply reveals more/less canvas as the box changes.
+  // `fitView` is reserved for initial mount / entry-switch (the framing phase
+  // above), the Controls fit button, run-row focus, and Tidy layout — never a
+  // container resize. There is deliberately no ResizeObserver→fitView here; W2
+  // owns any further refinement of the canvas' resize integration.
 
   // The store's edit-mode validation, regrouped per node (the on-canvas
   // "needs wiring" badge source — ADR 0011 D6, mirrored from W5's palette strip).
@@ -487,32 +467,6 @@ function GraphCanvas({
     return () => window.clearTimeout(timer);
   }, [writebackWarning]);
 
-  // The inspector is the ONLY editing surface now (ADR 0013 D4), so it must
-  // show a dynamic node's derived sockets too (C_min/F_max). Fold in the store's
-  // committed derived inputs for the selected node exactly as `buildFlow` does
-  // for the canvas — without this the inspector would omit the only place those
-  // symbols can be given inline values.
-  const inspected = useMemo(
-    () =>
-      graph && selectedNodeId
-        ? inspectNode(
-            graph,
-            specs,
-            selectedNodeId,
-            runOutputs,
-            runIsStale,
-            derivedByNode.get(selectedNodeId),
-          )
-        : null,
-    [graph, specs, selectedNodeId, runOutputs, runIsStale, derivedByNode],
-  );
-
-  // Several nodes may share one @node function; the source editor says so.
-  const sharedNodeCount = useMemo(
-    () => (graph && inspected ? graph.nodes.filter((n) => n.type === inspected.typeName).length : 0),
-    [graph, inspected],
-  );
-
   return (
     <div
       ref={canvasRef}
@@ -570,21 +524,12 @@ function GraphCanvas({
             </button>
           </Panel>
         )}
-        {phase === 'ready' && !inspected && (
+        {phase === 'ready' && !selectedNodeId && (
           <Panel position="top-left" className="ge-hint">
             Select a node to inspect it — drag, wire and delete to edit the graph
           </Panel>
         )}
       </ReactFlow>
-      {inspected && (
-        <NodeInspector
-          node={inspected}
-          sharedNodeCount={sharedNodeCount}
-          editingSource={editingSource}
-          onEditSource={onEditSourceChange}
-          onClose={() => onSelectNode(null)}
-        />
-      )}
     </div>
   );
 }

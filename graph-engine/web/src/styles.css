@@ -1667,3 +1667,379 @@ body,
 .ge-latex-card__body {
   overflow-x: auto;
 }
+
+/* ============================================================================
+   ADR 0014 W1 — the workbench shell: resizable/collapsible regions.
+
+   The `.ge-main` flex row now holds the workbench (which owns the palette,
+   canvas, run-results and inspector-dock regions via react-resizable-panels)
+   plus the Export/New-node columns W3 will later relocate into the dock. The
+   library sets each panel's flex grow/shrink/basis inline (that is the sash
+   sizing); we only add display/overflow so panel content stretches to fill.
+   ============================================================================ */
+
+.ge-workbench {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+}
+
+.ge-wb-main {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* Panels are flex items of their group (sizing is inline); make their own box a
+   flex column so the region content fills the panel. */
+.ge-wb-panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.ge-wb-panel--canvas {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.ge-wb-center {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.ge-wb-center-group {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* ---- sashes (PanelResizeHandle): 1px visible line, ~8px hit area centred on
+   the divider. The library exposes role="separator" + arrow-key resize on the
+   handle; we only style it. ---- */
+.ge-wb-sash {
+  position: relative;
+  flex: 0 0 auto;
+  background: transparent;
+  transition: background 0.15s ease;
+}
+
+.ge-wb-sash--v {
+  width: 8px;
+  cursor: col-resize;
+}
+
+.ge-wb-sash--h {
+  height: 8px;
+  cursor: row-resize;
+}
+
+/* The visible 1px line, centred in the hit area. */
+.ge-wb-sash::before {
+  content: '';
+  position: absolute;
+  background: var(--ge-node-border);
+  transition: background 0.15s ease;
+}
+
+.ge-wb-sash--v::before {
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-0.5px);
+}
+
+.ge-wb-sash--h::before {
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 1px;
+  transform: translateY(-0.5px);
+}
+
+.ge-wb-sash:hover::before,
+.ge-wb-sash[data-resize-handle-state='hover']::before,
+.ge-wb-sash[data-resize-handle-state='drag']::before {
+  background: var(--ge-accent);
+}
+
+.ge-wb-sash:focus-visible {
+  outline: none;
+}
+
+.ge-wb-sash:focus-visible::before {
+  background: var(--ge-accent);
+  box-shadow: 0 0 0 1px var(--ge-accent);
+}
+
+/* ---- region wrappers: hold the (layout-ignorant) content plus the collapse
+   control the shell overlays at the region's edge. ---- */
+.ge-region {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.ge-region__collapse {
+  position: absolute;
+  z-index: 6;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--ge-node-border);
+  border-radius: 5px;
+  background: var(--ge-node-bg);
+  color: var(--ge-muted);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.ge-region__collapse:hover {
+  color: var(--ge-text);
+  border-color: var(--ge-accent);
+}
+
+.ge-region__collapse--left {
+  top: 8px;
+  right: 8px;
+}
+
+.ge-region__collapse--bottom {
+  top: 8px;
+  right: 10px;
+}
+
+/* The palette fills the left region (its own fixed width + right border belong
+   to the pre-workbench flex layout). */
+.ge-region--left .ge-palette {
+  flex: 1;
+  width: 100%;
+  border-right: none;
+}
+
+/* Run results fill the bottom region (drop the 42% cap + top border; the sash
+   is the separator now). */
+.ge-region--bottom .ge-results {
+  flex: 1;
+  max-height: none;
+  min-height: 0;
+  border-top: none;
+}
+
+/* ---- rails: a collapsed region's slim strip, rendered OUTSIDE the group. ---- */
+.ge-rail {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: none;
+  background: var(--ge-panel);
+  color: var(--ge-muted);
+  cursor: pointer;
+  font: inherit;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+.ge-rail:hover {
+  color: var(--ge-text);
+  background: var(--ge-accent-soft);
+}
+
+.ge-rail:focus-visible {
+  outline: 2px solid var(--ge-accent);
+  outline-offset: -2px;
+}
+
+.ge-rail__icon {
+  font-size: 14px;
+}
+
+/* Left / right rails: ~40px vertical strip with a rotated label. */
+.ge-rail--left,
+.ge-rail--right {
+  width: 40px;
+  flex-direction: column;
+  padding: 10px 0;
+  justify-content: flex-start;
+}
+
+.ge-rail--left {
+  border-right: 1px solid var(--ge-node-border);
+}
+
+.ge-rail--right {
+  border-left: 1px solid var(--ge-node-border);
+}
+
+.ge-rail--left .ge-rail__label,
+.ge-rail--right .ge-rail__label {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+}
+
+.ge-rail--right .ge-rail__label {
+  transform: rotate(180deg);
+}
+
+/* Bottom rail: ~28px horizontal strip with label + optional run count. */
+.ge-rail--bottom {
+  flex: 0 0 auto;
+  height: 28px;
+  width: 100%;
+  flex-direction: row;
+  padding: 0 12px;
+  border-top: 1px solid var(--ge-node-border);
+}
+
+.ge-rail--bottom .ge-rail__label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.ge-rail__badge {
+  font-size: 10px;
+  font-family: var(--ge-mono);
+  color: var(--ge-value);
+  background: var(--ge-value-soft);
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+
+/* ---- right dock: the tab stack (ADR 0014 D3). ---- */
+.ge-dock {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--ge-panel);
+  /* No side border — the sash is the separator; a border would leave a 1px
+     sliver when the region collapses to size 0. */
+}
+
+.ge-dock__strip {
+  flex: none;
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  padding: 4px 4px 0;
+  border-bottom: 1px solid var(--ge-node-border);
+}
+
+.ge-dock__tab {
+  display: flex;
+  align-items: center;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+  background: transparent;
+}
+
+.ge-dock__tab--active {
+  background: var(--ge-node-bg);
+  border-color: var(--ge-node-border);
+}
+
+.ge-dock__tab-btn {
+  border: none;
+  background: none;
+  color: var(--ge-text);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 7px 10px;
+  cursor: pointer;
+}
+
+.ge-dock__tab:not(.ge-dock__tab--active) .ge-dock__tab-btn {
+  color: var(--ge-muted);
+}
+
+.ge-dock__tab-close {
+  border: none;
+  background: none;
+  color: var(--ge-muted);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 8px 0 0;
+}
+
+.ge-dock__tab-close:hover {
+  color: var(--ge-text);
+}
+
+.ge-dock__collapse {
+  margin-left: auto;
+  align-self: center;
+  border: 1px solid var(--ge-node-border);
+  border-radius: 5px;
+  background: var(--ge-node-bg);
+  color: var(--ge-muted);
+  font-size: 14px;
+  line-height: 1;
+  width: 22px;
+  height: 22px;
+  cursor: pointer;
+}
+
+.ge-dock__collapse:hover {
+  color: var(--ge-text);
+  border-color: var(--ge-accent);
+}
+
+.ge-dock__body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.ge-dock__placeholder {
+  margin: auto;
+  padding: 24px;
+  text-align: center;
+  color: var(--ge-muted);
+  font-size: 12px;
+}
+
+/* The inspector was a floating overlay (position:absolute over the canvas).
+   Docked, it fills the dock body instead — neutralise the float here (the
+   component itself is untouched; W3 owns its header/mount changes). */
+.ge-dock__body .ge-inspector,
+.ge-dock__body .ge-inspector--editing,
+.ge-dock__body .ge-inspector--wide {
+  position: static;
+  inset: auto;
+  width: 100%;
+  max-width: none;
+  height: 100%;
+  flex: 1;
+  min-height: 0;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+  backdrop-filter: none;
+}
