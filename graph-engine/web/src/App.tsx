@@ -10,7 +10,6 @@ import {
 import { BranchBadge } from './components/BranchBadge';
 import { ExportPanel } from './components/ExportPanel';
 import { RunResultsPanel } from './components/RunResultsPanel';
-import { SourceEditor } from './components/SourceEditor';
 import { GraphView, type FocusRequest } from './GraphView';
 import { makeGraphCommitter, WidgetEditingProvider } from './widgets';
 
@@ -34,21 +33,33 @@ export default function App() {
   const [runState, setRunState] = useState<ActionState>(IDLE);
   const [python, setPython] = useState<string | null>(null);
   const [exportState, setExportState] = useState<ActionState>(IDLE);
-  const [editingSource, setEditingSource] = useState(false);
   // A failed widget commit surfaces here as a transient banner (A-D5: PUT
   // /api/graph rejected). Auto-clears so it never lingers over the canvas.
   const [widgetError, setWidgetError] = useState<string | null>(null);
   // The inspected node. Owned here (not in GraphView) so run-results rows can
   // select it and the Escape handler below can close it.
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  // Whether the inspector is expanded into the selected node's source editor.
+  // Owned here so a selection change resets it and Escape can step it closed.
+  const [editingSource, setEditingSource] = useState(false);
   const [focusRequest, setFocusRequest] = useState<FocusRequest | null>(null);
+
+  // Selecting a node (or clearing the selection) always lands on the inspector
+  // view first — the source editor is scoped to the node that opened it.
+  const selectNode = useCallback((nodeId: string | null) => {
+    setSelectedNodeId(nodeId);
+    setEditingSource(false);
+  }, []);
 
   // A run-results row was clicked: open the inspector for that node and ask
   // the canvas to centre it.
-  const onFocusNode = useCallback((nodeId: string) => {
-    setSelectedNodeId(nodeId);
-    setFocusRequest({ nodeId, token: Date.now() });
-  }, []);
+  const onFocusNode = useCallback(
+    (nodeId: string) => {
+      selectNode(nodeId);
+      setFocusRequest({ nodeId, token: Date.now() });
+    },
+    [selectNode],
+  );
 
   // `quiet` refreshes in place (no loading flash) — used after a source save
   // so the open editor panel isn't unmounted mid-edit.
@@ -87,10 +98,11 @@ export default function App() {
     return () => window.clearTimeout(timer);
   }, [widgetError]);
 
-  // Escape dismisses the topmost open surface, one per press: inspector, then
-  // export dock, then run results. Widget editors handle their own keys (the
-  // slot is skipped here), and the source editor is deliberately exempt so a
-  // stray Escape can't discard an unsaved body edit.
+  // Escape dismisses the topmost open surface, one per press: the source
+  // editor (back to the inspector), then the inspector, then the export dock,
+  // then run results. Widget editors handle their own keys (the slot is
+  // skipped here), and Escape typed INSIDE the source editor is deliberately
+  // inert so a stray press can't discard an unsaved body edit.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape' || event.defaultPrevented) return;
@@ -100,7 +112,9 @@ export default function App() {
       ) {
         return;
       }
-      if (selectedNodeId) {
+      if (selectedNodeId && editingSource) {
+        setEditingSource(false);
+      } else if (selectedNodeId) {
         setSelectedNodeId(null);
       } else if (python !== null) {
         setPython(null);
@@ -113,7 +127,7 @@ export default function App() {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [selectedNodeId, python, run]);
+  }, [selectedNodeId, editingSource, python, run]);
 
   const graph = state.status === 'ready' ? state.data.graph : null;
 
@@ -187,15 +201,6 @@ export default function App() {
           >
             {exportState.pending ? 'Exporting…' : 'Export Python'}
           </button>
-          <button
-            type="button"
-            className="ge-btn"
-            data-testid="edit-source-button"
-            disabled={state.status !== 'ready'}
-            onClick={() => setEditingSource((open) => !open)}
-          >
-            Edit source
-          </button>
         </div>
 
         <span className="ge-topbar__out" data-testid="graph-output-label">
@@ -234,8 +239,11 @@ export default function App() {
                 runOutputs={run?.outputs ?? null}
                 errorNodeId={errorNodeId}
                 selectedNodeId={selectedNodeId}
-                onSelectNode={setSelectedNodeId}
+                onSelectNode={selectNode}
                 focusRequest={focusRequest}
+                editingSource={editingSource}
+                onEditSourceChange={setEditingSource}
+                onSourceSaved={onSourceSaved}
               />
             </WidgetEditingProvider>
             {run && (
@@ -249,13 +257,6 @@ export default function App() {
             )}
           </div>
           {python !== null && <ExportPanel python={python} onClose={() => setPython(null)} />}
-          {editingSource && (
-            <SourceEditor
-              specs={state.data.specs}
-              onSaved={onSourceSaved}
-              onClose={() => setEditingSource(false)}
-            />
-          )}
         </div>
       )}
     </div>
