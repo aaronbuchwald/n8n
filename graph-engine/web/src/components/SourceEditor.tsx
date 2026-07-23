@@ -1,6 +1,9 @@
-import { useCallback, useEffect, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useState } from 'react';
 
 import { fetchSource, saveSource, type SourceInfo } from '../api';
+
+// Monaco is heavy; load it as its own chunk only when the source editor opens.
+const MonacoEditor = lazy(() => import('../monaco/MonacoEditor'));
 
 interface SourceEditorProps {
   /** The node type (spec id, `module.qualname`) whose @node function is edited. */
@@ -17,8 +20,8 @@ interface SourceEditorProps {
  * node TYPE's function (several nodes may share it), so the header names the
  * function — not the node id. Saving writes the def back into the REAL .py
  * file on the current branch (`PUT /api/source/{id}`) and re-introspects the
- * module, so signature changes flow into the palette. A plain monospace
- * textarea by design (no editor dependency for now).
+ * module, so signature changes flow into the palette. The body is a Monaco
+ * editor with Python highlighting, fully bundled offline (see monaco/setup.ts).
  */
 export function SourceEditor({ specId, sharedNodeCount, onSaved, onClose }: SourceEditorProps) {
   const [info, setInfo] = useState<SourceInfo | null>(null);
@@ -99,14 +102,17 @@ export function SourceEditor({ specId, sharedNodeCount, onSaved, onClose }: Sour
         </div>
       )}
 
-      <textarea
-        className="ge-source__text"
-        data-testid="source-textarea"
-        spellCheck={false}
-        value={text}
-        disabled={info === null}
-        onChange={(event) => setText(event.target.value)}
-      />
+      <div className="ge-source__editor" data-testid="source-editor-body">
+        <Suspense
+          fallback={
+            <div className="ge-source__loading" data-testid="source-loading">
+              Loading editor…
+            </div>
+          }
+        >
+          <MonacoEditor value={text} readOnly={info === null} onChange={setText} />
+        </Suspense>
+      </div>
 
       {error && (
         <div className="ge-source__error" data-testid="source-error" role="alert">

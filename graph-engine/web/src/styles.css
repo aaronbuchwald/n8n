@@ -1187,25 +1187,37 @@ body,
   font-size: 11px;
 }
 
-.ge-source__text {
+/* Monaco host: fills the panel, clips the editor to a rounded framed box. */
+.ge-source__editor {
   flex: 1;
   min-height: 0;
   margin: 10px 14px 0;
-  padding: 10px 12px;
   border: 1px solid var(--ge-node-border);
   border-radius: 8px;
+  overflow: hidden;
   background: var(--ge-bg);
-  color: #d6e2f5;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
-  line-height: 1.55;
-  white-space: pre;
-  tab-size: 4;
-  resize: none;
+  position: relative;
 }
 
-.ge-source__text:focus {
-  outline: 1px solid var(--ge-accent);
+.ge-source__monaco {
+  position: absolute;
+  inset: 0;
+}
+
+.ge-source__loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--ge-faint);
+  font-family: var(--ge-mono);
+  font-size: 12px;
+}
+
+/* Keep Monaco's own overlays above the framed box's clip. */
+.ge-source__editor .monaco-editor,
+.ge-source__editor .monaco-editor .overflow-guard {
+  border-radius: 8px;
 }
 
 .ge-source__error,

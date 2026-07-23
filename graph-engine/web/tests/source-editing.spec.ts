@@ -6,6 +6,23 @@ import { test, expect, type Page } from '@playwright/test';
 // button + node-type dropdown are gone. The editor is honest about scope: it
 // is launched from a node but edits the node TYPE's function, so its header
 // names the function (module.qualname) + real file path + line range.
+//
+// The body is a Monaco editor (Python highlighting, fully bundled offline). Its
+// content lives in a virtual-scrolled model rather than a <textarea>, so these
+// tests read/round-trip through the editor's model (exposed on window.monaco by
+// monaco/setup.ts) instead of asserting on a textarea value.
+
+interface MonacoModel {
+  getValue(): string;
+  setValue(value: string): void;
+}
+interface MonacoEditorInstance {
+  getValue(): string;
+  getModel(): MonacoModel | null;
+}
+interface MonacoBridge {
+  editor: { getEditors(): MonacoEditorInstance[] };
+}
 
 async function gotoAndSettle(page: Page) {
   await page.goto('/');
@@ -18,6 +35,32 @@ async function gotoAndSettle(page: Page) {
 async function selectNode(page: Page, nodeId: string) {
   await page.locator(`.react-flow__node[data-id="${nodeId}"] .ge-node__header`).click();
   await expect(page.getByTestId('node-inspector')).toBeVisible();
+}
+
+/** Wait for the lazily-loaded Monaco editor to mount and hold the source. */
+async function waitForMonaco(page: Page) {
+  await expect(page.getByTestId('source-monaco')).toBeVisible();
+  await page.waitForFunction(() => {
+    const w = window as unknown as { monaco?: MonacoBridge };
+    const editors = w.monaco?.editor.getEditors() ?? [];
+    return editors.length > 0 && editors[0].getValue().length > 0;
+  });
+}
+
+/** Read the full source out of Monaco's model (not the virtual-scrolled DOM). */
+async function monacoValue(page: Page): Promise<string> {
+  return page.evaluate(() => {
+    const w = window as unknown as { monaco: MonacoBridge };
+    return w.monaco.editor.getEditors()[0].getValue();
+  });
+}
+
+/** Replace the whole source; setting the model fires the editor's change event. */
+async function setMonacoValue(page: Page, value: string) {
+  await page.evaluate((next) => {
+    const w = window as unknown as { monaco: MonacoBridge };
+    w.monaco.editor.getEditors()[0].getModel()?.setValue(next);
+  }, value);
 }
 
 test('the inspector offers "Edit source" scoped to the clicked node\'s @node function', async ({
@@ -46,7 +89,16 @@ test('the inspector offers "Edit source" scoped to the clicked node\'s @node fun
   // The real file + line range, so "this edits the real .py" is legible.
   await expect(editor.getByTestId('source-file-label')).toContainText('nodepacks/sym/__init__.py');
   await expect(editor.getByTestId('source-file-label')).toContainText(/lines \d+–\d+/);
-  await expect(editor.getByTestId('source-textarea')).toHaveValue(/def parse_expr/);
+
+  // The Monaco editor is mounted and holds the function source.
+  await waitForMonaco(page);
+  expect(await monacoValue(page)).toMatch(/def parse_expr/);
+  // Python is highlighted: Monaco tokenises into <span class="mtkN"> tokens and
+  // the `def` keyword renders inside a token span.
+  const tokens = editor.locator('.view-line span[class*="mtk"]');
+  expect(await tokens.count()).toBeGreaterThan(1);
+  await expect(editor.locator('.view-line').filter({ hasText: 'def parse_expr' })).toBeVisible();
+
   // Still visibly attached to the clicked node: the inspector header stays.
   await expect(page.getByTestId('inspector-title')).toHaveText('expr · parse_expr');
 
@@ -83,14 +135,15 @@ test('editing a node\'s function, saving, and re-running reflects the change', a
   // The dashboard node (id "report") is defined in the showcase module itself.
   await selectNode(page, 'report');
   await page.getByTestId('inspector-edit-source').click();
-  const textarea = page.getByTestId('source-textarea');
-  await expect(textarea).toHaveValue(/def dashboard/);
-  const original = await textarea.inputValue();
+  await waitForMonaco(page);
+  expect(await monacoValue(page)).toMatch(/def dashboard/);
+  const original = await monacoValue(page);
 
   const MARKER = '[edited-by-e2e]';
   try {
     // Edit THIS node's function body: stamp a marker into the rendered heading.
-    await textarea.fill(
+    await setMonacoValue(
+      page,
       original.replace('{html.escape(title)}', `{html.escape(title)} ${MARKER}`),
     );
     const put = page.waitForResponse(
@@ -128,10 +181,10 @@ test('a rejected save (syntax error) surfaces inline and never corrupts the file
 
   await selectNode(page, 'expr');
   await page.getByTestId('inspector-edit-source').click();
-  const textarea = page.getByTestId('source-textarea');
-  await expect(textarea).toHaveValue(/def parse_expr/);
+  await waitForMonaco(page);
+  expect(await monacoValue(page)).toMatch(/def parse_expr/);
 
-  await textarea.fill('def parse_expr(: this does not parse');
+  await setMonacoValue(page, 'def parse_expr(: this does not parse');
   const put = page.waitForResponse(
     (r) => r.url().includes('/api/source/') && r.request().method() === 'PUT',
   );
@@ -142,7 +195,7 @@ test('a rejected save (syntax error) surfaces inline and never corrupts the file
   const error = page.getByTestId('source-error');
   await expect(error).toBeVisible();
   await expect(error).toContainText('does not parse');
-  await expect(textarea).toBeVisible();
+  await expect(page.getByTestId('source-monaco')).toBeVisible();
 
   // The real file is untouched.
   const after = await (await page.request.get('/api/source/sym.parse_expr')).json();

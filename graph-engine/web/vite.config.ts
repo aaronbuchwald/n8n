@@ -23,6 +23,14 @@ export default defineConfig({
   plugins: [react()],
   server: { proxy },
   preview: { proxy },
+  // Monaco's web worker (editor.worker) is imported via `?worker`; emit it as an
+  // ES module worker so it is bundled into dist/ and loaded same-origin — never
+  // fetched from a CDN.
+  worker: { format: 'es' },
+  // Pre-bundle Monaco's ESM entry so dev/preview resolve it locally too.
+  optimizeDeps: {
+    include: ['monaco-editor/esm/vs/editor/editor.api'],
+  },
   build: {
     outDir: 'dist',
     // Fail loud if anything tries to resolve to an external URL at build time.
