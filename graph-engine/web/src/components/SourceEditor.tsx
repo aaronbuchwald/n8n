@@ -1,23 +1,26 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { fetchSource, saveSource, type SourceInfo } from '../api';
-import type { NodeSpecs } from '../types';
 
 interface SourceEditorProps {
-  specs: NodeSpecs;
+  /** The node type (spec id, `module.qualname`) whose @node function is edited. */
+  specId: string;
+  /** How many canvas nodes share this type — the honesty label when > 1. */
+  sharedNodeCount: number;
   onSaved: () => void; // refresh specs/graph after a successful write
-  onClose: () => void;
+  onClose: () => void; // back to the inspector view
 }
 
 /**
- * View + edit the source of a `@node` function. Saving writes the def back
- * into the REAL .py file on the current branch (`PUT /api/source/{id}`) and
- * re-introspects the module, so signature changes flow into the palette.
- * A plain monospace textarea by design (no editor dependency for now).
+ * View + edit the source of the selected node's `@node` function, expanded
+ * inside the node inspector. The panel is launched from a node but edits the
+ * node TYPE's function (several nodes may share it), so the header names the
+ * function — not the node id. Saving writes the def back into the REAL .py
+ * file on the current branch (`PUT /api/source/{id}`) and re-introspects the
+ * module, so signature changes flow into the palette. A plain monospace
+ * textarea by design (no editor dependency for now).
  */
-export function SourceEditor({ specs, onSaved, onClose }: SourceEditorProps) {
-  const specIds = Object.keys(specs).sort();
-  const [specId, setSpecId] = useState<string>(specIds[0] ?? '');
+export function SourceEditor({ specId, sharedNodeCount, onSaved, onClose }: SourceEditorProps) {
   const [info, setInfo] = useState<SourceInfo | null>(null);
   const [text, setText] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -25,7 +28,6 @@ export function SourceEditor({ specs, onSaved, onClose }: SourceEditorProps) {
   const [pending, setPending] = useState(false);
 
   useEffect(() => {
-    if (!specId) return;
     let cancelled = false;
     setInfo(null);
     setError(null);
@@ -59,6 +61,8 @@ export function SourceEditor({ specs, onSaved, onClose }: SourceEditorProps) {
       );
       onSaved();
     } catch (err: unknown) {
+      // A rejected save (syntax error, wrong function, reload failure): the
+      // file on disk is untouched — surface the reason inline and keep editing.
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setPending(false);
@@ -66,34 +70,32 @@ export function SourceEditor({ specs, onSaved, onClose }: SourceEditorProps) {
   }, [specId, text, onSaved]);
 
   return (
-    <aside className="ge-source" data-testid="source-editor" aria-label="Node source editor">
+    <div className="ge-source" data-testid="source-editor" aria-label={`Source of ${specId}`}>
       <div className="ge-source__head">
-        <span className="ge-source__title">edit @node source</span>
-        <span className="ge-source__sub">writes to the real .py on this branch</span>
-        <button type="button" className="ge-btn ge-btn--ghost" onClick={onClose}>
-          Close
+        <span className="ge-source__title">@node source</span>
+        <button
+          type="button"
+          className="ge-btn ge-btn--ghost"
+          data-testid="source-back"
+          onClick={onClose}
+        >
+          ‹ Inspector
         </button>
       </div>
 
-      <label className="ge-source__field">
-        <span className="ge-source__label">node type</span>
-        <select
-          className="ge-source__select"
-          data-testid="source-spec-select"
-          value={specId}
-          onChange={(event) => setSpecId(event.target.value)}
-        >
-          {specIds.map((id) => (
-            <option key={id} value={id}>
-              {id}
-            </option>
-          ))}
-        </select>
-      </label>
-
+      {/* The function this panel edits — the node's TYPE, shared by every node
+          of that type, so it is labelled by function, not by node id. */}
+      <div className="ge-source__fn" data-testid="source-fn-label" title={specId}>
+        {specId}
+      </div>
       {info && (
         <div className="ge-source__file" data-testid="source-file-label">
           {info.path} · lines {info.startLine}–{info.endLine}
+        </div>
+      )}
+      {sharedNodeCount > 1 && (
+        <div className="ge-source__shared" data-testid="source-shared-note">
+          Shared function — saving affects all {sharedNodeCount} nodes of this type.
         </div>
       )}
 
@@ -118,6 +120,7 @@ export function SourceEditor({ specs, onSaved, onClose }: SourceEditorProps) {
       )}
 
       <div className="ge-source__actions">
+        <span className="ge-source__sub">writes to the real .py on this branch</span>
         <button
           type="button"
           className="ge-btn ge-btn--primary"
@@ -128,6 +131,6 @@ export function SourceEditor({ specs, onSaved, onClose }: SourceEditorProps) {
           {pending ? 'Saving…' : 'Save to file'}
         </button>
       </div>
-    </aside>
+    </div>
   );
 }

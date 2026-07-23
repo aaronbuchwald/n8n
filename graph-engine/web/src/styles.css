@@ -634,6 +634,11 @@ body,
   overflow: hidden;
 }
 
+/* Expanded into the selected node's source editor: same panel, more room. */
+.ge-inspector--editing {
+  width: 560px;
+}
+
 .ge-inspector__head {
   flex: none;
   display: flex;
@@ -695,6 +700,35 @@ body,
 .ge-inspector__close:hover {
   background: rgba(255, 255, 255, 0.08);
   color: var(--ge-text);
+}
+
+/* The per-node action strip under the header — where "Edit source" lives. */
+.ge-inspector__toolbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--ge-node-border);
+  min-width: 0;
+}
+
+.ge-inspector__source-btn {
+  flex: none;
+  padding: 4px 10px;
+  font-size: 11px;
+}
+
+.ge-inspector__source-hint {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--ge-mono);
+  font-size: 10px;
+  color: var(--ge-faint);
+  text-align: right;
 }
 
 .ge-inspector__body {
@@ -1088,73 +1122,68 @@ body,
   font-weight: 700;
 }
 
-/* ---- node source editor (dock beside the canvas) ---- */
+/* ---- node source editor (the inspector, expanded for the selected node) ---- */
 .ge-source {
-  flex: none;
-  width: 34rem;
-  max-width: 50%;
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  border-left: 1px solid var(--ge-node-border);
-  background: #0b0d11;
 }
 
 .ge-source__head {
+  flex: none;
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 8px 14px;
-  border-bottom: 1px solid var(--ge-node-border);
+  padding: 8px 12px 0 14px;
 }
 
 .ge-source__title {
-  font-size: 12px;
+  font-size: 10px;
   font-weight: 700;
+  color: var(--ge-faint);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.7px;
 }
 
 .ge-source__sub {
   flex: 1;
-  font-size: 11px;
-  color: var(--ge-muted);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  color: var(--ge-faint);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   min-width: 0;
 }
 
-.ge-source__field {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 14px 0;
-}
-
-.ge-source__label {
-  font-size: 11px;
-  color: var(--ge-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.ge-source__select {
-  flex: 1;
-  min-width: 0;
-  padding: 4px 8px;
-  border: 1px solid var(--ge-node-border);
-  border-radius: 6px;
-  background: var(--ge-node-bg);
-  color: var(--ge-text);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
+/* The @node function being edited — the panel's real subject (type-scoped). */
+.ge-source__fn {
+  padding: 4px 14px 0;
+  font-family: var(--ge-mono);
+  font-weight: 700;
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .ge-source__file {
-  padding: 6px 14px 0;
+  padding: 2px 14px 0;
   color: var(--ge-muted);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--ge-mono);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ge-source__shared {
+  margin: 8px 14px 0;
+  padding: 5px 9px;
+  border-radius: 6px;
+  border: 1px dashed var(--ge-node-border-strong);
+  background: var(--ge-value-soft);
+  color: #f0d9a8;
   font-size: 11px;
 }
 
@@ -1203,6 +1232,8 @@ body,
 
 .ge-source__actions {
   display: flex;
+  align-items: center;
+  gap: 10px;
   justify-content: flex-end;
-  padding: 10px 14px 14px;
+  padding: 10px 14px 12px;
 }

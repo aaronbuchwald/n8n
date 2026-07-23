@@ -78,6 +78,11 @@ interface GraphViewProps {
   onSelectNode: (nodeId: string | null) => void;
   // A request (e.g. from a run-results row) to select + centre a node.
   focusRequest: FocusRequest | null;
+  // Source editing for the selected node's type, owned by the app so the
+  // Escape cascade and selection changes can close it.
+  editingSource: boolean;
+  onEditSourceChange: (open: boolean) => void;
+  onSourceSaved: () => void;
 }
 
 // mount → nodes measured → final layout applied → graph framed → visible.
@@ -91,6 +96,9 @@ function GraphCanvas({
   selectedNodeId,
   onSelectNode,
   focusRequest,
+  editingSource,
+  onEditSourceChange,
+  onSourceSaved,
 }: GraphViewProps) {
   const { nodes: initialNodes, edges: initialEdges } = useMemo(
     () => buildFlow(graph, specs),
@@ -279,6 +287,12 @@ function GraphCanvas({
     [graph, specs, selectedNodeId, runOutputs],
   );
 
+  // Several nodes may share one @node function; the source editor says so.
+  const sharedNodeCount = useMemo(
+    () => (inspected ? graph.nodes.filter((n) => n.type === inspected.typeName).length : 0),
+    [graph, inspected],
+  );
+
   return (
     <div
       ref={canvasRef}
@@ -307,11 +321,20 @@ function GraphCanvas({
         <Controls showInteractive={false} fitViewOptions={FIT_VIEW} />
         {phase === 'ready' && !inspected && (
           <Panel position="top-left" className="ge-hint">
-            Select a node to inspect its inputs &amp; outputs
+            Select a node to inspect it — and edit its source
           </Panel>
         )}
       </ReactFlow>
-      {inspected && <NodeInspector node={inspected} onClose={() => onSelectNode(null)} />}
+      {inspected && (
+        <NodeInspector
+          node={inspected}
+          sharedNodeCount={sharedNodeCount}
+          editingSource={editingSource}
+          onEditSource={onEditSourceChange}
+          onSourceSaved={onSourceSaved}
+          onClose={() => onSelectNode(null)}
+        />
+      )}
     </div>
   );
 }

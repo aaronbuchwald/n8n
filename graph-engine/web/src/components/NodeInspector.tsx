@@ -1,8 +1,16 @@
 import type { InspectedInput, InspectedNode, InputSource, ResolvedValue } from '../inspect';
 import { previewType, previewValue } from '../preview';
+import { SourceEditor } from './SourceEditor';
 
 interface NodeInspectorProps {
   node: InspectedNode;
+  /** How many canvas nodes share this node's type (>= 1). */
+  sharedNodeCount: number;
+  /** True while the inspector is expanded into the node's source editor. */
+  editingSource: boolean;
+  onEditSource: (open: boolean) => void;
+  /** A source save landed — the app refreshes specs/graph quietly. */
+  onSourceSaved: () => void;
   onClose: () => void;
 }
 
@@ -78,12 +86,22 @@ function InputRow({ input }: { input: InspectedInput }) {
 /**
  * The per-node detail panel, opened by clicking a node on the canvas. Shows
  * where every input comes from and — after a run — the concrete value that
- * flowed through each input and output.
+ * flowed through each input and output. "Edit source" expands the panel into
+ * the source editor for THIS node's `@node` function (its type), so source
+ * editing is always launched from a node instead of a global picker.
  */
-export function NodeInspector({ node, onClose }: NodeInspectorProps) {
+export function NodeInspector({
+  node,
+  sharedNodeCount,
+  editingSource,
+  onEditSource,
+  onSourceSaved,
+  onClose,
+}: NodeInspectorProps) {
+  const editing = editingSource && !node.missingSpec;
   return (
     <aside
-      className="ge-inspector"
+      className={`ge-inspector${editing ? ' ge-inspector--editing' : ''}`}
       data-testid="node-inspector"
       aria-label={`Inspect node ${node.id}`}
     >
@@ -116,6 +134,36 @@ export function NodeInspector({ node, onClose }: NodeInspectorProps) {
         </button>
       </div>
 
+      {!editing && (
+        <div className="ge-inspector__toolbar">
+          <button
+            type="button"
+            className="ge-btn ge-inspector__source-btn"
+            data-testid="inspector-edit-source"
+            disabled={node.missingSpec}
+            title={
+              node.missingSpec
+                ? 'No spec found for this node type, so there is no @node function to edit.'
+                : `Edit the @node function ${node.typeName} — the source behind this node`
+            }
+            onClick={() => onEditSource(true)}
+          >
+            {'</>'} Edit source
+          </button>
+          <span className="ge-inspector__source-hint" title={node.typeName}>
+            {node.missingSpec ? 'unknown type — no source' : node.typeName}
+          </span>
+        </div>
+      )}
+
+      {editing ? (
+        <SourceEditor
+          specId={node.typeName}
+          sharedNodeCount={sharedNodeCount}
+          onSaved={onSourceSaved}
+          onClose={() => onEditSource(false)}
+        />
+      ) : (
       <div className="ge-inspector__body">
         {node.doc && <p className="ge-inspector__doc">{node.doc}</p>}
         {node.missingSpec && (
@@ -158,6 +206,7 @@ export function NodeInspector({ node, onClose }: NodeInspectorProps) {
           ))}
         </section>
       </div>
+      )}
     </aside>
   );
 }
