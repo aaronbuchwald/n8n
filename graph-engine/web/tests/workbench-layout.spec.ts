@@ -61,6 +61,26 @@ async function runGraph(page: Page): Promise<void> {
   await expect(page.getByTestId('run-results')).toBeVisible({ timeout: 20_000 });
 }
 
+/** Our persisted slice (`ge:workbench:v1`), or null when nothing is stored. */
+async function storedLayout(
+  page: Page,
+): Promise<{ collapsed?: Record<string, boolean>; activeRightTab?: string | null } | null> {
+  return page.evaluate(() => {
+    const raw = window.localStorage.getItem('ge:workbench:v1');
+    return raw ? (JSON.parse(raw) as Record<string, unknown>) : null;
+  });
+}
+
+/** The persisted active right-dock tab id (the restore pointer). */
+async function storedActiveTab(page: Page): Promise<string | null> {
+  return (await storedLayout(page))?.activeRightTab ?? null;
+}
+
+/** Click a dock tab's tab button by tab id (the strip div wraps tab + close). */
+async function activateTab(page: Page, id: string): Promise<void> {
+  await page.getByTestId(`dock-tab-${id}`).getByRole('tab').click();
+}
+
 test('all three sashes resize their adjacent regions', async ({ page }) => {
   const external = trackExternalRequests(page);
   await bootReady(page);
@@ -125,7 +145,6 @@ test('sizes and collapsed state persist across reload', async ({ page }) => {
 
   // Widen the palette, then collapse the right dock.
   await dragHandle(page, 'sash-left', 120, 0);
-  const paletteWidth = await width(page.getByTestId('palette'));
   await page.getByTestId('collapse-right').click();
   await expect(page.getByTestId('rail-right')).toBeVisible();
 
@@ -151,6 +170,12 @@ test('sizes and collapsed state persist across reload', async ({ page }) => {
   }));
   expect(keys.ours, 'ge:workbench:v1 exists').not.toBeNull();
   expect(keys.lib, 'library autoSaveId key exists').not.toBeNull();
+
+  // Capture the reference width in the SAME collapse state the post-reload
+  // assertion runs in — collapsing the dock redistributes its freed space and
+  // nudges the palette a few px, so measuring it while the dock was still
+  // expanded compared apples to oranges. Reload restores this exact layout.
+  const paletteWidth = await width(page.getByTestId('palette'));
 
   await page.reload();
   await expect(page.locator('[data-testid="flow-canvas"][data-layout-ready="true"]')).toBeVisible({
@@ -220,6 +245,212 @@ test('boots with every region reachable', async ({ page }) => {
   await page.getByTestId('dock-tab-close-newnode').click();
   await expect(page.getByTestId('dock-tab-newnode')).toBeHidden();
   await expect(dockBody.getByTestId('new-node-panel')).toBeHidden();
+
+  expect(external, 'EXTERNAL_REQUESTS must be 0').toHaveLength(0);
+});
+
+// ─── W4: layout persistence + the reset / corrupt-fallback / width-memory set ──
+
+test('reset-layout snaps every region back to defaults without a reload', async ({ page }) => {
+  const external = trackExternalRequests(page);
+  await bootReady(page);
+
+  const palette = page.getByTestId('palette');
+  const defaultPalette = await width(palette);
+
+  // Perturb: widen the palette and collapse the right dock to its rail.
+  await dragHandle(page, 'sash-left', 140, 0);
+  expect(await width(palette)).toBeGreaterThan(defaultPalette + 40);
+  await page.getByTestId('collapse-right').click();
+  await expect(page.getByTestId('rail-right')).toBeVisible();
+
+  // Reset — the D5 affordance restores defaults in place (no reload).
+  await page.getByTestId('reset-layout').click();
+
+  await expect(page.getByTestId('rail-right')).toBeHidden(); // dock re-expanded
+  await expect(page.getByTestId('right-dock')).toBeVisible();
+  await expect
+    .poll(async () => Math.abs((await width(palette)) - defaultPalette) < 10)
+    .toBe(true);
+
+  expect(external, 'EXTERNAL_REQUESTS must be 0').toHaveLength(0);
+});
+
+test('reset clears persisted layout so a reload boots at defaults', async ({ page }) => {
+  const external = trackExternalRequests(page);
+  await bootReady(page);
+
+  const palette = page.getByTestId('palette');
+  const defaultPalette = await width(palette);
+
+  await dragHandle(page, 'sash-left', 140, 0);
+  await page.getByTestId('collapse-right').click();
+  await expect(page.getByTestId('rail-right')).toBeVisible();
+
+  // Wait until the library's debounced autoSave has flushed the modified sizes,
+  // so we know the reload has real non-default state to fall back from.
+  await expect
+    .poll(async () =>
+      page.evaluate(() =>
+        window.localStorage.getItem('react-resizable-panels:ge-workbench-main'),
+      ),
+    )
+    .not.toBeNull();
+
+  await page.getByTestId('reset-layout').click();
+  await expect(page.getByTestId('rail-right')).toBeHidden();
+
+  // Our slice is back to the default (no region collapsed). Reset removes both
+  // key families and re-commits DEFAULTS, so the persisted collapse map is clean.
+  await expect
+    .poll(async () => (await storedLayout(page))?.collapsed ?? null)
+    .toEqual({ left: false, right: false, bottom: false });
+
+  await page.reload();
+  await expect(page.locator('[data-testid="flow-canvas"][data-layout-ready="true"]')).toBeVisible({
+    timeout: 20_000,
+  });
+
+  // Defaults survived the reload: dock expanded, palette back at its default width.
+  await expect(page.getByTestId('rail-right')).toBeHidden();
+  await expect(page.getByTestId('right-dock')).toBeVisible();
+  expect(Math.abs((await width(palette)) - defaultPalette)).toBeLessThan(10);
+
+  expect(external, 'EXTERNAL_REQUESTS must be 0').toHaveLength(0);
+});
+
+test('the active dock tab is persisted and drives which tab is shown', async ({ page }) => {
+  const external = trackExternalRequests(page);
+  await bootReady(page);
+
+  // Inspector (inspector-kind) then Export (code-kind); the summoned Export tab
+  // auto-focuses (appear-detection) and its id is written to our slice.
+  await page.locator('[data-testid="spec-node"]').first().click();
+  await expect(page.getByTestId('dock-tab-inspector')).toBeVisible();
+  await page.getByTestId('export-button').click();
+  await expect(page.getByTestId('dock-tab-export')).toBeVisible();
+  const dockBody = page.getByTestId('dock-body');
+  await expect(dockBody.getByTestId('export-panel')).toBeVisible();
+  await expect.poll(() => storedActiveTab(page)).toBe('export');
+
+  // Switch to the inspector tab: persisted, and it is the rendered body.
+  await activateTab(page, 'inspector');
+  await expect(dockBody.getByTestId('node-inspector')).toBeVisible();
+  await expect(dockBody.getByTestId('export-panel')).toBeHidden();
+  await expect.poll(() => storedActiveTab(page)).toBe('inspector');
+
+  // The pointer survives a reload. The tab-owning app state (selected node,
+  // export buffer) is transient and NOT persisted, so no tab renders on boot —
+  // the dock shows its placeholder — but the restore pointer is intact for the
+  // next time that tab is present.
+  await page.reload();
+  await expect(page.locator('[data-testid="flow-canvas"][data-layout-ready="true"]')).toBeVisible({
+    timeout: 20_000,
+  });
+  await expect(page.getByTestId('dock-placeholder')).toBeVisible();
+  expect(await storedActiveTab(page)).toBe('inspector');
+
+  expect(external, 'EXTERNAL_REQUESTS must be 0').toHaveLength(0);
+});
+
+test('the dock remembers a separate width for inspector and code tab kinds', async ({ page }) => {
+  const external = trackExternalRequests(page);
+  await bootReady(page);
+  const dock = page.getByTestId('right-dock');
+
+  // One inspector-kind tab and one code-kind tab (Export).
+  await page.locator('[data-testid="spec-node"]').first().click();
+  await expect(page.getByTestId('dock-tab-inspector')).toBeVisible();
+  await page.getByTestId('export-button').click();
+  await expect(page.getByTestId('dock-tab-export')).toBeVisible();
+
+  // On the code tab, widen the dock; that width is remembered for `code`.
+  await dragHandle(page, 'sash-right', -140, 0);
+  const codeWidth = await width(dock);
+
+  // Switch to the inspector tab — the dock snaps to the narrower inspector width.
+  await activateTab(page, 'inspector');
+  await expect.poll(async () => await width(dock)).toBeLessThan(codeWidth - 40);
+  const inspectorWidth = await width(dock);
+
+  // Back to the code tab — the widened code width returns (within tolerance).
+  await activateTab(page, 'export');
+  await expect.poll(async () => Math.abs((await width(dock)) - codeWidth)).toBeLessThan(16);
+
+  // And the inspector width is stable when we return to it.
+  await activateTab(page, 'inspector');
+  await expect.poll(async () => Math.abs((await width(dock)) - inspectorWidth)).toBeLessThan(16);
+
+  expect(external, 'EXTERNAL_REQUESTS must be 0').toHaveLength(0);
+});
+
+test('a corrupt saved layout falls back to defaults instead of wedging the shell', async ({
+  page,
+}) => {
+  const external = trackExternalRequests(page);
+  // Seed junk under our versioned key BEFORE any app script runs.
+  await page.addInitScript(() => {
+    window.localStorage.setItem('ge:workbench:v1', '{not json');
+  });
+  await bootReady(page);
+
+  // Boots at defaults: every region reachable, none collapsed, dock placeholder up.
+  await expect(page.getByTestId('palette')).toBeVisible();
+  await expect(page.getByTestId('flow-canvas')).toBeVisible();
+  await expect(page.getByTestId('right-dock')).toBeVisible();
+  await expect(page.getByTestId('dock-placeholder')).toBeVisible();
+  await expect(page.getByTestId('rail-left')).toBeHidden();
+  await expect(page.getByTestId('rail-right')).toBeHidden();
+
+  expect(external, 'EXTERNAL_REQUESTS must be 0').toHaveLength(0);
+});
+
+test('summoning New node behind a collapsed dock auto-reveals it', async ({ page }) => {
+  const external = trackExternalRequests(page);
+  await bootReady(page);
+
+  // Collapse the dock to its rail, then summon the New-node surface.
+  await page.getByTestId('collapse-right').click();
+  await expect(page.getByTestId('rail-right')).toBeVisible();
+
+  await page.getByTestId('new-node-button').click();
+
+  // The dock re-expands onto the summoned surface, which is the active tab.
+  await expect(page.getByTestId('rail-right')).toBeHidden();
+  await expect(page.getByTestId('right-dock')).toBeVisible();
+  const dockBody = page.getByTestId('dock-body');
+  await expect(page.getByTestId('dock-tab-newnode')).toBeVisible();
+  await expect(dockBody.getByTestId('new-node-panel')).toBeVisible();
+  await expect(page.getByTestId('dock-tab-newnode').getByRole('tab')).toHaveAttribute(
+    'aria-selected',
+    'true',
+  );
+
+  // Closing it via its × clears the tab and its body.
+  await page.getByTestId('dock-tab-close-newnode').click();
+  await expect(page.getByTestId('dock-tab-newnode')).toBeHidden();
+  await expect(dockBody.getByTestId('new-node-panel')).toBeHidden();
+
+  expect(external, 'EXTERNAL_REQUESTS must be 0').toHaveLength(0);
+});
+
+test('the collapsed bottom rail shows the executed-node count badge', async ({ page }) => {
+  const external = trackExternalRequests(page);
+  await bootReady(page);
+  await runGraph(page);
+
+  // Read the executed-node count from the run-results summary ("N nodes executed").
+  const summary = (await page.locator('.ge-results__sub').first().textContent()) ?? '';
+  const expected = Number(/(\d+)\s+nodes executed/.exec(summary)?.[1]);
+  expect(expected, 'run summary reports an executed-node count').toBeGreaterThan(0);
+
+  // Collapse the bottom region; its rail carries that same count as a badge.
+  await page.getByTestId('collapse-bottom').click();
+  const rail = page.getByTestId('rail-bottom');
+  await expect(rail).toBeVisible();
+  const badge = rail.locator('.ge-rail__badge');
+  await expect(badge).toBeVisible();
+  expect(Number((await badge.textContent())?.trim())).toBe(expected);
 
   expect(external, 'EXTERNAL_REQUESTS must be 0').toHaveLength(0);
 });
