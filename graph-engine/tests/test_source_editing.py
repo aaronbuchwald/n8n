@@ -148,6 +148,12 @@ def test_put_source_edits_the_real_file_and_run_uses_the_new_body(sandbox: Sandb
     # A fresh GET reflects the file, and /api/run executes the new body.
     assert sandbox.client.get(f"/api/source/{spec_id}").json()["source"] == new_source
     graph = sandbox.client.get("/api/graph").json()
+    # put_source now re-projects the served graph from source truth (ADR 0008
+    # G3), so the CSV literal is the module's relative path again — re-resolve it
+    # to this sandbox's absolute file (the fixture only patched the boot graph).
+    for node in graph["nodes"]:
+        if node["id"] == "values":
+            node["inputs"]["path"] = str(sandbox.dir / "readings.csv")
     run = sandbox.client.post("/api/run", json={"graph": graph}).json()
     assert run["errors"] == []
     assert run["outputs"]["a"]["result"] == 50.0  # 25.0 doubled
@@ -170,6 +176,36 @@ def test_put_source_signature_change_is_reintrospected(sandbox: Sandbox):
     # The palette the app serves picked it up too.
     specs = sandbox.client.get("/api/specs").json()["specs"]
     assert {i["name"] for i in specs[spec_id]["inputs"]} == {"values", "precision"}
+
+
+def test_put_source_returns_the_reprojected_graph(sandbox: Sandbox):
+    # "Writes return truth" (ADR 0002/0008 G3): PUT /api/source re-projects the
+    # graph from the rewritten module and returns it, mirroring PUT /api/graph →
+    # {graph}. Before this, the server kept serving the boot-time projection, so
+    # the client had nothing to invalidate run-derived views against.
+    spec_id = f"{sandbox.module_name}.average"
+    served_before = sandbox.client.get("/api/graph").json()
+
+    new_source = textwrap.dedent('''\
+        @node
+        def average(values: list) -> float:
+            """Mean of the values, doubled."""
+            return 2 * sum(values) / len(values)
+    ''')
+    res = sandbox.client.put(f"/api/source/{spec_id}", json={"source": new_source})
+    assert res.status_code == 200, res.text
+    body = res.json()
+
+    # The response carries the re-projected graph...
+    assert "graph" in body
+    assert {n["id"] for n in body["graph"]["nodes"]} == {"values", "t", "a", "summary"}
+    # ...and it is exactly what the server now serves (the cache was refreshed).
+    assert sandbox.client.get("/api/graph").json() == body["graph"]
+    # A body-only edit leaves the projected topology/wiring intact.
+    assert {tuple(e.values()) for e in body["graph"]["edges"]} == {
+        tuple(e.values()) for e in served_before["edges"]
+    }
+    assert body["graph"]["output"] == served_before["output"]
 
 
 def test_put_source_rejects_unparseable_source_without_writing(sandbox: Sandbox):

@@ -1,4 +1,4 @@
-import{m as o}from"./MonacoEditor-DNeMLSiz.js";import"./index-B5PBYqdb.js";/*!-----------------------------------------------------------------------------
+import{m as o}from"./MonacoEditor-br7dgdtF.js";import"./index-B8OLHZ5B.js";/*!-----------------------------------------------------------------------------
  * Copyright (c) Microsoft Corporation. All rights reserved.
  * Version: 0.52.2(404545bded1df6ffa41ea0af4e8ddb219018c6c1)
  * Released under the MIT license
