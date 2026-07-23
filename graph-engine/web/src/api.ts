@@ -81,6 +81,13 @@ function sourcePath(specId: string, graphId: GraphId): string {
     : `/api/graphs/${encodeURIComponent(graphId)}${suffix}`;
 }
 
+function statementPath(nodeId: string, graphId: GraphId): string {
+  const suffix = `/nodes/${encodeURIComponent(nodeId)}/statement`;
+  return graphId === null
+    ? `/api${suffix}`
+    : `/api/graphs/${encodeURIComponent(graphId)}${suffix}`;
+}
+
 async function getJson<T>(path: string): Promise<T> {
   let res: Response;
   try {
@@ -259,6 +266,27 @@ export async function fetchWorkspace(): Promise<WorkspaceInfo> {
 /** The exact source of one @node function (`GET /api/source/{spec_id}`). */
 export async function fetchSource(specId: string, graphId: GraphId = null): Promise<SourceInfo> {
   return getJson<SourceInfo>(sourcePath(specId, graphId));
+}
+
+/**
+ * A node's actual `@main` call-site statement as the real file bytes (ADR 0015
+ * D2 — `GET .../nodes/{node_id}/statement`). Read-only: the instance panel shows
+ * it beneath the structured input editors, which remain the write path.
+ */
+export interface NodeStatement {
+  nodeId: string;
+  path: string;
+  startLine: number;
+  endLine: number;
+  source: string;
+}
+
+/** Fetch a node's read-only `@main` call-site statement (ADR 0015 D2). */
+export async function fetchNodeStatement(
+  nodeId: string,
+  graphId: GraphId = null,
+): Promise<NodeStatement> {
+  return getJson<NodeStatement>(statementPath(nodeId, graphId));
 }
 
 /** Write an edited @node def back into its real .py file (`PUT /api/source/{spec_id}`). */

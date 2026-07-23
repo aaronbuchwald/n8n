@@ -222,6 +222,34 @@ def _wiring_statements(composite: ast.FunctionDef) -> Optional[list[_Stmt]]:
     return stmts
 
 
+def node_statement_span(
+    composite: ast.FunctionDef, node_id: str
+) -> Optional[tuple[int, int]]:
+    """The 1-based inclusive line span of ``node_id``'s wiring statement, or ``None``.
+
+    Reuses the statement model the in-place write-back planner uses to address
+    each node's assignment (:func:`_wiring_statements`), so the read-only
+    call-site route (ADR 0015 D2) locates a node's ``@main`` statement the exact
+    same way a value edit's patch does. Falls back to a direct assignment scan
+    when the body isn't the clean ``target = call(...)`` shape the patch model
+    requires, so a lookup still resolves the span for the read-only view.
+    """
+    stmts = _wiring_statements(composite)
+    if stmts is not None:
+        for s in stmts:
+            if s.node_id == node_id:
+                return s.start, s.end
+    for st in composite.body:
+        if (
+            isinstance(st, ast.Assign)
+            and len(st.targets) == 1
+            and isinstance(st.targets[0], ast.Name)
+            and st.targets[0].id == node_id
+        ):
+            return st.lineno, st.end_lineno or st.lineno
+    return None
+
+
 def _wiring_span(composite: ast.FunctionDef) -> Optional[tuple[int, int]]:
     """The 1-based inclusive span of the whole wiring block (docstring excluded)."""
     body = list(composite.body)

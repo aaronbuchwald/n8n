@@ -38,7 +38,7 @@ from typing import Any, Optional
 
 from engine import EngineError, Graph, NodeRegistry, find_composite, from_composite
 
-from .writeback import compute_writeback
+from .writeback import compute_writeback, node_statement_span
 
 # The graph-engine tree — the default boundary for source writes.
 ENGINE_ROOT = Path(__file__).resolve().parents[1]
@@ -573,6 +573,43 @@ class Workspace:
                 if node["id"] in positions:
                     node["position"] = positions[node["id"]]
         return doc
+
+    # -- read-only call-site lookup (GET .../nodes/{id}/statement, ADR 0015) --
+
+    def node_statement(self, node_id: str) -> dict[str, Any]:
+        """The node's actual ``@main`` call-site statement, as real file bytes.
+
+        Read-only (ADR 0015 D2): locates the assignment whose target is
+        ``node_id`` in the composite body by AST line span — the same locator the
+        wiring write-back uses (:func:`server.writeback.node_statement_span`) — and
+        returns the true source bytes of that span (the user's own formatting,
+        multi-line literals) with the file path and line range. No mutation, no
+        module reload; the composite is reparsed from disk on every read, matching
+        the last-write-wins-with-reparse concurrency policy of the other reads.
+        """
+        path = self.module_file()
+        self._check_editable(path)
+        text = path.read_text(encoding="utf-8")
+        try:
+            composite = find_composite(ast.parse(text))
+        except EngineError as exc:
+            # Imported fine but no single @main composite to read a call site from.
+            raise SourceEditError(str(exc), status=409) from exc
+        span = node_statement_span(composite, node_id)
+        if span is None:
+            raise SourceEditError(
+                f"node {node_id!r} has no wiring statement in the composite",
+                status=404,
+            )
+        start, end = span
+        lines = text.splitlines(keepends=True)
+        return {
+            "nodeId": node_id,
+            "path": self._repo_relative(path),
+            "startLine": start,
+            "endLine": end,
+            "source": "".join(lines[start - 1 : end]),
+        }
 
     # -- write + re-import, with rollback ---------------------------------
 

@@ -883,33 +883,88 @@ body,
   color: var(--ge-text);
 }
 
-/* The per-node action strip under the header — where "Edit source" lives. */
-.ge-inspector__toolbar {
-  flex: none;
+/* ADR 0015 D2: the read-only call-site row — THIS node's real @main statement,
+   shown as file bytes with a path · Lx–Ly label beneath the input editors. */
+.ge-inspector__callsite-code {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 7px;
+  border: 1px solid var(--ge-node-border);
+  background: var(--ge-bg);
+  font-family: var(--ge-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--ge-text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.ge-inspector__callsite-loc {
+  font-family: var(--ge-mono);
+  font-size: 10px;
+  color: var(--ge-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ADR 0015 D3/D4: the "node type" section — the docstring as the type's
+   description, grouped with the "Open node definition" drill-in. Set apart from
+   the instance details above by a top rule, so instance vs definition read as
+   two distinct surfaces, never one undifferentiated panel. */
+.ge-inspector__type-section {
   display: flex;
-  align-items: center;
-  gap: 9px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--ge-node-border);
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 12px;
+  margin-top: 4px;
+  border-top: 1px solid var(--ge-node-border);
+}
+
+.ge-inspector__type-caption {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
   min-width: 0;
 }
 
-.ge-inspector__source-btn {
-  flex: none;
-  padding: 4px 10px;
-  font-size: 11px;
-}
-
-.ge-inspector__source-hint {
+.ge-inspector__type-name {
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-family: var(--ge-mono);
+  font-size: 11px;
+  color: var(--ge-muted);
+  text-align: right;
+}
+
+/* The definition drill-in: a full-width secondary button carrying the
+   shared-scope warning ON ITSELF, before entry (D3). Not the primary slot —
+   the instance details above are. */
+.ge-inspector__def-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  padding: 7px 10px;
+  text-align: left;
+}
+
+.ge-inspector__def-label {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.ge-inspector__def-sub {
   font-size: 10px;
   color: var(--ge-faint);
-  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
 }
 
 .ge-inspector__body {
