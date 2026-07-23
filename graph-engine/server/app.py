@@ -24,6 +24,8 @@ from engine import (
     NodeRegistry,
     UnknownNodeType,
     bind,
+    mint_node_id,
+    module_collision_set,
     run,
     to_python,
     validate_graph,
@@ -288,8 +290,29 @@ def create_app(
 
     @app.post("/api/graphs/validate")
     def validate(body: dict = Body(...)) -> JSONResponse:
+        """Validate a candidate graph (ADR 0011 D6).
+
+        ``mode`` (body field, default ``"run"``, backward-compatible): ``"run"``
+        runs a full ``bind`` — a required input left unwired/unset is a hard
+        error, unchanged. ``"edit"`` runs ``bind(partial=True)``: the same
+        unsatisfied-required-input case is instead collected into a ``warnings``
+        array on a 200 response, so an in-progress canvas draft validates (and
+        can be saved) while genuinely broken wiring (unknown type/socket/param,
+        double-wire, cycle, bad output) still 422s in both modes.
+        """
+        mode = body.get("mode", "run") if isinstance(body, dict) else "run"
         try:
-            bind(_graph_from(body), registry)
+            graph = _graph_from(body)
+        except EngineError as exc:
+            return JSONResponse(status_code=422, content={"ok": False, "errors": [_error_payload(exc)]})
+        if mode == "edit":
+            try:
+                bound = bind(graph, registry, partial=True)
+            except EngineError as exc:
+                return JSONResponse(status_code=422, content={"ok": False, "errors": [_error_payload(exc)]})
+            return JSONResponse(status_code=200, content={"ok": True, "warnings": bound.incomplete})
+        try:
+            bind(graph, registry)
         except EngineError as exc:
             return JSONResponse(status_code=422, content={"ok": False, "errors": [_error_payload(exc)]})
         return JSONResponse(status_code=200, content={"ok": True})
@@ -363,8 +386,64 @@ def create_app(
             return JSONResponse(status_code=exc.status, content={"message": str(exc)})
         except EngineError as exc:
             raise HTTPException(status_code=422, detail=[_error_payload(exc)]) from exc
+        # W2->W3 seam: `save_graph` parks a structural-fallback warning at
+        # `graph["writeback"]` (server/workspace.py) because the lossy path is
+        # the only one that needs to say anything beyond the projection itself.
+        # Lift it onto the envelope as a top-level field instead of leaving it on
+        # `graph`, so a lossless save's `graph` is byte-for-byte what GET serves
+        # (`GET == PUT` holds even when a warning rides alongside it).
+        warning = saved.pop("writeback", None)
         state["graph"] = saved
-        return JSONResponse(status_code=200, content={"graph": saved})
+        envelope: dict[str, Any] = {"graph": saved}
+        if warning is not None:
+            envelope["writeback"] = warning
+        return JSONResponse(status_code=200, content=envelope)
+
+    def _mint_id_impl(ws: Workspace, body: dict) -> JSONResponse:
+        """``POST .../mint-id {"type": "<spec id>"} -> {"id": "<node id>"}`` (HD4).
+
+        Server-assisted because the collision set that must be dodged lives in
+        the *module* (its call names, the composite's own parameter names, and
+        builtins it references) — data the client doesn't have. Re-checked at
+        save time (``save_graph`` -> ``wiring_lines``) as a backstop, so a stale
+        mint (e.g. a concurrent save) still fails loudly rather than silently
+        shadowing something.
+        """
+        node_type = body.get("type") if isinstance(body, dict) else None
+        if not isinstance(node_type, str) or not node_type:
+            return JSONResponse(
+                status_code=400,
+                content={"message": "body must be {\"type\": \"<registered spec id>\"}"},
+            )
+        try:
+            spec = registry.spec(node_type)
+        except UnknownNodeType:
+            return JSONResponse(
+                status_code=404, content={"message": f"spec {node_type!r} is not registered"}
+            )
+        try:
+            source = ws.module_file().read_text(encoding="utf-8")
+            doc = ws.parse_graph()
+        except SourceEditError as exc:
+            return JSONResponse(status_code=exc.status, content={"message": str(exc)})
+        except EngineError as exc:
+            # Imported fine but no longer projects to a graph (e.g. two @main
+            # defs) — nothing sane to mint against.
+            return JSONResponse(status_code=409, content={"message": str(exc)})
+        node_ids = [n["id"] for n in doc["nodes"]]
+        # A type from another module isn't imported yet, so its future call name
+        # (the plain qualname write-back would import it under; see
+        # server/writeback.py's `_aliases`) isn't in the source's collision set
+        # yet — reserve it so the minted id never shadows its own import.
+        extra = () if spec["module"] == ws.module_name else (spec["qualname"],)
+        try:
+            collisions = module_collision_set(
+                source, ws.module_name, node_ids=node_ids, extra=extra
+            )
+        except EngineError as exc:
+            return JSONResponse(status_code=409, content={"message": str(exc)})
+        minted = mint_node_id(spec["name"], collisions)
+        return JSONResponse(status_code=200, content={"id": minted})
 
     def _entry_doc(ws: Workspace):
         """A lazy graph-doc getter for `_put_source_impl` (reparse, never cache)."""
@@ -389,6 +468,11 @@ def create_app(
     def put_entry_graph(entry_id: str, body: dict = Body(...)) -> JSONResponse:
         ws, _ = _entry_slot(entry_id)
         return _put_graph_impl(ws, body)
+
+    @app.post("/api/graphs/{entry_id}/mint-id")
+    def mint_entry_node_id(entry_id: str, body: dict = Body(...)) -> JSONResponse:
+        ws, _ = _entry_slot(entry_id)
+        return _mint_id_impl(ws, body)
 
     @app.get("/api/source/{spec_id}")
     def get_source(spec_id: str) -> JSONResponse:
@@ -421,6 +505,14 @@ def create_app(
         if ws is None:
             return _no_workspace()
         return _put_graph_impl(ws, body)
+
+    @app.post("/api/graph/mint-id")
+    def mint_node_id_route(body: dict = Body(...)) -> JSONResponse:
+        slot = _default_slot()
+        ws = slot[0] if slot is not None else workspace
+        if ws is None:
+            return _no_workspace()
+        return _mint_id_impl(ws, body)
 
     # Serve the built SPA at "/" — mounted LAST so /api/* routes win. When the
     # bundle isn't built we mount nothing: the API stays live and "/" simply
