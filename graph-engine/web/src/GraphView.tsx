@@ -11,18 +11,34 @@ import {
   useNodesInitialized,
   useNodesState,
   useReactFlow,
+  type Connection,
+  type Edge,
+  type IsValidConnection,
+  type Node,
   type NodeMouseHandler,
   type NodeTypes,
+  type OnNodeDrag,
+  type OnReconnect,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 
-import { buildFlow, layoutFlowNodes } from './buildGraph';
+import { buildFlow, layoutFlowNodes, pinnedIdsOf } from './buildGraph';
 import { NodeInspector } from './components/NodeInspector';
+import { PALETTE_SPEC_MIME } from './components/Palette';
 import { SpecNode } from './components/SpecNode';
 import { inspectNode } from './inspect';
-import { selectErrorNodeId, selectRunIsStale } from './store/sync';
+import {
+  connectEdge,
+  createNode,
+  deleteElements,
+  reconnectEdge,
+  selectErrorNodeId,
+  selectRunIsStale,
+  setWritebackWarning,
+} from './store/sync';
+import { queuePositionSave } from './store/positions';
 import { useSyncSelector } from './store/useSyncSelector';
-import type { SpecNodeData } from './types';
+import type { GraphEdge, SpecNodeData } from './types';
 
 const nodeTypes: NodeTypes = { specNode: SpecNode };
 
@@ -76,6 +92,46 @@ function structureKeyOf(nodes: { id: string; data: SpecNodeData }[], edges: { id
 // horizontally and take soft right-angle turns between layers.
 const defaultEdgeOptions = { type: 'smoothstep' as const, pathOptions: { borderRadius: 14 } };
 
+// Handle-id namespaces (see buildGraph.ts inHandle/outHandle).
+const OUT_PREFIX = 'out:';
+const IN_PREFIX = 'in:';
+
+/**
+ * Map ReactFlow connection endpoints back onto the engine's edge shape. Null
+ * when the gesture didn't land on namespaced socket handles (never on a
+ * spec'd node; a spec-less node's generic handles carry no socket name).
+ */
+function graphEdgeOf(
+  source: string | null | undefined,
+  sourceHandle: string | null | undefined,
+  target: string | null | undefined,
+  targetHandle: string | null | undefined,
+): GraphEdge | null {
+  if (!source || !target) return null;
+  if (!sourceHandle?.startsWith(OUT_PREFIX) || !targetHandle?.startsWith(IN_PREFIX)) return null;
+  return {
+    source,
+    sourceOutput: sourceHandle.slice(OUT_PREFIX.length),
+    target,
+    targetInput: targetHandle.slice(IN_PREFIX.length),
+  };
+}
+
+function sameGraphEdge(a: GraphEdge, b: GraphEdge): boolean {
+  return (
+    a.source === b.source &&
+    a.sourceOutput === b.sourceOutput &&
+    a.target === b.target &&
+    a.targetInput === b.targetInput
+  );
+}
+
+const EMPTY_WIRING: string[] = [];
+
+function sameStrings(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((x, i) => x === b[i]);
+}
+
 export interface FocusRequest {
   nodeId: string;
   /** Distinguishes repeated requests for the same node. */
@@ -117,11 +173,17 @@ function GraphCanvas({
   const runOutputs = useSyncSelector((s) => s.run?.outputs ?? null);
   const runIsStale = useSyncSelector(selectRunIsStale);
   const errorNodeId = useSyncSelector(selectErrorNodeId);
+  const incomplete = useSyncSelector((s) => s.incomplete);
+  const writebackWarning = useSyncSelector((s) => s.writebackWarning);
 
   const { nodes: initialNodes, edges: initialEdges } = useMemo(
     () => (graph ? buildFlow(graph, specs) : { nodes: [], edges: [] }),
     [graph, specs],
   );
+
+  // The sidecar-pinned set (HD3): nodes whose served position is authoritative.
+  // The measured relayout below re-places only the rest, relative to these.
+  const pinnedIds = useMemo(() => (graph ? pinnedIdsOf(graph) : new Set<string>()), [graph]);
 
   // Controlled state so ReactFlow can sync node dimensions back (minimap) and
   // apply drag position changes. Without change handlers both are inert.
@@ -129,16 +191,23 @@ function GraphCanvas({
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
 
   const nodesInitialized = useNodesInitialized();
-  const { fitView, getZoom } = useReactFlow();
+  const { fitView, getZoom, screenToFlowPosition } = useReactFlow();
   const [phase, setPhase] = useState<LayoutPhase>('measuring');
   const canvasRef = useRef<HTMLDivElement>(null);
+  // Latest edges for callbacks that must not re-bind per edge change.
+  const edgesRef = useRef(edges);
+  edgesRef.current = edges;
 
   // When the served graph changes after a widget commit + quiet reload, fold the
   // freshly derived node DATA (bound literals, wiring, output flag) onto the
   // existing nodes IN PLACE — preserving each node's measured size and dragged
-  // position, and NOT re-running the measuring→framing→fit pipeline. Only a real
-  // topology change (nodes added/removed or rewired) re-seeds and re-frames, so a
-  // literal edit feels instant and local. buildFlow already recomputed
+  // position, and NOT re-running the measuring→framing→fit pipeline. A real
+  // topology change (nodes added/removed or rewired) re-seeds nodes and edges —
+  // but on a live, already-framed canvas it KEEPS each surviving node's current
+  // geometry and the viewport (11-W4: a connect/delete/drop must not yank the
+  // view or undo an in-flight drag); only the initial mount runs the full
+  // measuring→framing→fit pipeline (App remounts this component per entry
+  // switch, so mount === new graph). buildFlow already recomputed
   // initialNodes/initialEdges on the [graph, specs] change that triggered this.
   const structureKey = structureKeyOf(initialNodes, initialEdges);
   const structureRef = useRef(structureKey);
@@ -154,32 +223,54 @@ function GraphCanvas({
             ...built.data,
             result: n.data.result,
             hasError: n.data.hasError,
+            needsWiring: n.data.needsWiring,
           };
           return sameGraphData(n.data, data) ? n : { ...n, data };
         }),
       );
       return;
     }
-    // Real structural change: adopt the freshly laid-out graph and re-frame it.
     structureRef.current = structureKey;
-    setNodes(initialNodes);
+    // Structural change on a live canvas: merge fresh data/topology onto the
+    // current geometry. New nodes are born at their built position (a palette
+    // drop is pinned at the drop point; an auto-placed node sits near its
+    // neighbours) — no re-frame, the user keeps their viewport.
+    setNodes((current) => {
+      const byId = new Map(current.map((n) => [n.id, n]));
+      return initialNodes.map((built) => {
+        const cur = byId.get(built.id);
+        if (!cur) return built;
+        return {
+          ...built,
+          position: cur.position,
+          selected: cur.selected,
+          measured: cur.measured,
+          data: {
+            ...built.data,
+            result: cur.data.result,
+            hasError: cur.data.hasError,
+            needsWiring: cur.data.needsWiring,
+          },
+        };
+      });
+    });
     setEdges(initialEdges);
-    setPhase('measuring');
   }, [structureKey, initialNodes, initialEdges, setNodes, setEdges]);
 
   // The initial layout uses estimated node sizes. Once ReactFlow has measured
   // the real DOM sizes, re-run the layout with them — targeting the actual
   // canvas aspect so row wrapping keeps the fitted zoom readable — then frame
-  // the whole graph. The canvas stays invisible (CSS keyed on
-  // data-layout-ready) until framing is done, so the user never sees the
-  // pre-measurement arrangement.
+  // the whole graph. Sidecar-pinned nodes are never moved (HD3): only the
+  // `position: null` remainder is re-placed around them. The canvas stays
+  // invisible (CSS keyed on data-layout-ready) until framing is done, so the
+  // user never sees the pre-measurement arrangement.
   useEffect(() => {
     if (phase !== 'measuring' || !nodesInitialized) return;
     const el = canvasRef.current;
     const aspect = el && el.clientHeight > 0 ? el.clientWidth / el.clientHeight : undefined;
-    setNodes((current) => layoutFlowNodes(current, initialEdges, aspect));
+    setNodes((current) => layoutFlowNodes(current, initialEdges, aspect, pinnedIds));
     setPhase('framing');
-  }, [phase, nodesInitialized, setNodes, initialEdges]);
+  }, [phase, nodesInitialized, setNodes, initialEdges, pinnedIds]);
 
   useEffect(() => {
     if (phase !== 'framing') return;
@@ -257,18 +348,37 @@ function GraphCanvas({
     };
   }, [fitView, getZoom]);
 
-  // Fold the latest run's outputs + error into each node's data (positions and
-  // measured dimensions are preserved — we only patch the result fields).
+  // The store's edit-mode validation, regrouped per node (the on-canvas
+  // "needs wiring" badge source — ADR 0011 D6, mirrored from W5's palette strip).
+  const needsWiringByNode = useMemo(() => {
+    const byNode = new Map<string, string[]>();
+    for (const warning of incomplete) {
+      const inputs = byNode.get(warning.nodeId);
+      if (inputs) inputs.push(warning.input);
+      else byNode.set(warning.nodeId, [warning.input]);
+    }
+    return byNode;
+  }, [incomplete]);
+
+  // Fold the latest run's outputs + error + needs-wiring badge into each node's
+  // data (positions and measured dimensions are preserved — data patch only).
   useEffect(() => {
     setNodes((current) =>
       current.map((n) => {
         const result = runOutputs ? (runOutputs[n.id] ?? null) : null;
         const hasError = errorNodeId === n.id;
-        if (n.data.result === result && n.data.hasError === hasError) return n;
-        return { ...n, data: { ...n.data, result, hasError } };
+        const needsWiring = needsWiringByNode.get(n.id) ?? EMPTY_WIRING;
+        if (
+          n.data.result === result &&
+          n.data.hasError === hasError &&
+          sameStrings(n.data.needsWiring, needsWiring)
+        ) {
+          return n;
+        }
+        return { ...n, data: { ...n.data, result, hasError, needsWiring } };
       }),
     );
-  }, [runOutputs, errorNodeId, setNodes]);
+  }, [runOutputs, errorNodeId, needsWiringByNode, setNodes]);
 
   // Clicking a node opens the inspector for it; clicking the pane closes it.
   // A click that lands on a widget chip/editor is editing, not inspecting —
@@ -300,6 +410,127 @@ function GraphCanvas({
     void fitView({ nodes: [{ id: nodeId }], padding: 0.5, maxZoom: 1, duration: 300 });
   }, [focusRequest, fitView, setNodes]);
 
+  // --- structural editing (ADR 0011 W4) — every gesture routes through the
+  // --- store's actions; this component never mutates graph state itself.
+
+  // Client-side pre-check during the drag (D6): reject self-loops and
+  // connections that would close a cycle, so the connection line refuses the
+  // drop. The server stays the authority on the completed graph — anything
+  // that slips through is rejected by the save and reverted by the queue.
+  const isValidConnection: IsValidConnection = useCallback((conn) => {
+    const { source, target } = conn;
+    if (!source || !target || source === target) return false;
+    const adjacency = new Map<string, string[]>();
+    for (const e of edgesRef.current) {
+      const targets = adjacency.get(e.source);
+      if (targets) targets.push(e.target);
+      else adjacency.set(e.source, [e.target]);
+    }
+    // A cycle would exist iff `source` is already reachable from `target`.
+    const stack = [target];
+    const seen = new Set<string>();
+    while (stack.length > 0) {
+      const current = stack.pop();
+      if (current === undefined) break;
+      if (current === source) return false;
+      if (seen.has(current)) continue;
+      seen.add(current);
+      for (const next of adjacency.get(current) ?? []) stack.push(next);
+    }
+    return true;
+  }, []);
+
+  // A completed connect: into the store (optimistic overlay → validate-on-
+  // connect → single-flight save). Dropping onto an occupied input replaces
+  // the existing edge (D5) inside the store's overlay composition.
+  const onConnect = useCallback((connection: Connection) => {
+    const edge = graphEdgeOf(
+      connection.source,
+      connection.sourceHandle,
+      connection.target,
+      connection.targetHandle,
+    );
+    if (edge) connectEdge(edge);
+  }, []);
+
+  // Dragging an edge end to a new socket: delete + add in one gesture, one save.
+  const onReconnect: OnReconnect = useCallback((oldEdge, connection) => {
+    const from = graphEdgeOf(oldEdge.source, oldEdge.sourceHandle, oldEdge.target, oldEdge.targetHandle);
+    const to = graphEdgeOf(
+      connection.source,
+      connection.sourceHandle,
+      connection.target,
+      connection.targetHandle,
+    );
+    if (!from || !to || sameGraphEdge(from, to)) return;
+    reconnectEdge(from, to);
+  }, []);
+
+  // Delete (keyboard or programmatic): one store mutation for the whole
+  // selection; node removals cascade their edges in the store (D4).
+  const onDelete = useCallback(
+    ({ nodes: deletedNodes, edges: deletedEdges }: { nodes: Node[]; edges: Edge[] }) => {
+      const graphEdges: GraphEdge[] = [];
+      for (const e of deletedEdges) {
+        const edge = graphEdgeOf(e.source, e.sourceHandle, e.target, e.targetHandle);
+        if (edge) graphEdges.push(edge);
+      }
+      deleteElements(
+        deletedNodes.map((n) => n.id),
+        graphEdges,
+      );
+      if (deletedNodes.some((n) => n.id === selectedNodeId)) onSelectNode(null);
+    },
+    [selectedNodeId, onSelectNode],
+  );
+
+  // Drag-to-reposition: the debounced, sidecar-only, rev-neutral position save
+  // (ADR 0008 position-save note) — NEVER the source queue, never a .py diff.
+  const onNodeDragStop: OnNodeDrag<Node<SpecNodeData>> = useCallback((_event, _node, dragged) => {
+    for (const n of dragged) queuePositionSave(n.id, n.position);
+  }, []);
+
+  // Drop from the palette (the W5→W4 contract): a dropped node is born pinned
+  // at the drop point — `createNode(type, dropPosition)`.
+  const onDragOver = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+    if (!event.dataTransfer.types.includes(PALETTE_SPEC_MIME)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'copy';
+  }, []);
+  const onDrop = useCallback(
+    (event: React.DragEvent<HTMLDivElement>) => {
+      const specId = event.dataTransfer.getData(PALETTE_SPEC_MIME);
+      if (!specId) return;
+      event.preventDefault();
+      const position = screenToFlowPosition({ x: event.clientX, y: event.clientY });
+      // A mint failure is already surfaced on the store's writeError banner.
+      void createNode(specId, position).catch(() => undefined);
+    },
+    [screenToFlowPosition],
+  );
+
+  // "Tidy layout" (HD3): the full auto-layout over EVERYTHING, persisted — a
+  // tidy you can lose on reload isn't tidy (open confirmation 5).
+  const onTidyLayout = useCallback(() => {
+    const el = canvasRef.current;
+    const aspect = el && el.clientHeight > 0 ? el.clientWidth / el.clientHeight : undefined;
+    const laidOut = layoutFlowNodes(nodes, edges, aspect);
+    setNodes(laidOut);
+    for (const n of laidOut) queuePositionSave(n.id, n.position);
+    // Two frames so ReactFlow ingests the new positions before framing them.
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => void fitView(FIT_VIEW));
+    });
+  }, [nodes, edges, setNodes, fitView]);
+
+  // The structural-save fallback warning (HD2 §4) auto-dismisses like the
+  // write-error banner, but slower — it says real content was normalized.
+  useEffect(() => {
+    if (!writebackWarning) return;
+    const timer = window.setTimeout(() => setWritebackWarning(null), 10_000);
+    return () => window.clearTimeout(timer);
+  }, [writebackWarning]);
+
   const inspected = useMemo(
     () =>
       graph && selectedNodeId
@@ -321,6 +552,8 @@ function GraphCanvas({
       data-testid="flow-canvas"
       data-layout-ready={phase === 'ready'}
       data-run-stale={runIsStale ? 'true' : undefined}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
     >
       <ReactFlow
         nodes={nodes}
@@ -329,21 +562,49 @@ function GraphCanvas({
         onEdgesChange={onEdgesChange}
         onNodeClick={onNodeClick}
         onPaneClick={onPaneClick}
+        onConnect={onConnect}
+        onReconnect={onReconnect}
+        onDelete={onDelete}
+        onNodeDragStop={onNodeDragStop}
+        isValidConnection={isValidConnection}
+        deleteKeyCode={['Backspace', 'Delete']}
         nodeTypes={nodeTypes}
         defaultEdgeOptions={defaultEdgeOptions}
         colorMode="dark"
         minZoom={0.1}
-        nodesConnectable={false}
-        edgesFocusable={false}
         proOptions={{ hideAttribution: true }}
       >
         <Background variant={BackgroundVariant.Dots} gap={28} size={1.4} />
         <MiniMap pannable zoomable />
         {/* Same fit options as the app's own framing, so both fits agree. */}
         <Controls showInteractive={false} fitViewOptions={FIT_VIEW} />
+        <Panel position="top-right" className="ge-canvas-tools">
+          <button
+            type="button"
+            className="ge-btn"
+            data-testid="tidy-layout"
+            title="Auto-arrange every node and save the layout"
+            onClick={onTidyLayout}
+          >
+            Tidy layout
+          </button>
+        </Panel>
+        {writebackWarning && (
+          <Panel position="top-center" className="ge-writeback-warning" role="status">
+            <span data-testid="writeback-warning">{writebackWarning.message}</span>
+            <button
+              type="button"
+              className="ge-btn ge-writeback-warning__dismiss"
+              data-testid="writeback-warning-dismiss"
+              onClick={() => setWritebackWarning(null)}
+            >
+              dismiss
+            </button>
+          </Panel>
+        )}
         {phase === 'ready' && !inspected && (
           <Panel position="top-left" className="ge-hint">
-            Select a node to inspect it — and edit its source
+            Select a node to inspect it — drag, wire and delete to edit the graph
           </Panel>
         )}
       </ReactFlow>

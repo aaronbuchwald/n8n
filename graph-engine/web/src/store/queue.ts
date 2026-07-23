@@ -16,7 +16,7 @@
 //   * rejection reverts — a failed PUT drops the overlay entry rather than
 //     patching state, so a rejected value is never left on screen (never stuck).
 
-import { getState, ingestGraph, rejectWrite, setWriteError } from './sync';
+import { getState, ingestGraph, rejectWrite, setWriteError, setWritebackWarning } from './sync';
 import { saveGraph } from '../api';
 
 let inflight = false;
@@ -60,7 +60,13 @@ export async function pump(): Promise<void> {
     // already reset `pending`/`graph` for the new one, so a stale response here
     // must never land on top of it (it belongs to an entry we've navigated away
     // from, not the one now on screen).
-    if (getState().graphId === graphId) ingestGraph(result.graph, seqs);
+    if (getState().graphId === graphId) {
+      ingestGraph(result.graph, seqs);
+      // ADR 0011 HD2 §4 — a structural save that fell back to regenerating the
+      // wiring block rides a top-level `writeback` warning on the envelope;
+      // surface it (and clear a stale one after a clean save).
+      setWritebackWarning(result.writeback ?? null);
+    }
   } catch (err: unknown) {
     if (getState().graphId === graphId) {
       for (const seq of seqs) rejectWrite(seq); // overlay dropped → instant revert to truth

@@ -53,6 +53,141 @@ const DEFAULT_NODE_GAP = 44;
 const DEFAULT_ROW_GAP = 96;
 const DEFAULT_TARGET_ASPECT = 16 / 9;
 
+/**
+ * Place only the UNPINNED nodes of a partially-pinned graph (ADR 0011 HD3:
+ * sidecar-authoritative positions, auto-layout as the fallback for
+ * `position: null` nodes — *relative to the pinned ones*, near their upstream
+ * nodes). Pinned nodes are never moved; the returned map contains positions
+ * for the unpinned nodes only.
+ *
+ * Strategy, per unpinned node in placement waves:
+ *  - with placed predecessors: just right of its rightmost predecessor, at the
+ *    mean of their vertical centres ("define it where its inputs exist");
+ *  - otherwise with placed successors: just left of its leftmost successor;
+ *  - otherwise (no placed neighbours): stacked below the occupied bounding box.
+ * Every candidate is nudged downward until it overlaps nothing already placed.
+ */
+export function placeUnpinned(
+  nodes: LayoutNode[],
+  edges: LayoutEdge[],
+  pinned: ReadonlyMap<string, LayoutPoint>,
+  options: LayoutOptions = {},
+): Map<string, LayoutPoint> {
+  const layerGap = options.layerGap ?? DEFAULT_LAYER_GAP;
+  const nodeGap = options.nodeGap ?? DEFAULT_NODE_GAP;
+
+  const size = new Map(nodes.map((n) => [n.id, n]));
+  const placed = new Map<string, LayoutPoint>();
+  for (const [id, p] of pinned) if (size.has(id)) placed.set(id, p);
+
+  const preds = new Map<string, string[]>();
+  const succs = new Map<string, string[]>();
+  for (const n of nodes) {
+    preds.set(n.id, []);
+    succs.set(n.id, []);
+  }
+  for (const e of edges) {
+    if (!size.has(e.source) || !size.has(e.target) || e.source === e.target) continue;
+    preds.get(e.target)?.push(e.source);
+    succs.get(e.source)?.push(e.target);
+  }
+
+  const overlaps = (id: string, at: LayoutPoint): LayoutNode | null => {
+    const n = size.get(id);
+    if (!n) return null;
+    for (const [otherId, p] of placed) {
+      const o = size.get(otherId);
+      if (!o) continue;
+      const clear =
+        at.x + n.width + nodeGap <= p.x ||
+        p.x + o.width + nodeGap <= at.x ||
+        at.y + n.height + nodeGap <= p.y ||
+        p.y + o.height + nodeGap <= at.y;
+      if (!clear) return o;
+    }
+    return null;
+  };
+
+  /** Drop the candidate downward until it collides with nothing placed. */
+  const settle = (id: string, at: LayoutPoint): LayoutPoint => {
+    const spot = { ...at };
+    for (let guard = 0; guard < nodes.length + pinned.size + 8; guard++) {
+      const hit = overlaps(id, spot);
+      if (!hit) break;
+      const hitPos = placed.get(hit.id);
+      spot.y = (hitPos?.y ?? spot.y) + hit.height + nodeGap;
+    }
+    return spot;
+  };
+
+  const result = new Map<string, LayoutPoint>();
+  const unplaced = nodes.filter((n) => !placed.has(n.id)).map((n) => n.id);
+
+  // Waves: place anything with a placed neighbour until no progress remains.
+  let progressed = true;
+  while (progressed && unplaced.length > 0) {
+    progressed = false;
+    for (let i = 0; i < unplaced.length; i++) {
+      const id = unplaced[i];
+      const n = size.get(id);
+      if (!n) continue;
+      const placedPreds = (preds.get(id) ?? []).filter((p) => placed.has(p));
+      const placedSuccs = (succs.get(id) ?? []).filter((s) => placed.has(s));
+      let candidate: LayoutPoint | null = null;
+      if (placedPreds.length > 0) {
+        const x = Math.max(
+          ...placedPreds.map((p) => (placed.get(p)?.x ?? 0) + (size.get(p)?.width ?? 0)),
+        );
+        const y =
+          placedPreds.reduce(
+            (sum, p) => sum + (placed.get(p)?.y ?? 0) + (size.get(p)?.height ?? 0) / 2,
+            0,
+          ) / placedPreds.length;
+        candidate = { x: x + layerGap, y: y - n.height / 2 };
+      } else if (placedSuccs.length > 0) {
+        const x = Math.min(...placedSuccs.map((s) => placed.get(s)?.x ?? 0));
+        const y =
+          placedSuccs.reduce(
+            (sum, s) => sum + (placed.get(s)?.y ?? 0) + (size.get(s)?.height ?? 0) / 2,
+            0,
+          ) / placedSuccs.length;
+        candidate = { x: x - layerGap - n.width, y: y - n.height / 2 };
+      }
+      if (!candidate) continue;
+      const spot = settle(id, candidate);
+      placed.set(id, spot);
+      result.set(id, spot);
+      unplaced.splice(i, 1);
+      i--;
+      progressed = true;
+    }
+  }
+
+  // Islands (no placed neighbours at any point): stack below everything.
+  if (unplaced.length > 0) {
+    let left = 0;
+    let bottom = 0;
+    if (placed.size > 0) {
+      left = Math.min(...[...placed.entries()].map(([, p]) => p.x));
+      bottom = Math.max(
+        ...[...placed.entries()].map(([id, p]) => p.y + (size.get(id)?.height ?? 0)),
+      );
+      bottom += DEFAULT_ROW_GAP;
+    }
+    let y = bottom;
+    for (const id of unplaced) {
+      const n = size.get(id);
+      if (!n) continue;
+      const spot = settle(id, { x: left, y });
+      placed.set(id, spot);
+      result.set(id, spot);
+      y = spot.y + n.height + nodeGap;
+    }
+  }
+
+  return result;
+}
+
 /** Top-left positions for each node, keyed by node id. */
 export function computeLayout(
   nodes: LayoutNode[],

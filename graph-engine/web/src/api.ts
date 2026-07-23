@@ -199,8 +199,22 @@ export interface SaveSourceResult extends SourceInfo {
   graph?: GraphDoc;
 }
 
+/**
+ * The structured, UI-showable warning `PUT /api/graph` rides on its envelope
+ * when a structural edit could not be applied line-by-line and the wiring
+ * block was regenerated (ADR 0011 HD2 §4 — "never silent in the UI").
+ */
+export interface WritebackWarning {
+  code: string;
+  message: string;
+  droppedComments?: boolean;
+  reason?: string;
+}
+
 export interface SaveGraphResult {
   graph: GraphDoc; // re-parsed from the rewritten module (the round-trip proof)
+  // Present only on the lossy block-regen fallback; the canvas surfaces it.
+  writeback?: WritebackWarning;
 }
 
 /** PUT/POST a JSON payload; a non-2xx `{message}` (or `{detail}`) rejects with it. */

@@ -26,7 +26,7 @@ export default defineConfig({
     {
       name: 'chromium',
       use: { ...devices['Desktop Chrome'] },
-      testIgnore: /palette\.spec\.ts/,
+      testIgnore: [/server-mount\.spec\.ts/, /palette\.spec\.ts/, /canvas-editing\.spec\.ts/],
     },
     {
       // The palette create-flow spec REALLY rewrites the demo module (ADR 0011
@@ -38,6 +38,16 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'] },
       testMatch: /palette\.spec\.ts/,
       dependencies: ['chromium'],
+    },
+    {
+      // Canvas structural editing (ADR 0011 11-W4) mutates the demo module,
+      // its layout sidecar, and asserts byte-level .py stability — it must own
+      // the workspace alone. Serial within the file; sequenced last.
+      // Run alone with: --project=editing --no-deps
+      name: 'editing',
+      use: { ...devices['Desktop Chrome'] },
+      testMatch: /canvas-editing\.spec\.ts/,
+      dependencies: ['palette'],
     },
   ],
   // Boot the LIVE stack the app renders from:
