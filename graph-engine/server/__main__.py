@@ -31,11 +31,12 @@ import importlib
 import sys
 import threading
 import webbrowser
+from pathlib import Path
 
 import uvicorn
 
 from .app import WEB_DIST, create_app
-from .demo import DEFAULT_EXAMPLE, EXAMPLES, example_dir, load_graph, make_workspace
+from .entries import DEFAULT_EXAMPLE, EXAMPLES_ROOT, EntryCatalog
 
 
 def view_url(host: str, port: int) -> str:
@@ -70,8 +71,18 @@ def main() -> None:
     parser.add_argument(
         "--example",
         default=DEFAULT_EXAMPLE,
-        choices=sorted(EXAMPLES),
-        help="which bundled program to serve + display (default: %(default)s)",
+        help="the DEFAULT entry point (what the UI opens first and the unscoped "
+        "/api/graph aliases serve); every discovered entry is served regardless "
+        "(default: %(default)s)",
+    )
+    parser.add_argument(
+        "--entries",
+        action="append",
+        default=[],
+        type=Path,
+        metavar="DIR",
+        help="extra discovery root(s) scanned for <name>/<name>.py entry points, "
+        "beyond the bundled examples/ (repeatable)",
     )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
@@ -91,21 +102,34 @@ def main() -> None:
     for module in args.library:
         importlib.import_module(module)
 
-    # Select which program to serve. `--demo` on → the `--example` program;
-    # off → nothing (empty registry). Everything is generic off the example
-    # name, so pointing at a different program is just `--example NAME`.
+    # Discover every entry point (ADR 0009): scan examples/ plus any --entries
+    # roots, import eagerly, capture per-entry errors. `--demo` off keeps
+    # today's behavior — no catalog, no entries, empty registry.
+    # `--example` only picks the DEFAULT entry (what the unscoped aliases serve
+    # and the UI opens first); it no longer limits what is served.
     if args.demo:
-        workspace = make_workspace(args.example)
-        sample_graph = load_graph(args.example, workspace)
-        # Relative CSV `path`s resolve against the example's dir at /api/run only;
-        # the served/persisted graph keeps them relative (review 0005 #3).
-        run_base_dir = example_dir(args.example)
+        catalog = EntryCatalog(
+            roots=[EXAMPLES_ROOT, *args.entries], default=args.example
+        ).discover()
+        try:
+            workspace, run_base_dir = catalog.workspace(args.example)
+            sample_graph = workspace.parse_graph()
+        except Exception as exc:  # unknown id, failed import, or a parse failure
+            message = getattr(exc, "message", None) or str(exc)
+            print(
+                f"\n✗ The default entry '{args.example}' is not servable: {message}\n"
+                f"  Known entries: {', '.join(catalog.ids()) or '(none)'}\n",
+                file=sys.stderr,
+            )
+            raise SystemExit(1) from exc
     else:
-        workspace = sample_graph = run_base_dir = None
+        catalog = workspace = sample_graph = run_base_dir = None
 
-    # Preflight: if the served program runs sym.* nodes, its deps are lazy-imported,
-    # so without them the server starts and lists specs but a run fails deep in the
-    # browser with a bare ModuleNotFoundError. Catch it here with the exact fix.
+    # Preflight the DEFAULT entry only: if it runs sym.* nodes, its deps are
+    # lazy-imported, so without them the server starts and lists specs but a run
+    # fails deep in the browser with a bare ModuleNotFoundError. Catch it here
+    # with the exact fix. Other entries never block boot — the catalog reports
+    # them as status:"error" metadata in GET /api/graphs instead.
     if sample_graph is not None and any(n["type"].startswith("sym.") for n in sample_graph["nodes"]):
         import importlib.util
 
@@ -151,7 +175,12 @@ def main() -> None:
         threading.Thread(target=_wait_for_enter_then_open, args=(url,), daemon=True).start()
 
     uvicorn.run(
-        create_app(sample_graph=sample_graph, workspace=workspace, run_base_dir=run_base_dir),
+        create_app(
+            sample_graph=sample_graph,
+            workspace=workspace,
+            run_base_dir=run_base_dir,
+            catalog=catalog,
+        ),
         host=args.host,
         port=args.port,
     )

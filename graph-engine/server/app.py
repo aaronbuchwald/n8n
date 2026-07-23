@@ -29,6 +29,7 @@ from engine import (
     validate_graph,
 )
 
+from .entries import EntryCatalog, EntryLoadError, UnknownEntryError
 from .serialize import to_jsonable
 from .workspace import SourceEditError, Workspace, find_repo_root, git_branch_info
 
@@ -98,6 +99,7 @@ def create_app(
     web_dist: Optional[Path] = WEB_DIST,
     workspace: Optional[Workspace] = None,
     run_base_dir: Optional[Path] = None,
+    catalog: Optional[EntryCatalog] = None,
 ) -> FastAPI:
     """Build the app over ``registry`` (defaults to the process registry).
 
@@ -124,6 +126,14 @@ def create_app(
     (the web already fetches relative ``/api/*``). It is mounted **last** so it
     never shadows an ``/api`` route. Pass ``None`` (or point at a missing dir)
     to skip the mount — e.g. when the web is served separately via ``pnpm dev``.
+
+    ``catalog`` — an :class:`~server.entries.EntryCatalog` of viewable entry
+    points (ADR 0009). With it, ``GET /api/graphs`` lists every entry and the
+    id-scoped routes (``/api/graphs/{id}/graph`` …) serve each entry through
+    its own memoized workspace. The **unscoped** routes then become aliases for
+    the catalog's *default* entry (one migration wave); without a catalog they
+    keep the single-slot behavior driven by ``sample_graph``/``workspace``.
+    Selection is a client concern — the server holds no "active entry".
     """
     registry = registry or DEFAULT_REGISTRY
     # Normalise to the engine graph JSON dict once; accept a Graph or a dict.
@@ -132,6 +142,71 @@ def create_app(
         "graph": sample_graph.to_dict() if isinstance(sample_graph, Graph) else sample_graph
     }
     app = FastAPI(title="graph-engine", version=SCHEMA_VERSION)
+
+    # -- entry resolution (ADR 0009 D4) ---------------------------------
+    # Scoped routes resolve `(workspace, run_base_dir)` through the catalog's
+    # memoized pool. The unscoped routes stay as aliases for the *default*
+    # entry when a catalog exists; otherwise they keep the legacy single-slot
+    # closure (`sample_graph` + `workspace`) so existing embedders/tests work.
+
+    def _entry_slot(entry_id: str) -> tuple[Workspace, Path]:
+        if catalog is None:
+            raise HTTPException(status_code=404, detail="no entry catalog is configured")
+        try:
+            return catalog.workspace(entry_id)
+        except UnknownEntryError as exc:
+            raise HTTPException(status_code=404, detail=exc.message) from exc
+        except EntryLoadError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    def _default_slot() -> Optional[tuple[Workspace, Path]]:
+        """The default entry's slot, or None when running without a catalog."""
+        if catalog is None or catalog.default is None:
+            return None
+        return _entry_slot(catalog.default)
+
+    def _serve_entry_graph(ws: Workspace) -> JSONResponse:
+        # Reparse from disk on every read — with several coexisting views over
+        # one branch this is the read half of the last-write-wins-with-reparse
+        # concurrency strategy (ADR 0009, "Concurrency strategy").
+        try:
+            return JSONResponse(status_code=200, content=ws.parse_graph())
+        except SourceEditError as exc:
+            return JSONResponse(status_code=exc.status, content={"message": str(exc)})
+        except EngineError as exc:
+            # Imported fine but no longer projects to a graph (e.g. two @main
+            # defs): the listing reports it as status:"error"; direct access 409s.
+            return JSONResponse(status_code=409, content={"message": str(exc)})
+
+    def _run_impl(body: dict, base_dir: Optional[Path]) -> dict:
+        try:
+            graph = _graph_from(body)
+        except EngineError as exc:
+            raise HTTPException(status_code=422, detail=[_error_payload(exc)]) from exc
+        try:
+            # environment honoured by stream C later; path resolution never
+            # touches `graph` itself, only the copy handed to the executor.
+            result = run(_resolve_run_paths(graph, base_dir), registry)
+        except NodeExecutionError as exc:
+            # ADR 0002's shape is additive on failure: `errors` is unchanged,
+            # but `outputs`/`order` now carry every node that ran before the
+            # failure instead of being discarded (review 0005 #6).
+            return {
+                "outputs": {nid: {s: to_jsonable(v) for s, v in sockets.items()}
+                            for nid, sockets in exc.outputs.items()},
+                "order": exc.order,
+                "output": graph.output,
+                "errors": [_error_payload(exc)],
+            }
+        except EngineError as exc:
+            raise HTTPException(status_code=422, detail=[_error_payload(exc)]) from exc
+        return {
+            "outputs": {nid: {s: to_jsonable(v) for s, v in sockets.items()}
+                        for nid, sockets in result.outputs.items()},
+            "order": result.order,
+            "output": graph.output,
+            "errors": [],
+        }
 
     @app.get("/api/specs")
     def get_specs() -> dict:
@@ -162,14 +237,50 @@ def create_app(
             return JSONResponse(status_code=422, content={"errors": [_error_payload(exc)]})
         return JSONResponse(status_code=200, content={"inputs": inputs})
 
+    @app.get("/api/graphs")
+    def list_graphs() -> dict:
+        """Every viewable entry point + the advisory default (ADR 0009 D4)."""
+        if catalog is None:
+            return {"version": SCHEMA_VERSION, "default": None, "entries": []}
+        return {
+            "version": SCHEMA_VERSION,
+            "default": catalog.default,
+            "entries": catalog.entries(),
+        }
+
+    @app.get("/api/graphs/{entry_id}/graph")
+    def get_entry_graph(entry_id: str) -> JSONResponse:
+        ws, _ = _entry_slot(entry_id)
+        return _serve_entry_graph(ws)
+
+    @app.post("/api/graphs/{entry_id}/run")
+    def run_entry_graph(entry_id: str, body: dict = Body(...)) -> dict:
+        _, base_dir = _entry_slot(entry_id)
+        return _run_impl(body, base_dir)
+
     @app.get("/api/graph")
     def get_graph() -> JSONResponse:
+        slot = _default_slot()
+        if slot is not None:  # unscoped alias for the default entry (one wave)
+            return _serve_entry_graph(slot[0])
         if state["graph"] is None:
             return JSONResponse(status_code=404, content={"message": "no sample graph is configured"})
         return JSONResponse(status_code=200, content=state["graph"])
 
     @app.get("/api/workspace")
     def get_workspace() -> dict:
+        if catalog is not None:
+            # The branch is checkout-global; `modules` grows to every viewable
+            # entry's module (additive shape change, ADR 0009 D4).
+            modules = [
+                {"module": e["id"], "path": e["path"]}
+                for e in catalog.entries()
+                if e["status"] == "ok" and e["path"]
+            ]
+            return {
+                **git_branch_info(find_repo_root(Path(__file__).resolve().parent)),
+                "modules": modules,
+            }
         if workspace is not None:
             return workspace.info()
         # No editable module bound — still report the branch this server runs from.
@@ -185,34 +296,9 @@ def create_app(
 
     @app.post("/api/run")
     def run_graph(body: dict = Body(...)) -> dict:
-        try:
-            graph = _graph_from(body)
-        except EngineError as exc:
-            raise HTTPException(status_code=422, detail=[_error_payload(exc)]) from exc
-        try:
-            # environment honoured by stream C later; path resolution never
-            # touches `graph` itself, only the copy handed to the executor.
-            result = run(_resolve_run_paths(graph, run_base_dir), registry)
-        except NodeExecutionError as exc:
-            # ADR 0002's shape is additive on failure: `errors` is unchanged,
-            # but `outputs`/`order` now carry every node that ran before the
-            # failure instead of being discarded (review 0005 #6).
-            return {
-                "outputs": {nid: {s: to_jsonable(v) for s, v in sockets.items()}
-                            for nid, sockets in exc.outputs.items()},
-                "order": exc.order,
-                "output": graph.output,
-                "errors": [_error_payload(exc)],
-            }
-        except EngineError as exc:
-            raise HTTPException(status_code=422, detail=[_error_payload(exc)]) from exc
-        return {
-            "outputs": {nid: {s: to_jsonable(v) for s, v in sockets.items()}
-                        for nid, sockets in result.outputs.items()},
-            "order": result.order,
-            "output": graph.output,
-            "errors": [],
-        }
+        slot = _default_slot()
+        base_dir = slot[1] if slot is not None else run_base_dir
+        return _run_impl(body, base_dir)
 
     @app.post("/api/export")
     def export(body: dict = Body(...)) -> dict:
@@ -227,66 +313,114 @@ def create_app(
             content={"message": "source editing requires a workspace (start with --demo or pass workspace=)"},
         )
 
-    def _rebind_current_graph() -> list[dict]:
-        """Re-validate the served graph after a source edit; report, don't fail.
+    def _rebind_graph_doc(doc: Optional[dict]) -> list[dict]:
+        """Re-validate a served graph after a source edit; report, don't fail.
 
         An edit can legitimately break the wiring (e.g. renaming a parameter
         the graph feeds) — the file write already happened, so surface the bind
         errors for the UI instead of pretending the save failed.
         """
-        if state["graph"] is None:
+        if doc is None:
             return []
         try:
-            bind(Graph.from_dict(state["graph"]), registry)
+            bind(Graph.from_dict(doc), registry)
         except EngineError as exc:
             return [_error_payload(exc)]
         return []
 
-    @app.get("/api/source/{spec_id}")
-    def get_source(spec_id: str) -> JSONResponse:
-        if workspace is None:
-            return _no_workspace()
+    def _get_source_impl(ws: Workspace, spec_id: str) -> JSONResponse:
         try:
-            return JSONResponse(status_code=200, content=workspace.function_source(spec_id))
+            return JSONResponse(status_code=200, content=ws.function_source(spec_id))
         except SourceEditError as exc:
             return JSONResponse(status_code=exc.status, content={"message": str(exc)})
 
-    @app.put("/api/source/{spec_id}")
-    def put_source(spec_id: str, body: dict = Body(default={})) -> JSONResponse:
-        if workspace is None:
-            return _no_workspace()
+    def _put_source_impl(ws: Workspace, spec_id: str, body: dict, current_doc) -> JSONResponse:
+        """``current_doc`` lazily supplies the graph to re-bind after the write."""
         source = body.get("source")
         if not isinstance(source, str) or not source.strip():
             return JSONResponse(status_code=400, content={"message": "body must be {\"source\": \"<function definition>\"}"})
         try:
-            result = workspace.replace_function_source(spec_id, source)
+            result = ws.replace_function_source(spec_id, source)
         except SourceEditError as exc:
             return JSONResponse(status_code=exc.status, content={"message": str(exc)})
-        # A code edit reparses to the graph (ADR 0004 D2): refresh the served
-        # projection from the rewritten module and return it beside `spec`, so
-        # the client can invalidate run-derived views instead of reading a
-        # boot-time cache (ADR 0008 G3; "writes return truth", mirroring
-        # PUT /api/graph → {graph}). `_rebind_current_graph` now binds the fresh
-        # projection.
-        state["graph"] = workspace.parse_graph()
         result["spec"] = registry.spec(spec_id)  # re-introspected after reload
-        result["graph"] = state["graph"]
-        result["graphErrors"] = _rebind_current_graph()
+        # A code edit reparses to the graph (ADR 0004 D2): return the fresh
+        # projection beside `spec` so the client invalidates run-derived views
+        # instead of reading a boot-time cache (ADR 0008 G3; "writes return
+        # truth", mirroring PUT /api/graph → {graph}). `current_doc` reparses the
+        # edited workspace — per-entry under a catalog, the single slot in the
+        # legacy path — so it is fresh and correct for both.
+        doc = current_doc()
+        result["graph"] = doc
+        result["graphErrors"] = _rebind_graph_doc(doc)
         return JSONResponse(status_code=200, content=result)
 
-    @app.put("/api/graph")
-    def put_graph(body: dict = Body(...)) -> JSONResponse:
-        if workspace is None:
-            return _no_workspace()
+    def _put_graph_impl(ws: Workspace, body: dict) -> JSONResponse:
         try:
             graph = _graph_from(body)
-            saved = workspace.save_graph(graph)  # writes wiring + sidecar, reloads
+            saved = ws.save_graph(graph)  # writes wiring + sidecar, reloads
         except SourceEditError as exc:
             return JSONResponse(status_code=exc.status, content={"message": str(exc)})
         except EngineError as exc:
             raise HTTPException(status_code=422, detail=[_error_payload(exc)]) from exc
         state["graph"] = saved
         return JSONResponse(status_code=200, content={"graph": saved})
+
+    def _entry_doc(ws: Workspace):
+        """A lazy graph-doc getter for `_put_source_impl` (reparse, never cache)."""
+        def get() -> Optional[dict]:
+            try:
+                return ws.parse_graph()
+            except Exception:  # the graph may no longer project; nothing to rebind
+                return None
+        return get
+
+    @app.get("/api/graphs/{entry_id}/source/{spec_id}")
+    def get_entry_source(entry_id: str, spec_id: str) -> JSONResponse:
+        ws, _ = _entry_slot(entry_id)
+        return _get_source_impl(ws, spec_id)
+
+    @app.put("/api/graphs/{entry_id}/source/{spec_id}")
+    def put_entry_source(entry_id: str, spec_id: str, body: dict = Body(default={})) -> JSONResponse:
+        ws, _ = _entry_slot(entry_id)
+        return _put_source_impl(ws, spec_id, body, _entry_doc(ws))
+
+    @app.put("/api/graphs/{entry_id}/graph")
+    def put_entry_graph(entry_id: str, body: dict = Body(...)) -> JSONResponse:
+        ws, _ = _entry_slot(entry_id)
+        return _put_graph_impl(ws, body)
+
+    @app.get("/api/source/{spec_id}")
+    def get_source(spec_id: str) -> JSONResponse:
+        slot = _default_slot()
+        ws = slot[0] if slot is not None else workspace
+        if ws is None:
+            return _no_workspace()
+        return _get_source_impl(ws, spec_id)
+
+    @app.put("/api/source/{spec_id}")
+    def put_source(spec_id: str, body: dict = Body(default={})) -> JSONResponse:
+        slot = _default_slot()
+        if slot is not None:
+            return _put_source_impl(slot[0], spec_id, body, _entry_doc(slot[0]))
+        if workspace is None:
+            return _no_workspace()
+
+        def _legacy_doc() -> Optional[dict]:
+            # Legacy single-slot: reparse the edited module and refresh the slot
+            # so GET /api/graph also reflects the edit (ADR 0008 G3).
+            state["graph"] = workspace.parse_graph()
+            return state["graph"]
+
+        return _put_source_impl(workspace, spec_id, body, _legacy_doc)
+
+    @app.put("/api/graph")
+    def put_graph(body: dict = Body(...)) -> JSONResponse:
+        slot = _default_slot()
+        ws = slot[0] if slot is not None else workspace
+        if ws is None:
+            return _no_workspace()
+        return _put_graph_impl(ws, body)
 
     # Serve the built SPA at "/" — mounted LAST so /api/* routes win. When the
     # bundle isn't built we mount nothing: the API stays live and "/" simply
