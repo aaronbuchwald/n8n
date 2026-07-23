@@ -82,6 +82,29 @@ NODE_SPEC_SCHEMA: dict = {
                 "properties": {"name": {"type": "string"}, "type": {"type": "string"}},
             },
         },
+        "renderer": {
+            "description": (
+                "Optional whole-node rendering contract (ADR 0010 D1/D2) — spec-side "
+                "view data, never emitted into graph JSON. Additive; absent for nodes "
+                "that declare none."
+            ),
+            "oneOf": [
+                {"type": "null"},
+                {
+                    "type": "object",
+                    "required": ["kind"],
+                    "additionalProperties": True,
+                    "properties": {
+                        "kind": {"type": "string", "description": "Open vocabulary; core flat (e.g. 'html-card'), packs namespace (e.g. 'sym.plot')."},
+                        "config": {
+                            "type": "object",
+                            "additionalProperties": True,
+                            "description": "Optional, JSON-serialisable, renderer-specific options. Absent when the declaration carries none.",
+                        },
+                    },
+                },
+            ],
+        },
     },
 }
 
@@ -207,6 +230,7 @@ def validate_node_spec(spec: Any) -> dict:
     _require(isinstance(spec["outputs"], list) and spec["outputs"], "node spec needs >=1 output")
     for out in spec["outputs"]:
         _require("name" in out and "type" in out, "each output needs 'name' and 'type'")
+    _validate_renderer(spec.get("renderer"))
     return spec
 
 
@@ -223,6 +247,22 @@ def _validate_widget(input_name: Any, widget: Any) -> None:
         _require(
             isinstance(widget["config"], dict),
             f"input {input_name!r} widget 'config' must be an object",
+        )
+
+
+def _validate_renderer(renderer: Any) -> None:
+    """Validate a node spec's top-level ``renderer`` field (ADR 0010 D2):
+    ``null``/absent, or an object with a string ``kind`` and an optional object
+    ``config``. Additive-tolerant — unknown renderer keys are left untouched.
+    """
+    if renderer is None:
+        return
+    _require(isinstance(renderer, dict), "node spec 'renderer' must be an object or null")
+    _require(isinstance(renderer.get("kind"), str), "node spec 'renderer' needs a string 'kind'")
+    if "config" in renderer:
+        _require(
+            isinstance(renderer["config"], dict),
+            "node spec 'renderer' 'config' must be an object",
         )
 
 

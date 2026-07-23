@@ -46,7 +46,7 @@ from typing import Any, Callable, Optional
 from .errors import TracingError
 from .graph import Graph
 from .registry import DEFAULT_REGISTRY, NodeRegistry
-from .spec import DerivedInputs, Widget
+from .spec import DerivedInputs, Renderer, Widget
 
 # One trace at a time per thread. ``None`` means "eager" (calls execute).
 _state = threading.local()
@@ -188,6 +188,7 @@ def node(
     outputs: Optional[list] = None,
     widgets: Optional[dict[str, Widget]] = None,
     dynamic: Optional[DerivedInputs] = None,
+    renderer: Optional[Renderer] = None,
     registry: Optional[NodeRegistry] = None,
     replace: bool = False,
 ) -> Any:
@@ -200,6 +201,9 @@ def node(
     ``dynamic=DerivedInputs(...)`` (ADR 0007) declares extra input sockets derived
     from one literal parameter's value; such a node needs a ``**kwargs``
     receptacle for the derived values.
+    ``renderer=Renderer(kind, **config)`` (ADR 0010 D1) declares one whole-node
+    rendering contract, threaded into the spec's top-level ``renderer`` field; a
+    ``socket`` config key is validated against ``outputs`` at import time.
     """
 
     def wrap(target: Callable[..., Any]) -> NodePrimitive:
@@ -211,6 +215,7 @@ def node(
             outputs=outputs,
             widgets=widgets,
             dynamic=dynamic,
+            renderer=renderer,
             replace=replace,
         )
         return NodePrimitive(target, entry)

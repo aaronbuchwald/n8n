@@ -121,6 +121,50 @@ class Widget:
     def __repr__(self) -> str:
         return f"Widget({self.kind!r}, {self.config!r})"
 
+
+class Renderer:
+    """A declarative whole-node rendering contract (ADR 0010 D1). Widget's sibling.
+
+    A ``Renderer`` declares only a *contract* — a registry ``kind`` the UI
+    resolves to a renderer component, plus JSON-serialisable ``config`` opaque
+    to the engine. No HTML, no React, no callbacks; a headless or non-React
+    front-end is free to ignore or reinterpret it. Serialised into the node
+    spec's top-level ``renderer`` field as ``{"kind": ..., "config"?: {...}}``
+    (additive, no schema-version bump — same treatment as ``widget.config``).
+
+    One declaration per node type (not per output): every identified consumer
+    renders a single surface, and a ``socket`` config key selects which output
+    a single-socket renderer reads.
+
+    Args:
+        kind: registry key the UI resolves to a renderer component (open
+            vocabulary; core kinds are flat, e.g. ``html-card``; pack kinds
+            namespace, e.g. ``sym.plot``).
+        **config: JSON-serialisable options passed through to that renderer,
+            opaque to the engine. A ``socket`` key, when present, is validated
+            at import time against the node's declared outputs (see
+            :func:`node_spec`). The ``json.dumps`` guard fails at import
+            time — not save time — if a caller passes something
+            unserialisable.
+    """
+
+    __slots__ = ("kind", "config")
+
+    def __init__(self, kind: str, **config: object) -> None:
+        self.kind = kind
+        self.config = config
+        json.dumps(config)  # fail at import time, not save time
+
+    def to_dict(self) -> dict:
+        d: dict[str, Any] = {"kind": self.kind}
+        if self.config:
+            d["config"] = dict(self.config)
+        return d
+
+    def __repr__(self) -> str:
+        return f"Renderer({self.kind!r}, {self.config!r})"
+
+
 # Python scalar types that render as an editable widget when a socket is left
 # unconnected. Anything else (list, dict, custom classes) must be wired.
 _WIDGET_BY_TYPE = {
@@ -210,6 +254,35 @@ def _output_specs(outputs: Optional[list], return_annotation: Any) -> list[dict]
     return [{"name": DEFAULT_OUTPUT, "type": _type_name(return_annotation) or "Any"}]
 
 
+def _validate_renderer_socket(short_name: str, renderer: "Renderer", outputs: list[dict]) -> None:
+    """Validate ``renderer``'s ``socket`` config key against ``outputs`` (ADR 0010 D1).
+
+    A ``socket`` naming no declared output raises at import time — the one
+    cross-field check worth doing eagerly, since ``outputs=[...]`` is visible
+    at the same call site. Omitted ``socket`` defaults to the sole output when
+    there is exactly one; with several outputs it defaults to ``result`` when
+    that name is among them, else the node must disambiguate explicitly.
+    """
+    names = [o["name"] for o in outputs]
+    socket = renderer.config.get("socket")
+    if socket is not None:
+        if socket not in names:
+            raise EngineError(
+                f"{short_name!r} declares renderer socket {socket!r}, which is "
+                f"not a declared output (outputs: {', '.join(map(repr, names))})"
+            )
+        return
+    if len(names) == 1:
+        return
+    if DEFAULT_OUTPUT in names:
+        return
+    raise EngineError(
+        f"{short_name!r} declares a renderer with multiple outputs "
+        f"({', '.join(map(repr, names))}) and no {DEFAULT_OUTPUT!r} socket — "
+        f"pass socket=... to disambiguate"
+    )
+
+
 def node_spec(
     fn: Callable[..., Any],
     *,
@@ -218,6 +291,7 @@ def node_spec(
     outputs: Optional[list] = None,
     widgets: Optional[dict[str, Widget]] = None,
     dynamic: Optional[DerivedInputs] = None,
+    renderer: Optional["Renderer"] = None,
     module: Optional[str] = None,
     qualname: Optional[str] = None,
 ) -> dict:
@@ -239,6 +313,11 @@ def node_spec(
             A dynamic node **must** have a ``**kwargs`` receptacle (the derived
             values arrive as keyword arguments); the receptacle itself is not a
             socket.
+        renderer: a :class:`Renderer` declaration (ADR 0010 D1) — one
+            whole-node rendering contract, serialised into the spec's
+            top-level ``renderer`` field (absent when not declared). A
+            ``socket`` config key is validated against ``outputs`` at import
+            time (see :func:`_validate_renderer_socket`).
         module / qualname: override the identity (defaults to ``fn.__module__`` /
             ``fn.__qualname__``); together they form the collision-proof id.
 
@@ -246,8 +325,8 @@ def node_spec(
         EngineError: the callable uses ``*args`` (not addressable as named
             sockets), uses ``**kwargs`` without a ``dynamic=`` declaration, is
             declared ``dynamic=`` without a ``**kwargs`` receptacle or names a
-            deriving parameter that does not exist, or a ``widgets`` key names no
-            parameter.
+            deriving parameter that does not exist, a ``widgets`` key names no
+            parameter, or a ``renderer`` names a nonexistent output socket.
     """
     signature = inspect.signature(fn)
     short_name = name or fn.__name__
@@ -293,6 +372,10 @@ def node_spec(
                 f"which is not a declared parameter"
             )
 
+    output_specs = _output_specs(outputs, signature.return_annotation)
+    if renderer is not None:
+        _validate_renderer_socket(short_name, renderer, output_specs)
+
     spec: dict[str, Any] = {
         "id": f"{module}.{qualname}",
         "name": short_name,
@@ -301,10 +384,12 @@ def node_spec(
         "qualname": qualname,
         "doc": inspect.getdoc(fn) or "",
         "inputs": inputs,
-        "outputs": _output_specs(outputs, signature.return_annotation),
+        "outputs": output_specs,
     }
     if dynamic is not None:
         spec["dynamicInputs"] = {"param": dynamic.param}
+    if renderer is not None:
+        spec["renderer"] = renderer.to_dict()
     return spec
 
 
