@@ -214,16 +214,15 @@ export default function App() {
 
   // Escape dismisses the topmost open surface, one per press: the source
   // editor (back to the inspector), then the inspector, then the export dock,
-  // then run results. Widget editors handle their own keys (the slot is
-  // skipped here), and Escape typed INSIDE the source editor is deliberately
-  // inert so a stray press can't discard an unsaved body edit.
+  // then run results. Escape typed INSIDE the source editor is deliberately
+  // inert so a stray press can't discard an unsaved body edit. Widget editors
+  // now live in the inspector (ADR 0013 D4); Escape closes the inspector and
+  // the slot's unmount blurs the focused field so a blur-committing draft
+  // settles first.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape' || event.defaultPrevented) return;
-      if (
-        event.target instanceof Element &&
-        event.target.closest('[data-testid="widget-slot"], .ge-source')
-      ) {
+      if (event.target instanceof Element && event.target.closest('.ge-source')) {
         return;
       }
       if (selectedNodeId && editingSource) {

@@ -19,6 +19,12 @@ import { lazyNodeRenderer, registerNodeRenderer } from './registry';
 // kind. Lazy code-split chunk: npm-bundled, zero CDN.
 registerNodeRenderer('html-card', lazyNodeRenderer(() => import('./html-card')));
 
+// `latex` (ADR 0013 D5): typeset a LaTeX-string socket with KaTeX in the host
+// DOM — the handcalcs output for the `handcalc` node. Frozen kind name/socket
+// `"latex"`; the Python stream declares `Renderer("latex", socket="latex")`.
+// Lazy code-split chunk: npm-bundled, zero CDN.
+registerNodeRenderer('latex', lazyNodeRenderer(() => import('./latex')));
+
 // Seam-proof kind: no served spec declares it (packs gain `renderer=` in
 // 10-E/10-K), so it never shows in the demo; e2e injects it to prove the slot.
 registerNodeRenderer('dev-json', DevJsonRenderer);

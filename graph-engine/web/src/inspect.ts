@@ -7,7 +7,7 @@
 // node's output for that socket.
 
 import type { SocketValues } from './api';
-import type { GraphDoc, NodeSpecs, Widget } from './types';
+import type { GraphDoc, NodeSpecs, SpecInput, Widget } from './types';
 
 export type InputSource =
   | { kind: 'wired'; from: { node: string; socket: string } }
@@ -28,6 +28,14 @@ export interface InspectedInput {
   source: InputSource;
   /** The value this input resolved to in the latest run (null if unknown). */
   run: ResolvedValue | null;
+  /**
+   * The input's full declaration (static spec entry or derived socket), carried
+   * so the inspector can mount its editor regardless of whether a literal is
+   * set yet. Null for a spec-less node's edge-only inputs. ADR 0013 D4.
+   */
+  spec: SpecInput | null;
+  /** The bound literal for this input, if the graph carries one (D4 editing). */
+  literal: ResolvedValue | null;
 }
 
 export interface InspectedOutput {
@@ -66,6 +74,12 @@ export function inspectNode(
   // as if the last run had computed it). Genuine run outputs still flow through;
   // the caller dims them.
   runIsStale = false,
+  // A dynamic node's committed derived input sockets (ADR 0007), merged into the
+  // input list exactly as `buildFlow` merges them for the canvas — static spec
+  // inputs first, then derived entries in deriver order. Without this the
+  // inspector (the only editing surface now, ADR 0013) would omit derived
+  // symbols like `C_min`/`F_max`.
+  derivedInputs?: SpecInput[],
 ): InspectedNode | null {
   const gn = graph.nodes.find((n) => n.id === nodeId);
   if (!gn) return null;
@@ -76,9 +90,11 @@ export function inspectNode(
   const outEdges = graph.edges.filter((e) => e.source === nodeId);
   const nodeRun = runOutputs?.[nodeId] ?? null;
 
-  // Without a spec we still know input names from edges + bound literals.
+  // Without a spec we still know input names from edges + bound literals. With a
+  // spec, fold in the dynamic node's derived sockets after the static inputs.
+  const declaredInputs = spec ? [...spec.inputs, ...(derivedInputs ?? [])] : [];
   const inputDecls = spec
-    ? spec.inputs.map((i) => ({ name: i.name, type: i.type, meta: i }))
+    ? declaredInputs.map((i) => ({ name: i.name, type: i.type, meta: i }))
     : [...new Set([...inEdges.map((e) => e.targetInput), ...Object.keys(bound)])].map((name) => ({
         name,
         type: '?',
@@ -111,7 +127,8 @@ export function inspectNode(
     } else {
       source = { kind: 'unset' };
     }
-    return { name, type, source, run };
+    const literal = has(bound, name) ? { value: bound[name] } : null;
+    return { name, type, source, run, spec: meta, literal };
   });
 
   // Without a spec, output names come from outgoing edges + run outputs.

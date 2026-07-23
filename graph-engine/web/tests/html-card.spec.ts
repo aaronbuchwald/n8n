@@ -78,7 +78,7 @@ test('render_math_card renders its MathML card in a sandboxed iframe in the resu
   await expect(card.locator('.ge-socket__name', { hasText: 'mathml' })).toBeVisible();
   await expect(card.locator('.ge-handle--in').first()).toBeAttached();
   await expect(card.locator('.ge-handle--out').first()).toBeAttached();
-  await expect(card.getByTestId('widget-chip').first()).toBeVisible();
+  await expect(card.getByTestId('widget-preview').first()).toBeVisible();
 
   // The sibling consumers render on their own cards too (one iframe each).
   await expect(

@@ -197,7 +197,7 @@ function GraphCanvas({
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
 
   const nodesInitialized = useNodesInitialized();
-  const { fitView, getZoom, screenToFlowPosition } = useReactFlow();
+  const { fitView, screenToFlowPosition } = useReactFlow();
   const [phase, setPhase] = useState<LayoutPhase>('measuring');
   const canvasRef = useRef<HTMLDivElement>(null);
   // Latest edges for callbacks that must not re-bind per edge change.
@@ -310,50 +310,6 @@ function GraphCanvas({
     return () => observer.disconnect();
   }, [phase, fitView]);
 
-  // When a widget editor opens somewhere on the canvas, make sure it is
-  // legible: at fit zoom on a wide graph an editor renders far too small to
-  // use. Detection is DOM-level (a [data-testid="widget-slot"] appearing, or
-  // focus landing inside one) so it needs no signal from the widget files.
-  useEffect(() => {
-    const el = canvasRef.current;
-    if (!el) return;
-    const zoomed = new WeakSet<Element>();
-    const zoomToSlot = (slot: Element) => {
-      if (zoomed.has(slot)) return;
-      zoomed.add(slot);
-      const nodeEl = slot.closest('.react-flow__node');
-      const id = nodeEl?.getAttribute('data-id');
-      if (!id) return;
-      // Already readable — don't yank the viewport out from under the user.
-      if (getZoom() >= 0.85) return;
-      void fitView({ nodes: [{ id }], padding: 0.4, maxZoom: 1, duration: 250 });
-    };
-    const scan = (target: Element) => {
-      if (target.matches('[data-testid="widget-slot"]')) zoomToSlot(target);
-      for (const slot of target.querySelectorAll('[data-testid="widget-slot"]')) {
-        zoomToSlot(slot);
-      }
-    };
-    const observer = new MutationObserver((mutations) => {
-      for (const mutation of mutations) {
-        for (const added of mutation.addedNodes) {
-          if (added instanceof Element) scan(added);
-        }
-      }
-    });
-    observer.observe(el, { childList: true, subtree: true });
-    const onFocusIn = (event: FocusEvent) => {
-      if (!(event.target instanceof Element)) return;
-      const slot = event.target.closest('[data-testid="widget-slot"]');
-      if (slot) zoomToSlot(slot);
-    };
-    el.addEventListener('focusin', onFocusIn);
-    return () => {
-      observer.disconnect();
-      el.removeEventListener('focusin', onFocusIn);
-    };
-  }, [fitView, getZoom]);
-
   // The store's edit-mode validation, regrouped per node (the on-canvas
   // "needs wiring" badge source — ADR 0011 D6, mirrored from W5's palette strip).
   const needsWiringByNode = useMemo(() => {
@@ -387,16 +343,10 @@ function GraphCanvas({
   }, [runOutputs, errorNodeId, needsWiringByNode, setNodes]);
 
   // Clicking a node opens the inspector for it; clicking the pane closes it.
-  // A click that lands on a widget chip/editor is editing, not inspecting —
-  // let it through without also sliding the inspector over the canvas.
+  // The card is read-only now (ADR 0013 D1) — every click anywhere on it,
+  // previews included, selects the node. No widget-slot exclusion, no dead zone.
   const onNodeClick: NodeMouseHandler = useCallback(
-    (event, node) => {
-      if (
-        event.target instanceof Element &&
-        event.target.closest('[data-testid="widget-chip"], [data-testid="widget-slot"]')
-      ) {
-        return;
-      }
+    (_event, node) => {
       onSelectNode(node.id);
     },
     [onSelectNode],
@@ -537,12 +487,24 @@ function GraphCanvas({
     return () => window.clearTimeout(timer);
   }, [writebackWarning]);
 
+  // The inspector is the ONLY editing surface now (ADR 0013 D4), so it must
+  // show a dynamic node's derived sockets too (C_min/F_max). Fold in the store's
+  // committed derived inputs for the selected node exactly as `buildFlow` does
+  // for the canvas — without this the inspector would omit the only place those
+  // symbols can be given inline values.
   const inspected = useMemo(
     () =>
       graph && selectedNodeId
-        ? inspectNode(graph, specs, selectedNodeId, runOutputs, runIsStale)
+        ? inspectNode(
+            graph,
+            specs,
+            selectedNodeId,
+            runOutputs,
+            runIsStale,
+            derivedByNode.get(selectedNodeId),
+          )
         : null,
-    [graph, specs, selectedNodeId, runOutputs, runIsStale],
+    [graph, specs, selectedNodeId, runOutputs, runIsStale, derivedByNode],
   );
 
   // Several nodes may share one @node function; the source editor says so.

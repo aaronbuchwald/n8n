@@ -12,7 +12,7 @@
 //   registerWidget('table-recipe', lazyEditor(() => import('./table')));
 
 import { CheckboxEditor, NumberEditor, TextEditor } from './builtins';
-import { lazyEditor, registerWidget } from './registry';
+import { lazyEditor, lazyPreview, registerWidget, registerWidgetPreview } from './registry';
 
 // Core kinds (A-D6: flat names). These mirror engine/spec.py's type-derived
 // widgets, so every str/int/float/bool input has a working editor out of the box.
@@ -30,15 +30,31 @@ registerWidget('math', lazyEditor(() => import('./math/MathEditor').then(m => ({
 // render from `state.derivedByNode` — no host context, no parallel committer.
 registerWidget('calc', lazyEditor(() => import('./calc/CalcEditor').then(m => ({ default: m.CalcEditor }))));
 
+// Read-only card previews (ADR 0013 D2). One line per kind, mirroring the
+// editors above; each shares its editor's typeset chunk (KaTeX + translator),
+// stays npm-bundled + lazy + code-split, zero CDN. text/number/checkbox need no
+// registration — they fall back to the value chip (WidgetPreview).
+registerWidgetPreview('math', lazyPreview(() => import('./math/preview')), 'block');
+registerWidgetPreview('calc', lazyPreview(() => import('./calc/preview')), 'block');
+registerWidgetPreview('table-recipe', lazyPreview(() => import('./table/RecipePreview')), 'inline');
+
 // Public API for the shell and downstream streams.
 export {
   editorFor,
   hasEditor,
   lazyEditor,
+  lazyPreview,
+  previewFor,
+  previewPlacementFor,
   registerWidget,
+  registerWidgetPreview,
+  type PreviewPlacement,
   type RegisteredEditor,
+  type RegisteredPreview,
   type WidgetEditor,
   type WidgetEditorProps,
+  type WidgetPreview,
+  type WidgetPreviewProps,
 } from './registry';
 export { useWidgetCommit, WidgetEditingProvider, type CommitInput } from './context';
 // The committed-derivation fetcher (ADR 0007, store-reconciled): the shell

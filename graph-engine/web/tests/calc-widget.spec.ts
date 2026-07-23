@@ -105,11 +105,23 @@ test('calc widget: live derived chips, invalid-equation refusal, commit reshapes
     await expect(socketName(page, 'F_max')).toBeVisible();
     await expect(socketName(page, 'lines')).toBeVisible();
 
-    // --- open the calc editor ----------------------------------------------
-    await stepsNode(page).locator('[data-testid="widget-chip"]', { hasText: 'margin' }).click();
-    const editor = page.getByTestId('widget-editor-calc-input');
+    // --- open the calc editor (ADR 0013: in the inspector, not on the card) -
+    await stepsNode(page).locator('[data-testid="node-title"]').click();
+    const inspector = page.getByTestId('node-inspector');
+    await expect(inspector).toBeVisible();
+    const editor = inspector.getByTestId('widget-editor-calc-input');
     await expect(editor).toBeVisible();
     await expect(editor).toHaveValue(ORIGINAL_EQ);
+
+    // --- 1.6 derived sockets are inspectable ---------------------------------
+    // C_min / F_max are derived from the equation and WIRED (from select_extreme):
+    // the inspector lists them read-only, with their wired source tag, no editor.
+    const cMinRow = inspector
+      .locator('[data-testid="inspector-input"]')
+      .filter({ has: page.locator('.ge-inspector__socket', { hasText: /^C_min$/ }) });
+    await expect(cMinRow).toBeVisible();
+    await expect(cMinRow.locator('.ge-inspector__tag--wired')).toBeVisible();
+    await expect(cMinRow.getByTestId('inspector-widget-slot')).toHaveCount(0);
 
     // --- live (debounced) derive: an added symbol chips up, uncommitted -----
     const putsBeforeTyping = puts.count();
@@ -145,6 +157,15 @@ test('calc widget: live derived chips, invalid-equation refusal, commit reshapes
     // The new socket is on the canvas — folded from the store's derivedByNode.
     await expect(socketName(page, 'safety')).toBeVisible({ timeout: 10_000 });
     await expect(socketName(page, 'C_min')).toBeVisible();
+
+    // --- 1.6 an unwired derived symbol is editable in the inspector ----------
+    // `safety` is derived + unwired (given an inline literal): the inspector
+    // renders a number editor for it, so derived sockets can be given values.
+    const safetyRow = inspector
+      .locator('[data-testid="inspector-input"]')
+      .filter({ has: page.locator('.ge-inspector__socket', { hasText: /^safety$/ }) });
+    await expect(safetyRow.getByTestId('inspector-widget-slot')).toBeVisible({ timeout: 10_000 });
+    await expect(safetyRow.getByTestId('widget-editor-number')).toBeVisible();
     // No parallel derive path: the commit INGESTED the editor's own verdict, so
     // the canvas needed no second derive POST for the committed literal.
     expect(deriveCalls.filter((v) => v === withSafety).length).toBe(1);

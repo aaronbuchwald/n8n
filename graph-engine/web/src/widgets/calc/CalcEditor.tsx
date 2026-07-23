@@ -24,36 +24,9 @@ import type { EngineErrorItem } from '../../api';
 import { commitEquation } from '../../store/sync';
 import { useSyncSelector } from '../../store/useSyncSelector';
 import type { WidgetEditorProps } from '../registry';
-import { escapeHtml } from '../math/translate';
 import { cachedDerive, deriveInputs, type DeriveOutcome } from './derive';
-import { calcLinesToPreview } from './translate';
+import { CalcPreview } from './preview';
 import './calc.css';
-
-// KaTeX loads lazily and stays npm-bundled/offline — same pattern as the math
-// widget (ADR 0005 B): the calc chunk itself is lazy, and KaTeX splits further.
-let KaTeX: typeof import('katex') | null = null;
-let katexCssLoaded = false;
-
-const loadKaTeX = async () => {
-  if (KaTeX === null) {
-    KaTeX = await import('katex');
-    if (!katexCssLoaded) {
-      // @ts-expect-error - CSS imports work in Vite but TypeScript doesn't know about them
-      await import('katex/dist/katex.css');
-      katexCssLoaded = true;
-    }
-  }
-  return KaTeX;
-};
-
-async function renderKatex(latex: string): Promise<string | null> {
-  try {
-    const KT = await loadKaTeX();
-    return KT.renderToString(latex, { throwOnError: true });
-  } catch {
-    return null;
-  }
-}
 
 function asString(value: unknown): string {
   if (value === undefined || value === null) return '';
@@ -64,12 +37,6 @@ interface DeriveState {
   /** The draft text this outcome belongs to. */
   value: string;
   outcome: DeriveOutcome;
-}
-
-interface RenderedLine {
-  /** KaTeX HTML, or escaped raw text when `fallback`. */
-  html: string;
-  fallback: boolean;
 }
 
 interface SymbolChip {
@@ -91,7 +58,6 @@ export function CalcEditor({ value, config, input, onCommit, nodeId }: WidgetEdi
   const committed = asString(value);
   const [draft, setDraft] = useState(committed);
   const [derive, setDerive] = useState<DeriveState | null>(null);
-  const [preview, setPreview] = useState<RenderedLine[]>([]);
   const [newValues, setNewValues] = useState<Record<string, string>>({});
   const [commitError, setCommitError] = useState<string | null>(null);
 
@@ -131,29 +97,6 @@ export function CalcEditor({ value, config, input, onCommit, nodeId }: WidgetEdi
     }, 300);
     return () => window.clearTimeout(timer);
   }, [draft, specId]);
-
-  // -- live typeset preview (reuses the math widget's KaTeX approach) --------
-  const previewSeq = useRef(0);
-  useEffect(() => {
-    const seq = ++previewSeq.current;
-    const lines = calcLinesToPreview(draft);
-    if (lines.length === 0) {
-      setPreview([]);
-      return;
-    }
-    void Promise.all(
-      lines.map(async (line): Promise<RenderedLine> => {
-        if (line.latex === null) return { html: escapeHtml(line.raw), fallback: true };
-        const html = await renderKatex(line.latex);
-        return html === null
-          ? { html: escapeHtml(line.raw), fallback: true }
-          : { html, fallback: false };
-      }),
-    ).then((rendered) => {
-      if (seq !== previewSeq.current) return;
-      setPreview(rendered);
-    });
-  }, [draft]);
 
   // -- symbol chips: current sockets vs the draft's pending set --------------
   const staticNames = useMemo(() => new Set((spec?.inputs ?? []).map((i) => i.name)), [spec]);
@@ -274,17 +217,8 @@ export function CalcEditor({ value, config, input, onCommit, nodeId }: WidgetEdi
         onChange={(event) => setDraft(event.target.value)}
       />
 
-      {preview.length > 0 && (
-        <div className="ge-calc-preview" data-testid="calc-preview">
-          {preview.map((line, i) => (
-            <div
-              key={i}
-              className={line.fallback ? 'ge-calc-preview__line ge-calc-preview__line--raw' : 'ge-calc-preview__line'}
-              dangerouslySetInnerHTML={{ __html: line.html }}
-            />
-          ))}
-        </div>
-      )}
+      <CalcPreview text={draft} />
+
 
       {deriveErrors.length > 0 && (
         <div className="ge-calc-error" data-testid="calc-derive-error" role="alert">

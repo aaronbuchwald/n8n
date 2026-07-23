@@ -108,16 +108,16 @@ test('switches entries via the picker: URL key, full canvas swap, cleared run pa
     return route.continue();
   });
 
-  // Scope to the `path` input's own row (not `.first()`) — `read_table` has
-  // two literal inputs (`path`, `text`) and committing collapses the edited
-  // one from a chip into an open `widget-slot`, which would otherwise shift
-  // what `.first()` resolves to.
+  // ADR 0013: editing moved to the inspector. Open it and edit the `path`
+  // input's own slot (scoped by data-input — `read_table` has two literal
+  // inputs, `path` and `text`).
   const card = nodeCard(page, 'read_table').first();
-  const pathRow = card
-    .locator('.ge-socket--in')
-    .filter({ has: page.locator('.ge-socket__name', { hasText: 'path' }) });
-  await pathRow.getByTestId('widget-chip').click();
-  const input = pathRow.getByTestId('widget-editor-text');
+  await card.getByTestId('node-title').click();
+  const inspector = page.getByTestId('node-inspector');
+  await expect(inspector).toBeVisible();
+  const input = inspector
+    .locator('[data-testid="inspector-widget-slot"][data-input="path"]')
+    .getByTestId('widget-editor-text');
   await expect(input).toBeVisible();
 
   const scopedPut = page.waitForResponse(
@@ -126,8 +126,11 @@ test('switches entries via the picker: URL key, full canvas swap, cleared run pa
   await input.fill(NEW_PATH);
   await input.press('Enter');
   await scopedPut;
-  await pathRow.getByTestId('widget-done').click(); // back to a closed chip
-  await expect(pathRow.getByTestId('widget-chip')).toContainText(NEW_PATH);
+  // The card's read-only preview reflects the persisted literal.
+  const pathRow = card
+    .locator('.ge-socket--in')
+    .filter({ has: page.locator('.ge-socket__name', { hasText: 'path' }) });
+  await expect(pathRow.getByTestId('widget-preview')).toContainText(NEW_PATH);
 
   await page.screenshot({ path: 'tests/__screenshots__/graph-picker.png', fullPage: false });
 

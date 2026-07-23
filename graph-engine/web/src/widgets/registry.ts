@@ -67,3 +67,76 @@ export const hasEditor = (kind: string): boolean => REGISTRY.has(kind);
 export const lazyEditor = (
   load: () => Promise<{ default: WidgetEditor }>,
 ): LazyExoticComponent<WidgetEditor> => lazy(load);
+
+// --- read-only preview axis (ADR 0013 D2) -----------------------------------
+// A mirror of the editor registry above, added additively in the same file: a
+// `kind -> preview` map so the card can show a rendered, READ-ONLY face of each
+// widget value (typeset math/calc, a table-recipe summary chip). Editing lives
+// in the inspector now; the card mounts previews only. An unregistered kind
+// resolves to null and the mounting slot (WidgetPreview) falls back to today's
+// value-chip markup — the same forward-compatibility story as `editorFor`.
+
+/**
+ * The props every widget preview receives. Read-only by construction — a
+ * preview renders purely from the committed literal (no commit, no store, no
+ * run data), the same status as layout in the bijection (ADR 0004 D6).
+ */
+export interface WidgetPreviewProps<V = unknown> {
+  /** Current literal from `graph.nodes[].inputs[name]` (undefined if unset). */
+  value: V;
+  /** `spec.widget.config`, opaque to the shell — passed straight through. */
+  config: Record<string, unknown>;
+  /** The input spec, for labels and the fallback. */
+  input: SpecInput;
+}
+
+export type WidgetPreview = ComponentType<WidgetPreviewProps>;
+
+/**
+ * Where the card mounts a kind's preview: inline in the socket row (chip-sized)
+ * or as a block in the card's preview strip (typeset equations that need room).
+ */
+export type PreviewPlacement = 'inline' | 'block';
+
+// A registered preview is either eager or a lazy code-split chunk (heavy
+// previews share the editor's KaTeX/translator chunk per kind).
+export type RegisteredPreview = WidgetPreview | LazyExoticComponent<WidgetPreview>;
+
+interface PreviewEntry {
+  component: RegisteredPreview;
+  placement: PreviewPlacement;
+}
+
+const PREVIEWS = new Map<string, PreviewEntry>();
+
+/** Register a read-only preview for a `kind` (index.ts, one line per kind). */
+export const registerWidgetPreview = (
+  kind: string,
+  component: RegisteredPreview,
+  placement: PreviewPlacement = 'inline',
+): void => {
+  PREVIEWS.set(kind, { component, placement });
+};
+
+/**
+ * Resolve a widget declaration to its registered preview, or null when the kind
+ * has none — the slot then falls back to the read-only value chip (D2).
+ */
+export const previewFor = (widget: Widget | null | undefined): PreviewEntry | null =>
+  (widget && PREVIEWS.get(widget.kind)) ?? null;
+
+/**
+ * The placement the card should mount a widget's preview in. Unregistered kinds
+ * (and the value-chip fallback) are `inline` — they live in the socket row.
+ */
+export const previewPlacementFor = (widget: Widget | null | undefined): PreviewPlacement =>
+  previewFor(widget)?.placement ?? 'inline';
+
+/**
+ * Wrap a dynamic import as a code-split preview (mirrors {@link lazyEditor}).
+ * Heavy previews register with this so KaTeX + the translators stay npm-bundled
+ * and code-split per kind; the mounting slot supplies the Suspense boundary.
+ */
+export const lazyPreview = (
+  load: () => Promise<{ default: WidgetPreview }>,
+): LazyExoticComponent<WidgetPreview> => lazy(load);

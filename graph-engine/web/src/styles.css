@@ -672,69 +672,33 @@ body,
   background: var(--ge-danger-soft);
 }
 
-/* ---- editable widget slot (ADR 0005 A-D4) ---- */
-/* The collapsed chip: same footprint as the read-only state, but affords a
-   click. It toggles the inline editor open/closed. */
-.ge-widget-chip {
-  cursor: pointer;
-  border: 1px solid transparent;
-  font-family: var(--ge-mono);
-  color: var(--ge-value);
-  background: var(--ge-value-soft);
-  transition: border-color 0.12s ease, background 0.12s ease;
+/* ---- read-only widget previews on the card (ADR 0013 D2) ---- */
+/* The inline preview sits where the read-only state used to: the socket row's
+   trailing slot. Its child is a chip/summary, so this is a pass-through box. */
+.ge-widget-preview {
+  margin-left: auto;
+  min-width: 0;
+  max-width: 60%;
+  display: flex;
+  justify-content: flex-end;
 }
 
-.ge-widget-chip:hover {
-  border-color: var(--ge-node-border-strong);
-  background: rgba(227, 178, 98, 0.22);
+/* A block preview (typeset math/calc) breaks onto its own full-width strip. */
+.ge-widget-preview--block {
+  margin-left: 0;
+  max-width: 100%;
+  display: block;
 }
 
-/* The expanded editor. Breaks onto its own full-width row under the socket so a
-   math preview / recipe grid has room, without disturbing the socket layout. */
-.ge-widget-slot {
-  flex: 1 1 100%;
+/* The block-preview strip between the sockets body and the render surface. */
+.ge-node__previews {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  min-width: 0;
-  margin-top: 4px;
-  padding: 7px;
-  border: 1px solid var(--ge-node-border-strong);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.03);
-}
-
-.ge-widget-slot__bar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.ge-widget-slot__label {
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  color: var(--ge-muted);
-  text-transform: uppercase;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.ge-widget-slot__done {
-  margin-left: auto;
-  padding: 2px 9px;
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--ge-accent);
-  background: var(--ge-accent-soft);
-  border: 1px solid transparent;
-  border-radius: 5px;
-  cursor: pointer;
-}
-
-.ge-widget-slot__done:hover {
-  border-color: var(--ge-accent);
+  padding: 8px 12px;
+  border-top: 1px solid var(--ge-node-border);
+  color: var(--ge-text);
+  overflow-x: auto;
 }
 
 .ge-widget-input {
@@ -839,6 +803,21 @@ body,
 /* Expanded into the selected node's source editor: same panel, more room. */
 .ge-inspector--editing {
   width: 560px;
+}
+
+/* A node hosting a large editor (calc / table-recipe) gets a wider panel so the
+   multi-line / grid editors have room (ADR 0013 D4 ergonomics). */
+.ge-inspector--wide {
+  width: 440px;
+}
+
+/* The inspector's per-input editing mount (ADR 0013 D4): inline, always
+   expanded, under the row head. */
+.ge-inspector-widget {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 2px;
 }
 
 .ge-inspector__head {
@@ -1619,4 +1598,17 @@ body,
   border: 1px solid var(--ge-node-border);
   border-radius: 6px;
   background: #fff;
+}
+
+/* ---- latex renderer kind (ADR 0013 D5): host-DOM KaTeX render surface ---- */
+.ge-latex-card {
+  border-top: 1px solid var(--ge-node-border);
+  padding: 10px 12px;
+  background: var(--ge-output-soft);
+  border-radius: 0 0 12px 12px;
+  color: var(--ge-text);
+}
+
+.ge-latex-card__body {
+  overflow-x: auto;
 }

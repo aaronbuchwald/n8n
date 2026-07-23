@@ -125,7 +125,7 @@ test('a registered kind mounts in the result strip only; shell chrome is untouch
   await expect(card.locator('.ge-socket__name', { hasText: 'text' })).toBeVisible();
   await expect(card.locator('.ge-handle--in').first()).toBeAttached();
   await expect(card.locator('.ge-handle--out').first()).toBeAttached();
-  await expect(card.getByTestId('widget-chip').first()).toBeVisible();
+  await expect(card.getByTestId('widget-preview').first()).toBeVisible();
 
   await runGraph(page);
 
