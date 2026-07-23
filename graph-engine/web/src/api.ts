@@ -203,7 +203,7 @@ export interface SaveGraphResult {
   graph: GraphDoc; // re-parsed from the rewritten module (the round-trip proof)
 }
 
-/** Send a JSON payload; a non-2xx `{message}` (or `{detail}`) rejects with it. */
+/** PUT/POST a JSON payload; a non-2xx `{message}` (or `{detail}`) rejects with it. */
 async function sendJson<T>(method: 'PUT' | 'POST', path: string, payload: unknown): Promise<T> {
   let res: Response;
   try {
@@ -232,6 +232,11 @@ async function putJson<T>(path: string, payload: unknown): Promise<T> {
   return sendJson<T>('PUT', path, payload);
 }
 
+/** POST a JSON payload; a non-2xx `{message}` (or `{detail}`) rejects with it. */
+async function postJson<T>(path: string, payload: unknown): Promise<T> {
+  return sendJson<T>('POST', path, payload);
+}
+
 /** Current git branch + which module files edits land on (`GET /api/workspace`). */
 export async function fetchWorkspace(): Promise<WorkspaceInfo> {
   return getJson<WorkspaceInfo>('/api/workspace');
@@ -249,6 +254,36 @@ export async function saveSource(
   graphId: GraphId = null,
 ): Promise<SaveSourceResult> {
   return putJson<SaveSourceResult>(sourcePath(specId, graphId), { source });
+}
+
+// --- new-function authoring (ADR 0011 D7/HD1, stream 11-W6) ----------------
+// "New node" in Monaco: author a brand-new @node and splice it into a real
+// module. The destination is always resolvable before submitting (HD1's "the
+// destination is always shown before the write happens") via
+// `fetchSourceTargets`; `createSource`'s `module` picks it, defaulting
+// server-side to the workspace's own module when omitted.
+
+export interface SourceTarget {
+  module: string; // importable module name
+  path: string; // repo-relative path of that module's file
+}
+
+/** Modules eligible to receive a new @node (`GET /api/source-targets`). The
+ * workspace's own module is always first — the HD1 default destination. */
+export async function fetchSourceTargets(): Promise<SourceTarget[]> {
+  const body = await getJson<{ targets: SourceTarget[] }>('/api/source-targets');
+  return body.targets;
+}
+
+/**
+ * Author a brand-new @node function (`POST /api/source`). `module` picks the
+ * target from `fetchSourceTargets()`'s list (HD1's picker); omitted defaults
+ * to the workspace's own module. The response shape matches `saveSource`'s
+ * (path/line-range/source + re-introspected `spec` + re-projected `graph`), so
+ * the same `ingestSourceSave` ingest path handles both.
+ */
+export async function createSource(source: string, module?: string): Promise<SaveSourceResult> {
+  return postJson<SaveSourceResult>('/api/source', module ? { source, module } : { source });
 }
 
 /** Rewrite the module's @main wiring from the graph (`PUT /api/graph`). */

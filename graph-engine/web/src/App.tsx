@@ -5,6 +5,7 @@ import { BranchBadge } from './components/BranchBadge';
 import { GraphPicker } from './components/GraphPicker';
 import { ExportPanel } from './components/ExportPanel';
 import { Palette } from './components/Palette';
+import { NewNodePanel } from './components/NewNodePanel';
 import { RunResultsPanel } from './components/RunResultsPanel';
 import { GraphView, type FocusRequest } from './GraphView';
 import {
@@ -62,6 +63,9 @@ export default function App() {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   // Whether the inspector is expanded into the selected node's source editor.
   const [editingSource, setEditingSource] = useState(false);
+  // Whether the "New node" authoring panel is open (ADR 0011 D7, stream 11-W6).
+  // Stand-in trigger until the palette (11-W5) grows its own "New node" entry.
+  const [creatingSource, setCreatingSource] = useState(false);
   const [focusRequest, setFocusRequest] = useState<FocusRequest | null>(null);
 
   // --- store reads (selectors return stored refs or primitives) ---------------
@@ -212,6 +216,8 @@ export default function App() {
         setEditingSource(false);
       } else if (selectedNodeId) {
         setSelectedNodeId(null);
+      } else if (creatingSource) {
+        setCreatingSource(false);
       } else if (python !== null) {
         setPython(null);
       } else if (run) {
@@ -223,7 +229,7 @@ export default function App() {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [selectedNodeId, editingSource, python, run]);
+  }, [selectedNodeId, editingSource, creatingSource, python, run]);
 
   const onRun = useCallback(async () => {
     if (!graph) return;
@@ -284,6 +290,17 @@ export default function App() {
             onClick={onExport}
           >
             {exportState.pending ? 'Exporting…' : 'Export Python'}
+          </button>
+          {/* Stand-in entry point for authoring a new @node (ADR 0011 D7); the
+              palette header (11-W5) grows its own trigger once it lands. */}
+          <button
+            type="button"
+            className="ge-btn"
+            data-testid="new-node-button"
+            disabled={!ready}
+            onClick={() => setCreatingSource(true)}
+          >
+            + New node
           </button>
         </div>
 
@@ -362,6 +379,7 @@ export default function App() {
             )}
           </div>
           {python !== null && <ExportPanel python={python} onClose={() => setPython(null)} />}
+          {creatingSource && <NewNodePanel onClose={() => setCreatingSource(false)} />}
         </div>
       )}
     </div>

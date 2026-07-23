@@ -1494,6 +1494,69 @@ body,
   padding: 10px 14px 12px;
 }
 
+/* ---- new-node authoring panel (ADR 0011 D7): docks beside the canvas ---- */
+.ge-newnode {
+  flex: none;
+  width: 34rem;
+  max-width: 50%;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--ge-node-border);
+  background: #0b0d11;
+}
+
+/* HD1's always-visible destination line — shown before the write happens,
+   never a silent auto-placement. */
+.ge-source__dest {
+  margin: 8px 14px 0;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px dashed var(--ge-node-border-strong);
+  background: var(--ge-value-soft);
+  color: var(--ge-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+}
+
+.ge-source__dest-path {
+  color: var(--ge-text);
+  font-weight: 700;
+}
+
+.ge-source__dest-change {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--ge-accent);
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.ge-source__dest-picker {
+  margin: 4px 14px 0;
+  padding: 4px;
+  list-style: none;
+  border: 1px solid var(--ge-node-border);
+  border-radius: 6px;
+  background: var(--ge-node-bg);
+  max-height: 10rem;
+  overflow-y: auto;
+}
+
+.ge-source__dest-option {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+}
+
+.ge-source__dest-default {
+  color: var(--ge-faint);
+  font-style: italic;
+}
+
 /* ---- html-card renderer kind (ADR 0010 10-K): sandboxed srcDoc iframe ---- */
 
 .ge-html-card {

@@ -258,6 +258,203 @@ def test_source_endpoints_refuse_files_outside_the_workspace(sandbox: Sandbox):
 
 
 # ----------------------------------------------------------------------
+# B2. new-function authoring — create-mode (ADR 0011 D7/HD1, stream 11-W6)
+# ----------------------------------------------------------------------
+
+
+def test_source_targets_lists_the_workspace_module_by_default(sandbox: Sandbox):
+    res = sandbox.client.get("/api/source-targets")
+    assert res.status_code == 200
+    assert res.json()["targets"] == [
+        {"module": sandbox.module_name, "path": f"{sandbox.module_name}.py"}
+    ]
+
+
+def test_post_source_creates_a_node_that_registers_and_is_wireable(sandbox: Sandbox):
+    new_source = textwrap.dedent('''\
+        @node
+        def doubled_total(t: float) -> float:
+            """Double the total."""
+            return 2 * t
+    ''')
+    res = sandbox.client.post("/api/source", json={"source": new_source})
+    assert res.status_code == 200, res.text
+    body = res.json()
+    spec_id = f"{sandbox.module_name}.doubled_total"
+    assert body["specId"] == spec_id
+    assert body["module"] == sandbox.module_name
+    assert body["path"] == f"{sandbox.module_name}.py"
+    assert body["source"] == new_source
+    assert body["spec"]["inputs"][0]["name"] == "t"
+    assert body["graphErrors"] == []
+
+    # It is registered — the palette a UI renders from now serves it too.
+    specs = sandbox.client.get("/api/specs").json()["specs"]
+    assert spec_id in specs
+
+    # ...and immediately wireable: place a node of the new type, wire it to the
+    # existing "t" node's output, and save — no import edit needed (HD1 (a)).
+    graph = sandbox.client.get("/api/graph").json()
+    graph["nodes"].append({"id": "dt", "type": spec_id, "inputs": {}, "position": None})
+    graph["edges"].append(
+        {"source": "t", "sourceOutput": "result", "target": "dt", "targetInput": "t"}
+    )
+    res = sandbox.client.put("/api/graph", json={"graph": graph})
+    assert res.status_code == 200, res.text
+    saved = res.json()["graph"]
+    assert "dt" in {n["id"] for n in saved["nodes"]}
+    text = sandbox.file.read_text(encoding="utf-8")
+    assert "dt = doubled_total(t=t)" in text
+
+
+def test_post_source_splices_the_new_def_above_main_preserving_everything_else(sandbox: Sandbox):
+    before = sandbox.file.read_text(encoding="utf-8")
+    new_source = "@node\ndef triple(x: int) -> int:\n    \"\"\"Triple x.\"\"\"\n    return 3 * x\n"
+
+    res = sandbox.client.post("/api/source", json={"source": new_source})
+    assert res.status_code == 200, res.text
+
+    after = sandbox.file.read_text(encoding="utf-8")
+    marker = "@main\ndef readings_report"
+    split = before.index(marker)
+    # Nothing before the composite is touched...
+    assert after[:split] == before[:split]
+    # ...the composite onward is preserved byte-for-byte...
+    suffix = before[split:]
+    assert after.endswith(suffix)
+    # ...and exactly the new def (plus its own separating blank lines) was
+    # inserted directly above it — a pure insertion, nothing replaced.
+    inserted = after[split : len(after) - len(suffix)]
+    assert inserted.strip() == new_source.strip()
+
+
+def test_post_source_defaults_to_the_workspace_module_and_accepts_it_explicitly(sandbox: Sandbox):
+    new_source = "@node\ndef quad(x: int) -> int:\n    \"\"\"x to the fourth.\"\"\"\n    return x ** 4\n"
+    res = sandbox.client.post(
+        "/api/source", json={"source": new_source, "module": sandbox.module_name}
+    )
+    assert res.status_code == 200, res.text
+    assert res.json()["module"] == sandbox.module_name
+
+
+def test_post_source_rejects_a_name_that_already_exists(sandbox: Sandbox):
+    before = sandbox.file.read_text(encoding="utf-8")
+    res = sandbox.client.post(
+        "/api/source",
+        json={"source": "@node\ndef average(x: int = 0) -> int:\n    return x\n"},
+    )
+    assert res.status_code == 400
+    assert "average" in res.json()["message"]
+    assert sandbox.file.read_text(encoding="utf-8") == before
+
+
+def test_post_source_rejects_dropping_the_decorator(sandbox: Sandbox):
+    res = sandbox.client.post(
+        "/api/source",
+        json={"source": "def undecorated(x: int = 0) -> int:\n    return x\n"},
+    )
+    assert res.status_code == 400
+    assert "@node" in res.json()["message"]
+
+
+def test_post_source_rejects_unparseable_source_without_writing(sandbox: Sandbox):
+    before = sandbox.file.read_text(encoding="utf-8")
+    res = sandbox.client.post("/api/source", json={"source": "def broken(:\n"})
+    assert res.status_code == 400
+    assert "parse" in res.json()["message"]
+    assert sandbox.file.read_text(encoding="utf-8") == before
+
+
+def test_post_source_rolls_back_a_function_that_fails_to_import(sandbox: Sandbox):
+    # Parses fine (valid Python), but the default is evaluated at *def* time —
+    # this raises the moment the reloaded module executes the def statement.
+    before = sandbox.file.read_text(encoding="utf-8")
+    new_source = textwrap.dedent('''\
+        @node
+        def broken(x: int = 1 / 0) -> int:
+            """A default that raises at def time."""
+            return x
+    ''')
+    res = sandbox.client.post("/api/source", json={"source": new_source})
+    assert res.status_code == 422
+    assert "restored" in res.json()["message"]
+
+    # The file is back to exactly what it was — never left unimportable...
+    assert sandbox.file.read_text(encoding="utf-8") == before
+    # ...and the module still imports fine: existing routes keep working.
+    assert sandbox.client.get("/api/graph").status_code == 200
+    assert f"{sandbox.module_name}.broken" not in sandbox.client.get("/api/specs").json()["specs"]
+
+
+def test_post_source_rejects_a_module_outside_allowed_roots(sandbox: Sandbox):
+    import textwrap as tw  # noqa: F401 — already imported (stdlib), outside allowed_roots
+
+    res = sandbox.client.post(
+        "/api/source",
+        json={"source": "@node\ndef greet(x: int = 0) -> int:\n    return x\n", "module": "textwrap"},
+    )
+    assert res.status_code == 403
+
+
+def test_post_source_rejects_an_unimported_module(sandbox: Sandbox):
+    res = sandbox.client.post(
+        "/api/source",
+        json={
+            "source": "@node\ndef greet(x: int = 0) -> int:\n    return x\n",
+            "module": "totally_unknown_module_xyz",
+        },
+    )
+    assert res.status_code == 404
+
+
+def test_post_source_without_workspace_stays_501():
+    client = TestClient(create_app())
+    res = client.post("/api/source", json={"source": "@node\ndef x(v: int = 0) -> int:\n    return v\n"})
+    assert res.status_code == 501
+
+
+def test_create_function_appends_at_eof_when_the_module_has_no_composite(tmp_path: Path):
+    # A pure node pack — two @node defs, no @main/@graph — exercises the "no
+    # single composite" fallback (D7) directly through the Workspace method.
+    name = f"packmod_{uuid.uuid4().hex[:8]}"
+    module_file = tmp_path / f"{name}.py"
+    module_file.write_text(
+        textwrap.dedent('''\
+            from engine import node
+
+
+            @node
+            def square(x: int) -> int:
+                """Square x."""
+                return x * x
+
+
+            @node
+            def negate(x: int) -> int:
+                """Negate x."""
+                return -x
+        '''),
+        encoding="utf-8",
+    )
+    sys.path.insert(0, str(tmp_path))
+    try:
+        importlib.import_module(name)
+        ws = Workspace(DEFAULT_REGISTRY, name, allowed_roots=[tmp_path])
+        new_source = "@node\ndef cube(x: int) -> int:\n    \"\"\"Cube x.\"\"\"\n    return x ** 3\n"
+        result = ws.create_function(new_source)
+        assert result["specId"] == f"{name}.cube"
+
+        text = module_file.read_text(encoding="utf-8")
+        assert text.index("def square(") < text.index("def negate(") < text.index("def cube(")
+        assert text.rstrip().endswith("return x ** 3")
+        assert f"{name}.cube" in DEFAULT_REGISTRY.specs()
+    finally:
+        sys.path.remove(str(tmp_path))
+        sys.modules.pop(name, None)
+        DEFAULT_REGISTRY.unregister_module(name)
+
+
+# ----------------------------------------------------------------------
 # C. graph persistence — wiring write-back + round-trip
 # ----------------------------------------------------------------------
 

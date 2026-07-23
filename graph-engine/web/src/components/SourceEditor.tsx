@@ -1,13 +1,21 @@
 import { Suspense, lazy, useCallback, useEffect, useState } from 'react';
 
-import { fetchSource, saveSource } from '../api';
+import { createSource, fetchSource, fetchSourceTargets, saveSource, type SourceTarget } from '../api';
 import { ingestSource, ingestSourceSave, setSourceDirty } from '../store/sync';
 import { useSyncSelector } from '../store/useSyncSelector';
 
 // Monaco is heavy; load it as its own chunk only when the source editor opens.
 const MonacoEditor = lazy(() => import('../monaco/MonacoEditor'));
 
-interface SourceEditorProps {
+// D7's pre-filled template: a commented starting point, not a blank buffer.
+const NEW_NODE_TEMPLATE = `@node
+def my_node(value: float, factor: float = 1.0) -> float:
+    """One line about what this computes."""
+    return value * factor
+`;
+
+interface EditSourceEditorProps {
+  mode?: 'edit';
   /** The node type (spec id, `module.qualname`) whose @node function is edited. */
   specId: string;
   /** How many canvas nodes share this type — the honesty label when > 1. */
@@ -15,16 +23,36 @@ interface SourceEditorProps {
   onClose: () => void; // back to the inspector view
 }
 
+interface CreateSourceEditorProps {
+  mode: 'create';
+  onClose: () => void;
+  /** Fired after a successful create with the new type's spec id, so a caller
+   * (e.g. the canvas) can place a node of it right away — "author → place →
+   * wire" as one flow (D7). Optional: creating in isolation is also valid. */
+  onCreated?: (specId: string) => void;
+}
+
+type SourceEditorProps = EditSourceEditorProps | CreateSourceEditorProps;
+
 /**
  * View + edit the source of the selected node's `@node` function, expanded
- * inside the node inspector. The panel is launched from a node but edits the
- * node TYPE's function (several nodes may share it), so the header names the
- * function — not the node id. Saving writes the def back into the REAL .py
- * file on the current branch (`PUT /api/source/{id}`) and re-introspects the
- * module, so signature changes flow into the palette. The body is a Monaco
- * editor with Python highlighting, fully bundled offline (see monaco/setup.ts).
+ * inside the node inspector; **or** author a brand-new one (`mode: "create"`,
+ * ADR 0011 D7) — dispatches to the two variants below, which share the Monaco
+ * shell but differ in what they read/write and what the header shows.
  */
-export function SourceEditor({ specId, sharedNodeCount, onClose }: SourceEditorProps) {
+export function SourceEditor(props: SourceEditorProps) {
+  if (props.mode === 'create') return <CreateSourceEditor {...props} />;
+  return <EditSourceEditor {...props} />;
+}
+
+/**
+ * Edit an EXISTING `@node` function. The panel is launched from a node but
+ * edits the node TYPE's function (several nodes may share it), so the header
+ * names the function — not the node id. Saving writes the def back into the
+ * REAL .py file on the current branch (`PUT /api/source/{id}`) and
+ * re-introspects the module, so signature changes flow into the palette.
+ */
+function EditSourceEditor({ specId, sharedNodeCount, onClose }: EditSourceEditorProps) {
   // The source cache lives in the store now (Gap G5): the path·lines basis is
   // one shared value, so a wiring/source write elsewhere refreshes this label
   // instead of leaving a stale per-view snapshot. The editable draft stays local.
@@ -160,6 +188,166 @@ export function SourceEditor({ specId, sharedNodeCount, onClose }: SourceEditorP
           onClick={onSave}
         >
           {pending ? 'Saving…' : 'Save to file'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Author a brand-new `@node` function (ADR 0011 D7/HD1, stream 11-W6).
+ * Pre-filled with a commented template; the destination line is **always
+ * visible before the write happens** — "will be written to `<path>`
+ * (change)" — never a silently-chosen default (HD1's key property). "(change)"
+ * opens a picker over the modules `GET /api/source-targets` reports eligible
+ * (the workspace module + every already-imported pack module inside
+ * `allowed_roots`). Submitting calls `POST /api/source`; success ingests the
+ * response the same way a source save does, so the next `GET /api/specs` (or
+ * any already-open palette re-fetch) shows the new type immediately.
+ */
+function CreateSourceEditor({ onClose, onCreated }: CreateSourceEditorProps) {
+  const [text, setText] = useState(NEW_NODE_TEMPLATE);
+  const [targets, setTargets] = useState<SourceTarget[]>([]);
+  const [targetModule, setTargetModule] = useState<string | null>(null);
+  const [targetsLoaded, setTargetsLoaded] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchSourceTargets()
+      .then((list) => {
+        if (cancelled) return;
+        setTargets(list);
+        // list_target_modules() puts the workspace's own module first — the
+        // HD1 default destination — so an unset selection just follows it.
+        setTargetModule((current) => current ?? list[0]?.module ?? null);
+        setTargetsLoaded(true);
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) setError(err instanceof Error ? err.message : String(err));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const destination = targets.find((t) => t.module === targetModule) ?? null;
+
+  const onCreate = useCallback(async () => {
+    setPending(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const result = await createSource(text, targetModule ?? undefined);
+      // Same shape as a source-save response (spec/source/graph): one ingest
+      // path handles both, so the palette's next specs read shows the type.
+      ingestSourceSave(result);
+      setNotice(
+        result.graphErrors.length > 0
+          ? `Created ${result.qualname} → written to ${result.path}, but the graph no longer binds: ${result.graphErrors[0].message}`
+          : `Created ${result.qualname} → written to ${result.path}`,
+      );
+      onCreated?.(result.specId);
+    } catch (err: unknown) {
+      // A rejected create (syntax error, name collision, reload failure): no
+      // file was written — surface the reason inline and keep the draft.
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPending(false);
+    }
+  }, [text, targetModule, onCreated]);
+
+  return (
+    <div className="ge-source" data-testid="source-editor" aria-label="Author a new node">
+      <div className="ge-source__head">
+        <span className="ge-source__title">new @node</span>
+        <button
+          type="button"
+          className="ge-btn ge-btn--ghost"
+          data-testid="source-back"
+          onClick={onClose}
+        >
+          ‹ Close
+        </button>
+      </div>
+
+      {/* HD1's key property: the destination is shown BEFORE the write, never
+          a silent auto-placement — always rendered once targets have loaded,
+          regardless of whether the user ever opens the picker. */}
+      <div className="ge-source__dest" data-testid="source-dest">
+        {destination ? (
+          <>
+            will be written to <code className="ge-source__dest-path">{destination.path}</code>{' '}
+            <button
+              type="button"
+              className="ge-source__dest-change"
+              data-testid="source-dest-change"
+              onClick={() => setPickerOpen((open) => !open)}
+              aria-expanded={pickerOpen}
+            >
+              (change)
+            </button>
+          </>
+        ) : (
+          'resolving destination…'
+        )}
+      </div>
+      {pickerOpen && (
+        <ul className="ge-source__dest-picker" data-testid="source-dest-picker">
+          {targets.map((target, i) => (
+            <li key={target.module}>
+              <button
+                type="button"
+                className="ge-btn ge-btn--ghost ge-source__dest-option"
+                data-testid={`source-dest-option-${target.module}`}
+                onClick={() => {
+                  setTargetModule(target.module);
+                  setPickerOpen(false);
+                }}
+              >
+                {target.path}
+                {i === 0 && <span className="ge-source__dest-default"> (default)</span>}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <div className="ge-source__editor" data-testid="source-editor-body">
+        <Suspense
+          fallback={
+            <div className="ge-source__loading" data-testid="source-loading">
+              Loading editor…
+            </div>
+          }
+        >
+          <MonacoEditor value={text} readOnly={false} onChange={setText} />
+        </Suspense>
+      </div>
+
+      {error && (
+        <div className="ge-source__error" data-testid="source-error" role="alert">
+          {error}
+        </div>
+      )}
+      {notice && !error && (
+        <div className="ge-source__notice" data-testid="source-notice">
+          {notice}
+        </div>
+      )}
+
+      <div className="ge-source__actions">
+        <button
+          type="button"
+          className="ge-btn ge-btn--primary"
+          data-testid="source-save-button"
+          disabled={!targetsLoaded || pending}
+          onClick={onCreate}
+        >
+          {pending ? 'Creating…' : 'Create node'}
         </button>
       </div>
     </div>
