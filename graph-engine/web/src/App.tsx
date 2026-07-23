@@ -311,9 +311,12 @@ export default function App() {
     [graph, inspected],
   );
 
-  // The right-dock tab registry (ADR 0014 D3). W1 mounts only the Inspector tab;
-  // W3 pushes Export and New-node entries onto this same array. Closing the tab
-  // deselects the node (D3: "Closing the tab = deselect").
+  // The right-dock tab registry (ADR 0014 D3). The Inspector is the first tab;
+  // W3 relocated Export and New-node onto this same array (they were floating
+  // panels over the canvas before). Order is inspector → export → newnode,
+  // whichever are present. Closing a tab clears its owning state (D3: "Closing
+  // the tab = deselect" for the inspector; export/newnode drop their own
+  // state), which removes the entry so the dock re-resolves the active tab.
   const dockTabs = useMemo<DockTab[]>(() => {
     const tabs: DockTab[] = [];
     if (inspected) {
@@ -333,8 +336,26 @@ export default function App() {
         ),
       });
     }
+    if (python !== null) {
+      tabs.push({
+        id: 'export',
+        kind: 'code',
+        label: 'Python',
+        onClose: () => setPython(null),
+        content: <ExportPanel python={python} onClose={() => setPython(null)} />,
+      });
+    }
+    if (creatingSource) {
+      tabs.push({
+        id: 'newnode',
+        kind: 'code',
+        label: 'New node',
+        onClose: () => setCreatingSource(false),
+        content: <NewNodePanel onClose={() => setCreatingSource(false)} />,
+      });
+    }
     return tabs;
-  }, [inspected, sharedNodeCount, editingSource, selectNode]);
+  }, [inspected, sharedNodeCount, editingSource, selectNode, python, creatingSource]);
 
   return (
     <div className="ge-app">
@@ -444,8 +465,9 @@ export default function App() {
               shell so BOTH the canvas widgets and the now-docked inspector's
               widget slot resolve the store's stable `commitLiteral`.
               The Palette (11-W5), GraphView, RunResults, and the inspector are
-              passed in as layout-ignorant slots (D6). Export and New-node stay
-              today's right columns — W3 relocates them into the dock. */}
+              passed in as layout-ignorant slots (D6). Export and New-node now
+              live as right-dock tabs too — W3 relocated them off the canvas and
+              into `dockTabs` (they used to float over `ge-main`). */}
           <WidgetEditingProvider value={commitLiteral}>
             <Workbench
               ref={workbenchRef}
@@ -474,8 +496,6 @@ export default function App() {
               dockTabs={dockTabs}
             />
           </WidgetEditingProvider>
-          {python !== null && <ExportPanel python={python} onClose={() => setPython(null)} />}
-          {creatingSource && <NewNodePanel onClose={() => setCreatingSource(false)} />}
         </div>
       )}
     </div>

@@ -199,11 +199,27 @@ test('boots with every region reachable', async ({ page }) => {
   await expect(page.getByTestId('dock-tab-inspector')).toBeVisible();
   await expect(page.getByTestId('node-inspector')).toBeVisible();
 
-  // Export and New-node stay reachable (W3 relocates them into the dock later).
+  // Export and New-node live in the right dock now (W3): the toolbar buttons open
+  // them as dock tabs, and — even from a collapsed rail — the dock re-expands and
+  // focuses the summoned tab so the surface never opens behind the rail (D1).
+  await page.getByTestId('collapse-right').click();
+  await expect(page.getByTestId('rail-right')).toBeVisible();
+
+  const dockBody = page.getByTestId('dock-body');
+
   await page.getByTestId('export-button').click();
-  await expect(page.getByTestId('export-panel')).toBeVisible();
+  await expect(page.getByTestId('rail-right')).toBeHidden(); // dock auto-reopened
+  await expect(page.getByTestId('dock-tab-export')).toBeVisible();
+  await expect(dockBody.getByTestId('export-panel')).toBeVisible();
+
   await page.getByTestId('new-node-button').click();
-  await expect(page.getByTestId('new-node-panel')).toBeVisible();
+  await expect(page.getByTestId('dock-tab-newnode')).toBeVisible();
+  await expect(dockBody.getByTestId('new-node-panel')).toBeVisible();
+
+  // Closing a tab via its × clears the state, so the tab and its body disappear.
+  await page.getByTestId('dock-tab-close-newnode').click();
+  await expect(page.getByTestId('dock-tab-newnode')).toBeHidden();
+  await expect(dockBody.getByTestId('new-node-panel')).toBeHidden();
 
   expect(external, 'EXTERNAL_REQUESTS must be 0').toHaveLength(0);
 });

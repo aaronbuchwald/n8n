@@ -2043,3 +2043,16 @@ body,
   background: transparent;
   backdrop-filter: none;
 }
+
+/* Export and New-node were fixed-width columns beside the canvas (their own
+   34rem + border-left). Docked (ADR 0014 W3), they fill the dock body like the
+   inspector — the components are untouched; only the layout float is dropped. */
+.ge-dock__body .ge-export,
+.ge-dock__body .ge-newnode {
+  width: 100%;
+  max-width: none;
+  height: 100%;
+  flex: 1;
+  min-height: 0;
+  border-left: none;
+}
