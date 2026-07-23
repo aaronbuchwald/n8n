@@ -19,12 +19,11 @@
     comparison string is built as plain Python text instead.
 
     forces.csv  ─> read_table ─> select_extreme(max, "force")    ──┐
-                                                                    ├─> handcalc ─> latex_to_mathml ─┐
-    members.csv ─> read_table ─> select_extreme(min, "capacity") ──┘                                 │
-                              │                                                                       │
-                              └────────────────────────────────────> check_capacity ────────────┐    │
-                                                                                                  ├─> join_text ─> render_math_card
-                              describe(F_max) ──────────────────────────────────────────────────┘
+                                                                    ├─> handcalc ─┬─ latex ─> latex_to_mathml ─┐
+    members.csv ─> read_table ─> select_extreme(min, "capacity") ──┘             │                            │
+                              │                                                   └─ results ─> calc_notes ─┐  │
+                              └────────────────────────────> check_capacity ─ text ─────────────────────┐  ├─> join_text ─> render_math_card
+                                                                                                         └──┘
 
 Simple, generic mock data only — no real engineering formulas, just a
 highest-vs-lowest comparison.
@@ -39,7 +38,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from engine import UserError, main, node
-from sym import describe, handcalc, join_text, latex_to_mathml, render_math_card
+from sym import calc_notes, handcalc, join_text, latex_to_mathml, render_math_card
 from table import read_table
 
 HERE = Path(__file__).resolve().parent
@@ -119,15 +118,19 @@ def capacity_check_report(
     steps = handcalc(lines="margin = C_min - F_max", C_min=min_capacity.value, F_max=max_force.value)
     mathml = latex_to_mathml(steps.latex)
 
-    # Logic concern: a separate node decides PASS/FAIL.
+    # Logic concern: a separate node decides PASS/FAIL (unchanged — it is a
+    # comparison, not the equation).
     verdict = check_capacity(force=max_force.value, capacity=min_capacity.value)
 
+    # Caption concern: the value-notes come FROM the calc's own results, so the
+    # symbol names are declared exactly once — in the equation — and the
+    # handcalc → caption dependency is an explicit wire on the canvas.
+    #
     # Straight-line form (ADR 0004 D7): each call is its own assignment — no
     # nested calls in arguments — so the composite round-trips through the
     # graph⟷source bijection and can be served + edited in the UI.
-    f_note = describe(max_force.value, label="F_max")
-    c_note = describe(min_capacity.value, label="C_min")
-    caption = join_text(f_note, c_note, verdict.text)
+    notes = calc_notes(steps.results)
+    caption = join_text(notes, verdict.text)
     report = render_math_card(title="Capacity check", mathml=mathml, caption=caption)
     return report
 

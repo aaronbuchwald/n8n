@@ -356,6 +356,7 @@ def calc_free_symbols(lines: str) -> list[dict]:
     outputs=["latex", "results"],
     widgets={"lines": Widget("calc", language="python-calc", multiline=True)},
     dynamic=DerivedInputs(param="lines", derive=calc_free_symbols),
+    renderer=Renderer("latex", socket="latex"),
 )
 def handcalc(lines: str = "", precision: int = 3, **symbols) -> dict:
     """Typeset calculation ``lines`` with the symbol sockets substituted.
@@ -367,7 +368,14 @@ def handcalc(lines: str = "", precision: int = 3, **symbols) -> dict:
     ``log``, ``exp``, ``pi``) is pre-bound and never a socket.
     """
     values = {**_MATH_WHITELIST, **symbols}
-    return typeset_calc(lines, values=values, precision=precision)
+    out = typeset_calc(lines, values=values, precision=precision)
+    # results = the calc's own names only: input symbols (appearance order per
+    # ADR 0007 D5), then computed LHS values. The injected math whitelist is an
+    # implementation detail, not part of the calc — the deriver guarantees no
+    # user symbol can share a whitelist name, so this removes exactly what was
+    # injected above.
+    out["results"] = {k: v for k, v in out["results"].items() if k not in _MATH_WHITELIST}
+    return out
 
 
 # -- rendering: LaTeX -> native MathML -> self-contained HTML ---------------
@@ -403,6 +411,31 @@ def latex_to_mathml(latex: str = "") -> str:
 def join_text(a: str = "", b: str = "", c: str = "", sep: str = " · ") -> str:
     """Join up to three text fragments with ``sep``, skipping empty ones."""
     return sep.join(part for part in (a, b, c) if part)
+
+
+@node
+def calc_notes(results: dict, precision: int = 4, sep: str = " · ") -> str:
+    """Format a calc's ``results`` map as symbol-value notes, one per entry.
+
+    ``results`` is the ``{symbol: value}`` dict a calc node outputs
+    (:func:`handcalc`/:func:`typeset_calc` socket ``results``). Each entry
+    renders as ``name = value`` — the note label IS the symbol name, so the
+    notes can never drift from the equation that produced them. Floats are
+    trimmed to ``precision`` significant digits; other values use ``str()``
+    (the same formatting rules as :func:`describe`). Entries render in dict
+    order: input symbols in appearance order, then computed results.
+    """
+    if not isinstance(results, dict):
+        raise UserError(
+            f"calc_notes needs a results dict, got {type(results).__name__}"
+        )
+
+    def fmt(v: object) -> str:
+        if isinstance(v, float):
+            return f"{v:.{precision}g}"
+        return str(v)
+
+    return sep.join(f"{name} = {fmt(value)}" for name, value in results.items())
 
 
 # ADR 0010 D6: render the card inline (canvas + results panel) via the
@@ -445,6 +478,7 @@ NODES = [
     handcalc,
     latex_to_mathml,
     join_text,
+    calc_notes,
     render_math_card,
 ]
 
@@ -462,6 +496,7 @@ __all__ = [
     "calc_free_symbols",
     "latex_to_mathml",
     "join_text",
+    "calc_notes",
     "render_math_card",
     "NODES",
 ]

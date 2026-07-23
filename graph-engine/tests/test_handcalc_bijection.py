@@ -69,3 +69,26 @@ def test_roundtrip_multiline_calc():
     g.connect("velocity", "result", "steps", "v")
     g.output = {"node": "steps", "socket": "latex"}
     _assert_roundtrip(g)
+
+
+def test_roundtrip_handcalc_results_wired_to_calc_notes():
+    """ADR 0013 Change 2: handcalc.results → calc_notes round-trips (2.7).
+
+    The single-source-of-truth caption wire is an ordinary edge on the graph;
+    adding calc_notes downstream of a dynamic handcalc node does not disturb
+    the bijection.
+    """
+    g = Graph()
+    g.add("cap", f"{__name__}.num", inputs={"value": 210.0})
+    g.add("force", f"{__name__}.num", inputs={"value": 120.0})
+    g.add("steps", "sym.handcalc", inputs={"lines": "margin = C_min - F_max"})
+    g.add("notes", "sym.calc_notes")
+    g.connect("cap", "result", "steps", "C_min")
+    g.connect("force", "result", "steps", "F_max")
+    g.connect("steps", "results", "notes", "results")
+    g.output = {"node": "notes", "socket": "result"}
+    _assert_roundtrip(g)
+
+    source = to_composite(g, DEFAULT_REGISTRY)
+    # steps is multi-output (latex, results); the caption reads its results socket.
+    assert "notes = calc_notes(results=steps['results'])" in source
