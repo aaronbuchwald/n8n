@@ -11,7 +11,14 @@ import { BranchBadge } from './components/BranchBadge';
 import { ExportPanel } from './components/ExportPanel';
 import { RunResultsPanel } from './components/RunResultsPanel';
 import { GraphView, type FocusRequest } from './GraphView';
-import { makeGraphCommitter, WidgetEditingProvider } from './widgets';
+import {
+  CalcHostProvider,
+  makeEquationCommitter,
+  makeGraphCommitter,
+  useDerivedInputs,
+  WidgetEditingProvider,
+  type CalcHost,
+} from './widgets';
 
 type LoadState =
   | { status: 'loading' }
@@ -36,6 +43,9 @@ export default function App() {
   // A failed widget commit surfaces here as a transient banner (A-D5: PUT
   // /api/graph rejected). Auto-clears so it never lingers over the canvas.
   const [widgetError, setWidgetError] = useState<string | null>(null);
+  // What an equation commit disconnected (ADR 0007 D8 prune-with-toast):
+  // "F_max removed from equation — unwired from max_force". Transient.
+  const [toast, setToast] = useState<string | null>(null);
   // The inspected node. Owned here (not in GraphView) so run-results rows can
   // select it and the Escape handler below can close it.
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
@@ -98,6 +108,12 @@ export default function App() {
     return () => window.clearTimeout(timer);
   }, [widgetError]);
 
+  useEffect(() => {
+    if (!toast) return;
+    const timer = window.setTimeout(() => setToast(null), 8000);
+    return () => window.clearTimeout(timer);
+  }, [toast]);
+
   // Escape dismisses the topmost open surface, one per press: the source
   // editor (back to the inspector), then the inspector, then the export dock,
   // then run results. Widget editors handle their own keys (the slot is
@@ -138,6 +154,23 @@ export default function App() {
     () => (graph ? makeGraphCommitter(graph, onWidgetSaved, onWidgetError) : null),
     [graph, onWidgetSaved, onWidgetError],
   );
+
+  // Derived sockets per dynamic node (ADR 0007): committed literals only —
+  // the calc editor's draft preview never reaches the canvas.
+  const specs = state.status === 'ready' ? state.data.specs : null;
+  const derivedByNode = useDerivedInputs(graph, specs);
+
+  // The calc host seam (ADR 0007 D8): equation commits prune edges into
+  // removed sockets in the same save and toast what they unwired.
+  const calcHost = useMemo((): CalcHost | null => {
+    if (!graph || !specs) return null;
+    return {
+      graph,
+      specs,
+      derivedByNode,
+      commitEquation: makeEquationCommitter(specs, onWidgetSaved, onWidgetError, setToast),
+    };
+  }, [graph, specs, derivedByNode, onWidgetSaved, onWidgetError]);
   // Contract version comes from /api/specs (the palette contract), per ADR 0002.
   const version = state.status === 'ready' ? state.data.version : null;
 
@@ -214,6 +247,12 @@ export default function App() {
         </div>
       )}
 
+      {toast && (
+        <div className="ge-toast" data-testid="calc-toast" role="status">
+          {toast}
+        </div>
+      )}
+
       {state.status === 'loading' && (
         <div className="ge-status" data-testid="app-loading">
           <span className="ge-status__spinner" aria-hidden="true" />
@@ -233,18 +272,21 @@ export default function App() {
         <div className="ge-main">
           <div className="ge-workspace">
             <WidgetEditingProvider value={commit}>
-              <GraphView
-                graph={state.data.graph}
-                specs={state.data.specs}
-                runOutputs={run?.outputs ?? null}
-                errorNodeId={errorNodeId}
-                selectedNodeId={selectedNodeId}
-                onSelectNode={selectNode}
-                focusRequest={focusRequest}
-                editingSource={editingSource}
-                onEditSourceChange={setEditingSource}
-                onSourceSaved={onSourceSaved}
-              />
+              <CalcHostProvider value={calcHost}>
+                <GraphView
+                  graph={state.data.graph}
+                  specs={state.data.specs}
+                  derivedByNode={derivedByNode}
+                  runOutputs={run?.outputs ?? null}
+                  errorNodeId={errorNodeId}
+                  selectedNodeId={selectedNodeId}
+                  onSelectNode={selectNode}
+                  focusRequest={focusRequest}
+                  editingSource={editingSource}
+                  onEditSourceChange={setEditingSource}
+                  onSourceSaved={onSourceSaved}
+                />
+              </CalcHostProvider>
             </WidgetEditingProvider>
             {run && (
               <RunResultsPanel

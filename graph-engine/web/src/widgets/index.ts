@@ -24,6 +24,10 @@ registerWidget('table-recipe', lazyEditor(() => import('./table/TableRecipeEdito
 // Stream B: math widget (ADR 0005 B) — SymPy expressions with KaTeX preview.
 registerWidget('math', lazyEditor(() => import('./math/MathEditor').then(m => ({ default: m.MathEditor }))));
 
+// Stream W: calc widget (ADR 0007 D8) — handcalc equations whose free symbols
+// derive the node's input sockets (server-authoritative, via /derive).
+registerWidget('calc', lazyEditor(() => import('./calc/CalcEditor').then(m => ({ default: m.CalcEditor }))));
+
 // Public API for the shell and downstream streams.
 export {
   editorFor,
@@ -40,3 +44,17 @@ export {
   WidgetEditingProvider,
   type CommitInput,
 } from './context';
+// The calc host seam (ADR 0007 D8): the shell mounts the provider so the calc
+// editor can derive sockets and prune-on-commit; without it the editor
+// degrades to a plain literal commit. Deliberately eager-imported here — these
+// are tiny context/hook modules; the heavy editor stays a lazy chunk above.
+export {
+  CalcHostProvider,
+  makeEquationCommitter,
+  useCalcHost,
+  type CalcHost,
+  type CommitEquation,
+  type EquationCommitRequest,
+  type EquationCommitResult,
+} from './calc/host';
+export { useDerivedInputs } from './calc/useDerivedInputs';

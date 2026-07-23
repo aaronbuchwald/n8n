@@ -1,6 +1,6 @@
 import type { Edge, Node } from '@xyflow/react';
 import { computeLayout, type LayoutEdge } from './layout';
-import type { GraphDoc, NodeSpec, NodeSpecs, SpecNodeData } from './types';
+import type { GraphDoc, NodeSpec, NodeSpecs, SpecInput, SpecNodeData } from './types';
 
 // Handle ids are namespaced by direction so a socket that is both an input and
 // output name (e.g. "result") never collides.
@@ -63,6 +63,13 @@ export function layoutFlowNodes(
 export function buildFlow(
   graph: GraphDoc,
   specs: NodeSpecs,
+  // Per-node derived input entries for dynamic nodes (ADR 0007): computed from
+  // each node's committed deriving literal via the derive endpoint (see
+  // widgets/calc/useDerivedInputs). Merged into that node's rendered input
+  // list so derived sockets get real handles, wiring states and widget slots
+  // exactly like static ones. Absent (or an absent node key) → static spec
+  // only, which keeps existing wires on screen when derivation fails.
+  derivedByNode?: ReadonlyMap<string, SpecInput[]>,
 ): { nodes: Node<SpecNodeData>[]; edges: Edge[] } {
   // Input names of each node fed by an edge, keyed by node id.
   const wiredByNode = new Map<string, Set<string>>();
@@ -87,7 +94,11 @@ export function buildFlow(
   }
 
   const nodes: Node<SpecNodeData>[] = graph.nodes.map((gn) => {
-    const spec = specs[gn.type];
+    let spec: NodeSpec | undefined = specs[gn.type];
+    const derived = derivedByNode?.get(gn.id);
+    if (spec && derived && derived.length > 0) {
+      spec = { ...spec, inputs: [...spec.inputs, ...derived] };
+    }
     return {
       id: gn.id,
       type: 'specNode',

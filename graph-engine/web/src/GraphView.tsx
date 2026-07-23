@@ -21,7 +21,7 @@ import { buildFlow, layoutFlowNodes } from './buildGraph';
 import { NodeInspector } from './components/NodeInspector';
 import { SpecNode } from './components/SpecNode';
 import { inspectNode } from './inspect';
-import type { GraphDoc, NodeSpecs, SpecNodeData } from './types';
+import type { GraphDoc, NodeSpecs, SpecInput, SpecNodeData } from './types';
 
 const nodeTypes: NodeTypes = { specNode: SpecNode };
 
@@ -68,6 +68,10 @@ export interface FocusRequest {
 interface GraphViewProps {
   graph: GraphDoc;
   specs: NodeSpecs;
+  // Derived input entries per dynamic node id (ADR 0007), merged into the
+  // rendered spec by buildFlow. Optional so callers without dynamic nodes
+  // (and existing tests) are unchanged.
+  derivedByNode?: ReadonlyMap<string, SpecInput[]>;
   // Per-node socket values from the latest run (null before any run).
   runOutputs: Record<string, SocketValues> | null;
   // The node the latest run failed at, if any.
@@ -91,6 +95,7 @@ type LayoutPhase = 'measuring' | 'framing' | 'ready';
 function GraphCanvas({
   graph,
   specs,
+  derivedByNode,
   runOutputs,
   errorNodeId,
   selectedNodeId,
@@ -101,8 +106,8 @@ function GraphCanvas({
   onSourceSaved,
 }: GraphViewProps) {
   const { nodes: initialNodes, edges: initialEdges } = useMemo(
-    () => buildFlow(graph, specs),
-    [graph, specs],
+    () => buildFlow(graph, specs, derivedByNode),
+    [graph, specs, derivedByNode],
   );
 
   // Controlled state so ReactFlow can sync node dimensions back (minimap) and
