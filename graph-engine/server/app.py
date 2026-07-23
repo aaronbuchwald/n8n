@@ -378,6 +378,37 @@ def create_app(
         result["graphErrors"] = _rebind_graph_doc(doc)
         return JSONResponse(status_code=200, content=result)
 
+    def _post_source_impl(ws: Workspace, body: dict, current_doc) -> JSONResponse:
+        """``POST .../source`` — author a brand-new ``@node`` (ADR 0011 D7).
+
+        Body: ``{"source": "<@node function>", "module": "<target>"?}``.
+        ``module`` is optional and defaults to the workspace's own module (HD1);
+        when present it must be one of ``list_target_modules()``'s entries — an
+        already-imported module inside ``allowed_roots`` — which
+        ``create_function`` itself enforces, so the picker and the write can
+        never disagree about what's a legal destination. The response mirrors a
+        source edit's shape (path/line-range/source + re-introspected `spec` +
+        the re-projected `graph`), so the same client-side ingest path
+        (``ingestSourceSave``) that handles PUT /api/source handles this too —
+        the new type appears in the palette on the very next specs read.
+        """
+        source = body.get("source") if isinstance(body, dict) else None
+        if not isinstance(source, str) or not source.strip():
+            return JSONResponse(status_code=400, content={"message": "body must be {\"source\": \"<function definition>\"}"})
+        module = body.get("module") if isinstance(body, dict) else None
+        if module is not None and not isinstance(module, str):
+            return JSONResponse(status_code=400, content={"message": "\"module\" must be a string when present"})
+        try:
+            result = ws.create_function(source, module=module or None)
+        except SourceEditError as exc:
+            return JSONResponse(status_code=exc.status, content={"message": str(exc)})
+        spec_id = f"{result['module']}.{result['qualname']}"
+        result["spec"] = registry.spec(spec_id)  # re-introspected after reload
+        doc = current_doc()
+        result["graph"] = doc
+        result["graphErrors"] = _rebind_graph_doc(doc)
+        return JSONResponse(status_code=200, content=result)
+
     def _put_graph_impl(ws: Workspace, body: dict) -> JSONResponse:
         try:
             graph = _graph_from(body)
@@ -464,6 +495,16 @@ def create_app(
         ws, _ = _entry_slot(entry_id)
         return _put_source_impl(ws, spec_id, body, _entry_doc(ws))
 
+    @app.post("/api/graphs/{entry_id}/source")
+    def post_entry_source(entry_id: str, body: dict = Body(default={})) -> JSONResponse:
+        ws, _ = _entry_slot(entry_id)
+        return _post_source_impl(ws, body, _entry_doc(ws))
+
+    @app.get("/api/graphs/{entry_id}/source-targets")
+    def get_entry_source_targets(entry_id: str) -> JSONResponse:
+        ws, _ = _entry_slot(entry_id)
+        return JSONResponse(status_code=200, content={"targets": ws.list_target_modules()})
+
     @app.put("/api/graphs/{entry_id}/graph")
     def put_entry_graph(entry_id: str, body: dict = Body(...)) -> JSONResponse:
         ws, _ = _entry_slot(entry_id)
@@ -497,6 +538,30 @@ def create_app(
             return state["graph"]
 
         return _put_source_impl(workspace, spec_id, body, _legacy_doc)
+
+    @app.post("/api/source")
+    def post_source(body: dict = Body(default={})) -> JSONResponse:
+        slot = _default_slot()
+        if slot is not None:
+            return _post_source_impl(slot[0], body, _entry_doc(slot[0]))
+        if workspace is None:
+            return _no_workspace()
+
+        def _legacy_doc() -> Optional[dict]:
+            # Legacy single-slot: reparse the edited module and refresh the slot
+            # so GET /api/graph also reflects the new function (ADR 0008 G3).
+            state["graph"] = workspace.parse_graph()
+            return state["graph"]
+
+        return _post_source_impl(workspace, body, _legacy_doc)
+
+    @app.get("/api/source-targets")
+    def get_source_targets() -> JSONResponse:
+        slot = _default_slot()
+        ws = slot[0] if slot is not None else workspace
+        if ws is None:
+            return _no_workspace()
+        return JSONResponse(status_code=200, content={"targets": ws.list_target_modules()})
 
     @app.put("/api/graph")
     def put_graph(body: dict = Body(...)) -> JSONResponse:

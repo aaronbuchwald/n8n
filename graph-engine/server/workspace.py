@@ -6,6 +6,12 @@ a projection of it. This module owns every **write-back** the server performs:
 * ``function_source`` / ``replace_function_source`` — read/replace one ``@node``
   function definition in the real ``.py`` file, splicing text by AST line span
   so everything outside the replaced ``def`` is preserved byte-for-byte.
+* ``create_function`` — splice a brand-new ``@node`` function into a target
+  module (ADR 0011 D7/HD1/W6): insertion-only (no existing line touched), so it
+  never disturbs anything ``replace_function_source`` promises to leave alone.
+* ``list_target_modules`` — the workspace module + every other module the
+  registry currently has types in, filtered to ``allowed_roots`` — the data
+  behind the "New node" destination picker (HD1).
 * ``save_graph`` — rewrite *only* the ``@main`` composite's wiring lines from a
   graph (D5); node bodies, imports, comments and the composite's own signature/
   docstring are untouched. Layout goes to a ``<module>.layout.json`` sidecar
@@ -30,7 +36,7 @@ import threading
 from pathlib import Path
 from typing import Any, Optional
 
-from engine import Graph, NodeRegistry, from_composite
+from engine import EngineError, Graph, NodeRegistry, find_composite, from_composite
 
 from .writeback import compute_writeback
 
@@ -165,6 +171,40 @@ def _splice_lines(text: str, start: int, end: int, replacement: list[str]) -> st
     lines = text.splitlines(keepends=True)
     new_block = [line if line.endswith("\n") else line + "\n" for line in replacement]
     return "".join(lines[: start - 1] + new_block + lines[end:])
+
+
+def _insert_lines(text: str, at_line: int, block: list[str]) -> str:
+    """Insert ``block`` immediately before 1-based line ``at_line``.
+
+    Insertion only — no existing line is touched or renumbered away, so this is
+    comment/blank-line preserving by construction (ADR 0011 HD2 case 1, applied
+    to a new function def rather than a wiring statement).
+    """
+    lines = text.splitlines(keepends=True)
+    new_block = [line if line.endswith("\n") else line + "\n" for line in block]
+    return "".join(lines[: at_line - 1] + new_block + lines[at_line - 1 :])
+
+
+def _top_level_names(tree: ast.Module) -> set[str]:
+    """Every top-level name a new function's own name could collide with.
+
+    Defs/classes (by name) and imports (by their local, possibly-aliased name)
+    — the collision set ``create_function`` checks a new function's name
+    against (D7). Deliberately narrower than :func:`engine.mint.module_collision_set`
+    (which guards *node ids*, i.e. composite-body variables): this guards the
+    module's top-level *function/class/import* namespace instead.
+    """
+    names: set[str] = set()
+    for stmt in tree.body:
+        if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.add(stmt.name)
+        elif isinstance(stmt, ast.Import):
+            for alias in stmt.names:
+                names.add(alias.asname or alias.name.split(".")[0])
+        elif isinstance(stmt, ast.ImportFrom):
+            for alias in stmt.names:
+                names.add(alias.asname or alias.name)
+    return names
 
 
 # ----------------------------------------------------------------------
@@ -327,6 +367,140 @@ class Workspace:
             new_text = _splice_lines(text, start, end, new_source.splitlines())
             self._write_and_reload(path, new_text, previous=text, module=spec["module"])
         return self.function_source(spec_id)
+
+    # -- new-function authoring (POST /api/source — ADR 0011 D7/HD1/W6) ---
+
+    def list_target_modules(self) -> list[dict[str, Any]]:
+        """Modules eligible to receive a new ``@node`` (the HD1 picker's data).
+
+        The workspace's own module (always first — the HD1 default) plus every
+        other module the registry currently has types registered in, filtered to
+        files that resolve inside ``allowed_roots``. A module outside the roots,
+        or with no resolvable file (not actually imported), is omitted — offering
+        it would only lead to :meth:`create_function` refusing it anyway; the
+        picker and the write share this one source of truth.
+        """
+        ordered = [self.module_name]
+        seen = {self.module_name}
+        for spec in self.registry.specs().values():
+            name = spec["module"]
+            if name not in seen:
+                seen.add(name)
+                ordered.append(name)
+
+        targets: list[dict[str, Any]] = []
+        for name in ordered:
+            module = sys.modules.get(name)
+            file = getattr(module, "__file__", None) if module is not None else None
+            if file is None:
+                continue
+            resolved = Path(file).resolve()
+            if not any(resolved.is_relative_to(root) for root in self.allowed_roots):
+                continue
+            targets.append({"module": name, "path": self._repo_relative(resolved)})
+        return targets
+
+    def _resolve_target_module(self, module: Optional[str]) -> tuple[str, Path]:
+        """The ``(module name, file path)`` a new ``@node`` should land on (HD1).
+
+        Defaults to the workspace's own module. An explicit ``module`` must
+        already be imported (the picker only ever offers modules the process has
+        already loaded — see :meth:`list_target_modules`); anything else is
+        rejected rather than guessed at or auto-imported. ``allowed_roots`` is
+        enforced by the caller via ``_check_editable``, same as every other write.
+        """
+        target = module or self.module_name
+        if target == self.module_name:
+            return target, self.module_file()
+        mod = sys.modules.get(target)
+        file = getattr(mod, "__file__", None) if mod is not None else None
+        if file is None:
+            raise SourceEditError(
+                f"module {target!r} is not imported or has no file, so a new "
+                f"function can't be written there",
+                status=404,
+            )
+        return target, Path(file).resolve()
+
+    def _validate_new_function(self, existing_tree: ast.Module, new_source: str) -> ast.FunctionDef:
+        """Validate a brand-new ``@node`` before it is spliced into a module.
+
+        Mirrors ``_validate_replacement``'s parse/shape/decorator checks, plus
+        the check unique to creation: the name must not already exist as a
+        top-level def/class/import in the target module (D7) — an existing name
+        is never silently shadowed or overwritten; ``PUT /api/source/{id}`` is
+        the endpoint for editing something that already exists.
+        """
+        try:
+            new_tree = ast.parse(new_source)
+        except SyntaxError as exc:
+            raise SourceEditError(f"the submitted source does not parse: {exc}") from exc
+        defs = [s for s in new_tree.body if isinstance(s, ast.FunctionDef)]
+        if len(new_tree.body) != 1 or len(defs) != 1:
+            raise SourceEditError(
+                "the submitted source must contain exactly one top-level "
+                "function definition"
+            )
+        new_def = defs[0]
+        if not new_def.decorator_list:
+            raise SourceEditError(
+                "the submitted source has no decorator — add @node so the "
+                "function registers as a node type"
+            )
+        if new_def.name in _top_level_names(existing_tree):
+            raise SourceEditError(
+                f"{new_def.name!r} already exists in the target module — edit "
+                f"it with PUT /api/source/{{id}} instead of creating a new function"
+            )
+        return new_def
+
+    def create_function(self, new_source: str, *, module: Optional[str] = None) -> dict[str, Any]:
+        """Splice a brand-new ``@node`` function into a target module.
+
+        ``module`` defaults to the workspace's own module (HD1 default (a)); an
+        explicit value must resolve to an already-imported module inside
+        ``allowed_roots`` (:meth:`list_target_modules` lists the legitimate
+        choices a picker should offer). The new def is spliced **immediately
+        above** the module's ``@main``/``@graph`` composite — bodies first,
+        wiring last, matching every hand-authored example module (D7) — or
+        appended at EOF when the module has no single composite (a pure node
+        pack). Only the new lines are touched; everything else in the file is
+        preserved byte-for-byte (insertion, not replacement).
+
+        Reload + rollback mirror :meth:`replace_function_source` exactly: a
+        def that parses but fails to *execute* on import (e.g. a raising
+        default argument) restores the previous file content and 422s, so a
+        broken new function never leaves the module unimportable. Returns the
+        freshly registered function's :meth:`function_source` payload
+        (path/line-range/source), the same shape an edit's response carries.
+        """
+        target_module, path = self._resolve_target_module(module)
+        self._check_editable(path)
+
+        with _WRITE_LOCK:  # serialize the read-modify-write (ADR 0009)
+            text = path.read_text(encoding="utf-8")
+            tree = ast.parse(text)
+            new_def = self._validate_new_function(tree, new_source)
+
+            block = new_source.rstrip("\n").splitlines()
+            try:
+                composite = find_composite(tree)
+            except EngineError:
+                # No single @main/@graph composite (a pure pack module, or one
+                # that doesn't parse to a composite yet) — append at EOF (D7).
+                new_text = text if text.endswith("\n") else text + "\n"
+                if new_text.strip():
+                    new_text += "\n\n"
+                new_text += "\n".join(block) + "\n"
+            else:
+                at_line = min(
+                    [composite.lineno, *(d.lineno for d in composite.decorator_list)]
+                )
+                new_text = _insert_lines(text, at_line, [*block, "", ""])
+
+            self._write_and_reload(path, new_text, previous=text, module=target_module)
+
+        return self.function_source(f"{target_module}.{new_def.name}")
 
     # -- graph persistence (PUT /api/graph) -------------------------------
 
