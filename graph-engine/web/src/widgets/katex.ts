@@ -22,6 +22,14 @@ export const loadKaTeX = async (): Promise<typeof import('katex')> => {
 /**
  * Render LaTeX to an HTML string via KaTeX. Returns `null` (never throws) when
  * KaTeX rejects the input, so callers fall back to honest raw text / chips.
+ *
+ * `trust: false` is PINNED last, after the caller's `options`, so it can never
+ * be overridden. Every surface fed by this loader is read-only (the card
+ * previews, ADR 0013 D2/D3) or an inert draft preview, and the calc/math
+ * translators forward unrecognized LaTeX verbatim — so an equation carrying
+ * `\href`/`\url`/`\includegraphics` must never become a live `<a>`/asset
+ * ("link out of a formula"). This matches the `latex` renderer's posture and
+ * keeps the previews inert: a click just selects the node, never navigates.
  */
 export const renderKatex = async (
   latex: string,
@@ -29,7 +37,7 @@ export const renderKatex = async (
 ): Promise<string | null> => {
   try {
     const KT = await loadKaTeX();
-    return KT.renderToString(latex, { throwOnError: true, ...options });
+    return KT.renderToString(latex, { throwOnError: true, ...options, trust: false });
   } catch {
     return null;
   }
