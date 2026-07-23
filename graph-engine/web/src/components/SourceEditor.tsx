@@ -128,14 +128,14 @@ function EditSourceEditor({ specId, sharedNodeCount, onClose }: EditSourceEditor
   return (
     <div className="ge-source" data-testid="source-editor" aria-label={`Source of ${specId}`}>
       <div className="ge-source__head">
-        <span className="ge-source__title">@node source</span>
+        <span className="ge-source__title">node definition</span>
         <button
           type="button"
           className="ge-btn ge-btn--ghost"
           data-testid="source-back"
           onClick={onClose}
         >
-          ‹ Inspector
+          ‹ back to instance
         </button>
       </div>
 

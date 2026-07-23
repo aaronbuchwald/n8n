@@ -60,7 +60,7 @@ test('a shape-changing source save re-lays-out the card via the store (G6)', asy
   const card = nodeCard(page, 'parse_expr');
   await card.getByTestId('node-title').click();
   await expect(page.getByTestId('node-inspector')).toBeVisible();
-  await page.getByTestId('inspector-edit-source').click();
+  await page.getByTestId('inspector-open-definition').click();
   await expect(page.getByTestId('source-editor')).toBeVisible();
   await expect(page.getByTestId('source-save-button')).toBeEnabled();
   await page.getByTestId('source-save-button').click();

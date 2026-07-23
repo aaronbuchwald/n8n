@@ -1,11 +1,12 @@
 import { test, expect, type Page } from '@playwright/test';
 
-// Node-contextual source editing: clicking a node opens its inspector, and the
-// inspector's "Edit source" expands into the source editor for THAT node's
-// `@node` function (spec id = the node's type). The old disconnected topbar
-// button + node-type dropdown are gone. The editor is honest about scope: it
-// is launched from a node but edits the node TYPE's function, so its header
-// names the function (module.qualname) + real file path + line range.
+// Node-contextual definition editing (ADR 0015): clicking a node opens its
+// INSTANCE panel, and the "node type" section's "Open node definition" drill-in
+// expands into the source editor for THAT node's `@node` function (spec id = the
+// node's type). The old disconnected topbar button + node-type dropdown are
+// gone. The editor is honest about scope: it is launched from a node but edits
+// the node TYPE's function, so its header names the function (module.qualname) +
+// real file path + line range, and the shared-scope warning shows BEFORE entry.
 //
 // The body is a Monaco editor (Python highlighting, fully bundled offline). Its
 // content lives in a virtual-scrolled model rather than a <textarea>, so these
@@ -63,18 +64,21 @@ async function setMonacoValue(page: Page, value: string) {
   }, value);
 }
 
-test('the inspector offers "Edit source" scoped to the clicked node\'s @node function', async ({
+test('the instance panel offers "Open node definition" scoped to the clicked node\'s @node function', async ({
   page,
 }) => {
   await gotoAndSettle(page);
 
-  // The standalone topbar entry point is gone — source editing starts at a node.
+  // The standalone topbar entry point is gone — definition editing starts at a node.
   await expect(page.getByTestId('edit-source-button')).toHaveCount(0);
 
-  // Click the parse_expr node: its inspector offers editing ITS function.
+  // Click the parse_expr node: its INSTANCE panel offers opening ITS definition.
   await selectNode(page, 'expr');
   const inspector = page.getByTestId('node-inspector');
-  const editButton = inspector.getByTestId('inspector-edit-source');
+  // Node click lands on the instance panel, not the definition (ADR 0015 D1).
+  await expect(inspector.getByTestId('inspector-inputs')).toBeVisible();
+  await expect(inspector.getByTestId('source-editor')).toHaveCount(0);
+  const editButton = inspector.getByTestId('inspector-open-definition');
   await expect(editButton).toBeEnabled();
   await expect(inspector.getByText('sym.parse_expr').first()).toBeVisible();
 
@@ -102,12 +106,13 @@ test('the inspector offers "Edit source" scoped to the clicked node\'s @node fun
   // Still visibly attached to the clicked node: the inspector header stays.
   await expect(page.getByTestId('inspector-title')).toHaveText('expr · parse_expr');
 
-  // Back returns to the inspector view of the same node.
+  // "‹ back to instance" returns to the instance panel of the same node.
+  await expect(editor.getByTestId('source-back')).toHaveText('‹ back to instance');
   await editor.getByTestId('source-back').click();
   await expect(inspector.getByTestId('inspector-inputs')).toBeVisible();
 
   // Escape steps the surfaces closed one at a time: editor first, then inspector.
-  await inspector.getByTestId('inspector-edit-source').click();
+  await inspector.getByTestId('inspector-open-definition').click();
   await expect(inspector.getByTestId('source-editor')).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(inspector.getByTestId('source-editor')).toHaveCount(0);
@@ -116,12 +121,20 @@ test('the inspector offers "Edit source" scoped to the clicked node\'s @node fun
   await expect(page.getByTestId('node-inspector')).toHaveCount(0);
 });
 
-test('a type shared by several nodes says edits affect them all', async ({ page }) => {
+test('a type shared by several nodes warns edits affect them all — before entry', async ({
+  page,
+}) => {
   await gotoAndSettle(page);
 
-  // Two nodes (roots_note, first_note) share sym.describe.
+  // Two nodes (roots_note, first_note) share sym.describe. The shared-scope
+  // warning is on the drill-in itself (ADR 0015 D3), BEFORE the editor opens.
   await selectNode(page, 'roots_note');
-  await page.getByTestId('inspector-edit-source').click();
+  const shared = page.getByTestId('inspector-def-shared');
+  await expect(shared).toBeVisible();
+  await expect(shared).toContainText('shared — affects all 2 instances');
+
+  // Entering still shows the existing in-editor banner.
+  await page.getByTestId('inspector-open-definition').click();
   const note = page.getByTestId('source-shared-note');
   await expect(note).toBeVisible();
   await expect(note).toContainText('all 2 nodes');
@@ -134,7 +147,7 @@ test('editing a node\'s function, saving, and re-running reflects the change', a
 
   // The dashboard node (id "report") is defined in the showcase module itself.
   await selectNode(page, 'report');
-  await page.getByTestId('inspector-edit-source').click();
+  await page.getByTestId('inspector-open-definition').click();
   await waitForMonaco(page);
   expect(await monacoValue(page)).toMatch(/def dashboard/);
   const original = await monacoValue(page);
@@ -184,7 +197,7 @@ test('a rejected save (syntax error) surfaces inline and never corrupts the file
   const before = await (await page.request.get('/api/source/sym.parse_expr')).json();
 
   await selectNode(page, 'expr');
-  await page.getByTestId('inspector-edit-source').click();
+  await page.getByTestId('inspector-open-definition').click();
   await waitForMonaco(page);
   expect(await monacoValue(page)).toMatch(/def parse_expr/);
 
@@ -206,7 +219,9 @@ test('a rejected save (syntax error) surfaces inline and never corrupts the file
   expect(after.source).toBe(before.source);
 });
 
-test('a node with no matching spec disables "Edit source" with a reason', async ({ page }) => {
+test('a node with no matching spec disables "Open node definition" with a reason', async ({
+  page,
+}) => {
   // Serve the real graph plus one node whose type has no spec.
   const original = await (await page.request.get('/api/graph')).json();
   const withGhost = {
@@ -233,7 +248,7 @@ test('a node with no matching spec disables "Edit source" with a reason', async 
   await page.setViewportSize({ width: 1600, height: 900 });
   await gotoAndSettle(page);
   await selectNode(page, 'ghost');
-  const editButton = page.getByTestId('inspector-edit-source');
+  const editButton = page.getByTestId('inspector-open-definition');
   await expect(editButton).toBeDisabled();
   await expect(page.getByText('unknown type — no source')).toBeVisible();
 });

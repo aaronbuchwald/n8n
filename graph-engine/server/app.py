@@ -351,6 +351,14 @@ def create_app(
             return [_error_payload(exc)]
         return []
 
+    def _node_statement_impl(ws: Workspace, node_id: str) -> JSONResponse:
+        """Read-only call-site lookup (ADR 0015 D2): the node's ``@main``
+        statement as real file bytes + ``{path, startLine, endLine, source}``."""
+        try:
+            return JSONResponse(status_code=200, content=ws.node_statement(node_id))
+        except SourceEditError as exc:
+            return JSONResponse(status_code=exc.status, content={"message": str(exc)})
+
     def _get_source_impl(ws: Workspace, spec_id: str) -> JSONResponse:
         try:
             return JSONResponse(status_code=200, content=ws.function_source(spec_id))
@@ -485,6 +493,11 @@ def create_app(
                 return None
         return get
 
+    @app.get("/api/graphs/{entry_id}/nodes/{node_id}/statement")
+    def get_entry_node_statement(entry_id: str, node_id: str) -> JSONResponse:
+        ws, _ = _entry_slot(entry_id)
+        return _node_statement_impl(ws, node_id)
+
     @app.get("/api/graphs/{entry_id}/source/{spec_id}")
     def get_entry_source(entry_id: str, spec_id: str) -> JSONResponse:
         ws, _ = _entry_slot(entry_id)
@@ -514,6 +527,15 @@ def create_app(
     def mint_entry_node_id(entry_id: str, body: dict = Body(...)) -> JSONResponse:
         ws, _ = _entry_slot(entry_id)
         return _mint_id_impl(ws, body)
+
+    @app.get("/api/nodes/{node_id}/statement")
+    def get_node_statement(node_id: str) -> JSONResponse:
+        # Unscoped alias for the default entry (ADR 0015 D2).
+        slot = _default_slot()
+        ws = slot[0] if slot is not None else workspace
+        if ws is None:
+            return _no_workspace()
+        return _node_statement_impl(ws, node_id)
 
     @app.get("/api/source/{spec_id}")
     def get_source(spec_id: str) -> JSONResponse:
