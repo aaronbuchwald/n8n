@@ -175,10 +175,16 @@ function GraphCanvas({
   const errorNodeId = useSyncSelector(selectErrorNodeId);
   const incomplete = useSyncSelector((s) => s.incomplete);
   const writebackWarning = useSyncSelector((s) => s.writebackWarning);
+  // Derived sockets per dynamic node (ADR 0007): the store's precomputed view
+  // over each node's COMMITTED literal — the calc editor's draft preview never
+  // reaches the canvas. Folded into node specs by buildFlow below, which makes
+  // a socket-set change a structural change (socketSignature/G6): the card
+  // re-measures and re-lays-out exactly like a source-save signature change.
+  const derivedByNode = useSyncSelector((s) => s.derivedByNode);
 
   const { nodes: initialNodes, edges: initialEdges } = useMemo(
-    () => (graph ? buildFlow(graph, specs) : { nodes: [], edges: [] }),
-    [graph, specs],
+    () => (graph ? buildFlow(graph, specs, derivedByNode) : { nodes: [], edges: [] }),
+    [graph, specs, derivedByNode],
   );
 
   // The sidecar-pinned set (HD3): nodes whose served position is authoritative.

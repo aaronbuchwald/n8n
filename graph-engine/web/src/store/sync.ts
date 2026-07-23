@@ -18,7 +18,7 @@
 //   3. No parallel state — any payload shown by >1 component enters via an
 //      `ingest*` action, never component-local `useState`.
 
-import type { GraphDoc, GraphEdge, GraphNode, NodeSpecs, SpecInput } from '../types';
+import type { GraphDoc, GraphEdge, GraphNode, NodeSpec, NodeSpecs, SpecInput } from '../types';
 import type {
   GraphId,
   LiveGraph,
@@ -73,12 +73,34 @@ export interface PendingRemoveNodeWrite {
   nodeId: string;
 }
 
+/**
+ * One optimistic equation commit (ADR 0007 D8) — a calc widget apply. It is a
+ * TRANSACTION over one node: the equation literal changes AND the node's
+ * derived socket set changes with it, so edges into now-removed sockets are
+ * pruned and stale literals of removed symbols dropped in the SAME write (a
+ * dangling edge would fail the server's bind).
+ */
+export interface PendingEquationWrite {
+  seq: number; // client-assigned, monotone
+  kind: 'equation';
+  nodeId: string;
+  /** The deriving parameter (e.g. "lines"). */
+  param: string;
+  /** The new equation literal. */
+  value: string;
+  /** Input names to KEEP: static spec inputs ∪ the new equation's symbols. */
+  keep: readonly string[];
+  /** User-typed inline values for derived symbols (never invented). */
+  literals: Record<string, number>;
+}
+
 export type PendingWrite =
   | PendingLiteralWrite
   | PendingAddNodeWrite
   | PendingAddEdgeWrite
   | PendingRemoveEdgeWrite
-  | PendingRemoveNodeWrite;
+  | PendingRemoveNodeWrite
+  | PendingEquationWrite;
 
 /** A cached source buffer, tagged with the `rev` it was fetched/served at. */
 export interface StoredSource extends SourceInfo {
@@ -130,14 +152,24 @@ export interface SyncState {
   // from the PUT envelope by the write queue; the canvas shows it as a banner.
   writebackWarning: WritebackWarning | null;
 
+  // What an equation commit disconnected (ADR 0007 D8 prune-with-toast):
+  // "F_max removed from equation — unwired from max_force". Transient; the
+  // shell renders it as a toast and clears it after a timeout.
+  pruneNotice: string | null;
+
   // --- optimistic overlay ---
   pending: PendingWrite[];
 
   // --- derived (recomputed once per setState; NEVER in a selector) ---
   effective: EffectiveGraph;
+  // Derived input entries per dynamic node id (ADR 0007), resolved from
+  // `derived` by each node's COMMITTED deriving literal in `effective.graph`.
+  // Precomputed here (never in a selector) so the canvas reads a stored ref.
+  derivedByNode: ReadonlyMap<string, SpecInput[]>;
 }
 
 const EMPTY_NODES: ReadonlyMap<string, GraphNode> = new Map();
+const EMPTY_DERIVED: ReadonlyMap<string, SpecInput[]> = new Map();
 
 const INITIAL: SyncState = {
   graphId: null,
@@ -153,8 +185,10 @@ const INITIAL: SyncState = {
   writeError: null,
   incomplete: [],
   writebackWarning: null,
+  pruneNotice: null,
   pending: [],
   effective: { graph: null, nodesById: EMPTY_NODES },
+  derivedByNode: EMPTY_DERIVED,
 };
 
 function indexNodes(nodes: readonly GraphNode[]): ReadonlyMap<string, GraphNode> {
@@ -228,6 +262,25 @@ function computeEffective(graph: GraphDoc | null, pending: readonly PendingWrite
       case 'removeEdge':
         edges = edges.filter((e) => !sameEdge(e, write.edge));
         break;
+      case 'equation': {
+        // The calc transaction (ADR 0007 D8): prune edges into sockets the new
+        // equation no longer derives, drop stale literals of removed symbols
+        // (a stale kwarg would fail bind), then lay the user's explicit symbol
+        // values and the new equation literal on top.
+        const keep = new Set(write.keep);
+        edges = edges.filter((e) => e.target !== write.nodeId || keep.has(e.targetInput));
+        nodes = nodes.map((n) => {
+          if (n.id !== write.nodeId) return n;
+          const inputs: Record<string, unknown> = {};
+          for (const [name, literal] of Object.entries(n.inputs)) {
+            if (keep.has(name)) inputs[name] = literal;
+          }
+          for (const [name, literal] of Object.entries(write.literals)) inputs[name] = literal;
+          inputs[write.param] = write.value;
+          return { ...n, inputs };
+        });
+        break;
+      }
     }
   }
   const effectiveGraph: GraphDoc = { ...graph, nodes, edges, output };
@@ -242,6 +295,50 @@ function sameEdge(a: GraphEdge, b: GraphEdge): boolean {
     a.target === b.target &&
     a.targetInput === b.targetInput
   );
+}
+
+/** The `derived` cache key for a dynamic spec + committed literal (ADR 0007). */
+export function derivedKeyOf(specId: string, literal: string): string {
+  return `${specId}\n${literal}`;
+}
+
+/**
+ * The committed deriving literal of `node`, when its spec is dynamic: the bound
+ * literal, else the deriving param's declared default. Null for non-dynamic
+ * nodes or a non-string value (the deriving param is a literal by construction,
+ * ADR 0007 D2 — anything else would 422 at derive, so the static spec renders).
+ */
+export function dynamicLiteralOf(node: GraphNode, spec: NodeSpec | undefined): string | null {
+  const param = spec?.dynamicInputs?.param;
+  if (!spec || !param) return null;
+  const literal = Object.prototype.hasOwnProperty.call(node.inputs, param)
+    ? node.inputs[param]
+    : spec.inputs.find((i) => i.name === param)?.default;
+  return typeof literal === 'string' ? literal : null;
+}
+
+/**
+ * Resolve each dynamic node's derived input entries from the `derived` cache by
+ * its committed literal in the (effective) graph. Nodes whose derivation is
+ * missing (not yet fetched, or failed) are absent — the canvas then renders the
+ * static spec, keeping existing wires on screen (ADR 0007 honesty analysis: a
+ * derive failure never drops sockets).
+ */
+function computeDerivedByNode(
+  graph: GraphDoc | null,
+  specs: NodeSpecs,
+  derived: Record<string, SpecInput[]>,
+): ReadonlyMap<string, SpecInput[]> {
+  if (!graph) return EMPTY_DERIVED;
+  let map: Map<string, SpecInput[]> | null = null;
+  for (const node of graph.nodes) {
+    const literal = dynamicLiteralOf(node, specs[node.type]);
+    if (literal === null) continue;
+    const entries = derived[derivedKeyOf(node.type, literal)];
+    if (!entries || entries.length === 0) continue;
+    (map ??= new Map()).set(node.id, entries);
+  }
+  return map ?? EMPTY_DERIVED;
 }
 
 let state: SyncState = INITIAL;
@@ -260,13 +357,20 @@ export function subscribe(listener: () => void): () => void {
   };
 }
 
-// The ONLY mutation funnel. Recomputes `effective` exactly when its inputs
-// (authoritative graph or the overlay) change, so snapshots stay referentially
-// stable across mutations that touch neither (e.g. setRun).
+// The ONLY mutation funnel. Recomputes `effective` (and the `derivedByNode`
+// view that reads it) exactly when their inputs change, so snapshots stay
+// referentially stable across mutations that touch neither (e.g. setRun).
 function setState(patch: Partial<SyncState>): void {
   const next: SyncState = { ...state, ...patch };
   if (next.graph !== state.graph || next.pending !== state.pending) {
     next.effective = computeEffective(next.graph, next.pending);
+  }
+  if (
+    next.effective !== state.effective ||
+    next.specs !== state.specs ||
+    next.derived !== state.derived
+  ) {
+    next.derivedByNode = computeDerivedByNode(next.effective.graph, next.specs, next.derived);
   }
   state = next;
   for (const listener of listeners) listener();
@@ -274,6 +378,35 @@ function setState(patch: Partial<SyncState>): void {
 
 let seqCounter = 0;
 const nextSeq = (): number => ++seqCounter;
+
+// --- per-write outcome waiters ----------------------------------------------
+// An action that needs the server's verdict on ONE write (the calc editor's
+// inline commit error, ADR 0007 D8) registers a waiter on its seq. Settled by
+// the same seq-gated paths that maintain the overlay: `ingestGraph` acks
+// resolve ok, `rejectWrite` resolves with the queue's failure message, and an
+// entry switch (`hydrate`) settles everything left — a waiter can never
+// outlive the write it watches.
+
+interface WriteOutcome {
+  ok: boolean;
+  message?: string;
+}
+
+const writeWaiters = new Map<number, (outcome: WriteOutcome) => void>();
+
+function awaitWrite(seq: number): Promise<WriteOutcome> {
+  return new Promise((resolve) => writeWaiters.set(seq, resolve));
+}
+
+function settleWrites(seqs: Iterable<number>, outcome: WriteOutcome): void {
+  for (const seq of seqs) {
+    const waiter = writeWaiters.get(seq);
+    if (waiter) {
+      writeWaiters.delete(seq);
+      waiter(outcome);
+    }
+  }
+}
 
 /** Latest value wins per (nodeId, param): drop the superseded write, append the new. */
 function coalesce(pending: readonly PendingWrite[], next: PendingLiteralWrite): PendingWrite[] {
@@ -301,6 +434,9 @@ function coalesce(pending: readonly PendingWrite[], next: PendingLiteralWrite): 
  */
 export function hydrate(live: LiveGraph, graphId: GraphId = null): void {
   const switchingEntry = graphId !== state.graphId;
+  // The overlay is reset below, so an in-flight write for the old entry can
+  // never land — settle its waiters instead of leaving them pending forever.
+  if (switchingEntry) settleWrites([...writeWaiters.keys()], { ok: false, message: 'switched graphs' });
   setState({
     specs: live.specs,
     graph: live.graph,
@@ -317,6 +453,7 @@ export function hydrate(live: LiveGraph, graphId: GraphId = null): void {
           sourceDirty: false,
           incomplete: [],
           writebackWarning: null,
+          pruneNotice: null,
         }
       : {}),
   });
@@ -335,6 +472,7 @@ export function ingestGraph(graph: GraphDoc, ackSeqs: readonly number[] = []): v
     rev: state.rev + 1,
     pending: state.pending.filter((w) => !acked.has(w.seq)),
   });
+  settleWrites(ackSeqs, { ok: true });
 }
 
 /** A GET /api/source landed (SourceEditor mount): cache it, tagged at current rev. */
@@ -375,6 +513,108 @@ export function commitLiteral(nodeId: string, param: string, value: unknown): vo
     writeError: null,
   });
   schedulePump();
+}
+
+/** One equation commit (ADR 0007 D8): the new literal plus the sockets it implies. */
+export interface EquationCommitRequest {
+  nodeId: string;
+  /** The deriving parameter (e.g. "lines"). */
+  param: string;
+  /** The new equation literal. */
+  value: string;
+  /** The NEW equation's derived input entries (the editor's server-verified
+   * derive outcome for exactly this value) — the sockets to keep. */
+  derivedInputs: SpecInput[];
+  /**
+   * Inline values the user typed for derived symbols in the editor (typically
+   * freshly-added ones, so the save can bind — required semantics, ADR 0007 #5).
+   * Never invented by the client: only what the user explicitly entered.
+   */
+  literals?: Record<string, number>;
+}
+
+export interface EquationCommitResult {
+  ok: boolean;
+  /** Human-readable failure (e.g. the server's bind error) when `ok` is false. */
+  message?: string;
+  /** Edges the commit pruned (targets removed from the equation). */
+  pruned: GraphEdge[];
+}
+
+/**
+ * Commit a dynamic node's equation (the calc widget's apply — ADR 0007 D8).
+ * Replaces the retired `makeEquationCommitter`: ONE optimistic overlay entry
+ * carries the whole transaction — prune edges into now-removed sockets, drop
+ * stale literals of removed symbols, write the equation literal plus any
+ * user-typed symbol values — and the store's existing single-flight queue
+ * persists it (`PUT effective.graph`, seq-gated ack via `ingestGraph`,
+ * revert + `writeError` on rejection). No second commit path, no rebase GET:
+ * the store is the rebase base.
+ *
+ * The editor's derive outcome for the committed value is ingested into
+ * `derived` FIRST, so the canvas folds the new socket set in the same frame
+ * the overlay applies — derived sockets render from the store, nowhere else.
+ *
+ * Resolves once the server answered this write: `{ok: true, pruned}` on ack
+ * (setting the prune-toast when edges were unwired), `{ok: false, message}`
+ * on rejection — so the editor can show the failure inline (A-D5 keeps the
+ * banner too, via the queue's `writeError`).
+ */
+export async function commitEquation(req: EquationCommitRequest): Promise<EquationCommitResult> {
+  const draft = state.effective.graph;
+  const node = draft?.nodes.find((n) => n.id === req.nodeId) ?? null;
+  if (!draft || !node) {
+    return { ok: false, message: `node '${req.nodeId}' no longer exists in the graph`, pruned: [] };
+  }
+
+  // keep = static spec inputs ∪ the new equation's symbols.
+  const keep = req.derivedInputs.map((i) => i.name);
+  for (const input of state.specs[node.type]?.inputs ?? []) keep.push(input.name);
+  const keepSet = new Set(keep);
+  const pruned = draft.edges.filter((e) => e.target === req.nodeId && !keepSet.has(e.targetInput));
+
+  // The commit's own (server-verified) derivation IS the committed derivation:
+  // land it in the store before the overlay applies, so the canvas never shows
+  // a frame with the new literal but the old (or no) socket set.
+  ingestDerived(node.type, req.value, req.derivedInputs);
+
+  const seq = nextSeq();
+  setState({
+    pending: [
+      ...state.pending,
+      {
+        seq,
+        kind: 'equation',
+        nodeId: req.nodeId,
+        param: req.param,
+        value: req.value,
+        keep,
+        literals: req.literals ?? {},
+      },
+    ],
+    writeError: null,
+  });
+  schedulePump();
+  // Advisory badge refresh (D6): a new symbol left unwired/unvalued badges
+  // "needs wiring" instead of blocking the save.
+  void refreshEditValidation();
+
+  const outcome = await awaitWrite(seq);
+  if (outcome.ok && pruned.length > 0) {
+    setPruneNotice(
+      pruned
+        .map((e) => `${e.targetInput} removed from equation — unwired from ${e.source}`)
+        .join('\n'),
+    );
+  }
+  return outcome.ok
+    ? { ok: true, pruned }
+    : { ok: false, message: outcome.message, pruned: [] };
+}
+
+/** Surface (or clear) the equation commit's prune toast (ADR 0007 D8). */
+export function setPruneNotice(notice: string | null): void {
+  if (notice !== state.pruneNotice) setState({ pruneNotice: notice });
 }
 
 /**
@@ -529,9 +769,11 @@ export function setWritebackWarning(warning: WritebackWarning | null): void {
   if (warning !== state.writebackWarning) setState({ writebackWarning: warning });
 }
 
-/** The server rejected (or never heard) a write: drop the overlay → revert to truth. */
-export function rejectWrite(seq: number): void {
+/** The server rejected (or never heard) a write: drop the overlay → revert to
+ * truth. `message` (the queue's failure) settles any waiter on this write. */
+export function rejectWrite(seq: number, message?: string): void {
   setState({ pending: state.pending.filter((w) => w.seq !== seq) });
+  settleWrites([seq], { ok: false, message });
 }
 
 /** Surface a write failure on the banner (or clear it with null). */
@@ -586,5 +828,6 @@ export function selectErrorNodeId(s: SyncState): string | null {
 export function __resetForTest(): void {
   state = INITIAL;
   listeners.clear();
+  writeWaiters.clear();
   seqCounter = 0;
 }

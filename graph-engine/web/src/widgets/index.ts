@@ -24,6 +24,12 @@ registerWidget('table-recipe', lazyEditor(() => import('./table/TableRecipeEdito
 // Stream B: math widget (ADR 0005 B) — SymPy expressions with KaTeX preview.
 registerWidget('math', lazyEditor(() => import('./math/MathEditor').then(m => ({ default: m.MathEditor }))));
 
+// Stream W: calc widget (ADR 0007 D8) — handcalc equations whose free symbols
+// derive the node's input sockets (server-authoritative, via /derive). Store-
+// reconciled: commits go through the store's `commitEquation`, derived sockets
+// render from `state.derivedByNode` — no host context, no parallel committer.
+registerWidget('calc', lazyEditor(() => import('./calc/CalcEditor').then(m => ({ default: m.CalcEditor }))));
+
 // Public API for the shell and downstream streams.
 export {
   editorFor,
@@ -35,3 +41,8 @@ export {
   type WidgetEditorProps,
 } from './registry';
 export { useWidgetCommit, WidgetEditingProvider, type CommitInput } from './context';
+// The committed-derivation fetcher (ADR 0007, store-reconciled): the shell
+// mounts it once so every dynamic node's committed literal has its derived
+// sockets in the store. Eager-imported here — it is a tiny hook module; the
+// heavy calc editor stays a lazy chunk above.
+export { useDerivedSync } from './calc/useDerivedSync';

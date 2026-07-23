@@ -13,11 +13,12 @@ import {
   commitLiteral,
   hydrate,
   selectRunIsStale,
+  setPruneNotice,
   setRun,
   setWriteError,
 } from './store/sync';
 import { useSyncSelector } from './store/useSyncSelector';
-import { WidgetEditingProvider } from './widgets';
+import { useDerivedSync, WidgetEditingProvider } from './widgets';
 
 // The shell owns only the boot lifecycle + transient action state. Every shared
 // value (graph, specs, version, run, staleness) lives in the store (8-S1) and is
@@ -80,6 +81,13 @@ export default function App() {
   // The one volatile surface a graph switch must confirm-discard (D6): an
   // open source-editor buffer with unsaved changes. SourceEditor is the writer.
   const sourceDirty = useSyncSelector((s) => s.sourceDirty);
+  // What an equation commit disconnected (ADR 0007 D8 prune-with-toast):
+  // "F_max removed from equation — unwired from max_force". Transient.
+  const pruneNotice = useSyncSelector((s) => s.pruneNotice);
+
+  // Keep the store's derived-socket cache warm for every committed dynamic-node
+  // literal (ADR 0007); the canvas renders derived sockets from the store.
+  useDerivedSync();
 
   const graphId = selection?.id ?? null;
 
@@ -157,6 +165,12 @@ export default function App() {
     const timer = window.setTimeout(() => setWriteError(null), 6000);
     return () => window.clearTimeout(timer);
   }, [writeError]);
+
+  useEffect(() => {
+    if (!pruneNotice) return;
+    const timer = window.setTimeout(() => setPruneNotice(null), 8000);
+    return () => window.clearTimeout(timer);
+  }, [pruneNotice]);
 
   // Swap to another entry point: move the `?graph=` key (the store reacts via
   // the reload effect above) and reset the UI-local surfaces the store doesn't
@@ -312,6 +326,12 @@ export default function App() {
       {(runState.error || exportState.error || writeError) && (
         <div className="ge-actionbar-error" data-testid="action-error" role="alert">
           {runState.error ?? exportState.error ?? writeError}
+        </div>
+      )}
+
+      {pruneNotice && (
+        <div className="ge-toast" data-testid="calc-toast" role="status">
+          {pruneNotice}
         </div>
       )}
 
