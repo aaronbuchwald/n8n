@@ -30,7 +30,7 @@ import math
 import re
 import textwrap
 
-from engine import DerivedInputs, UserError, node, Widget
+from engine import DerivedInputs, Renderer, UserError, node, Widget
 
 # -- SymPy: expressions, solving, numeric evaluation ------------------------
 
@@ -405,7 +405,9 @@ def join_text(a: str = "", b: str = "", c: str = "", sep: str = " · ") -> str:
     return sep.join(part for part in (a, b, c) if part)
 
 
-@node
+# ADR 0010 D6: render the card inline (canvas + results panel) via the
+# `html-card` kind — a sandbox="" srcDoc iframe at the declared height.
+@node(renderer=Renderer("html-card", socket="result", height=220))
 def render_math_card(title: str = "Calculation", mathml: str = "", caption: str = "") -> str:
     """Render a self-contained HTML card: title, MathML block, caption.
 

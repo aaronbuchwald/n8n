@@ -8,10 +8,13 @@ import { test, expect, type Page } from '@playwright/test';
 //    sockets, handles and widget slots stay shell-owned (D3);
 //  * the results panel resolves the SAME registry for the output node (D7).
 //
-// No pack declares `renderer` yet (that's 10-E/10-K), so the declared-kind
-// paths are proven by rewriting `/api/specs` in-flight to attach the bundled
-// `dev-json` seam-proof kind — the UI still renders everything from live HTTP
-// responses, all served from localhost (EXTERNAL_REQUESTS must stay 0).
+// Since 10-K the packs DO declare `html-card` (sym/table/showcase), so these
+// slot-semantics tests rewrite `/api/specs` in-flight to strip every declared
+// renderer and attach only the bundled `dev-json` seam-proof kind where a test
+// needs one — restoring the world each fallback rule describes. The `html-card`
+// kind itself is covered in html-card.spec.ts. The UI still renders everything
+// from live HTTP responses, all served from localhost (EXTERNAL_REQUESTS must
+// stay 0).
 
 function nodeCard(page: Page, title: string) {
   return page
@@ -32,15 +35,19 @@ function trackExternalRequests(page: Page): string[] {
   return external;
 }
 
-/** Rewrite /api/specs in flight: attach `renderer: {kind}` to one spec by title. */
-async function injectRenderer(page: Page, title: string, kind: string): Promise<void> {
+/**
+ * Rewrite /api/specs in flight: strip EVERY declared renderer, then attach
+ * `renderer: {kind}` per `overrides` entry (keyed by spec title).
+ */
+async function overrideRenderers(page: Page, overrides: Record<string, string>): Promise<void> {
   await page.route('**/api/specs', async (route) => {
     const response = await route.fetch();
     const body = (await response.json()) as {
       specs: Record<string, { title: string; renderer?: { kind: string } | null }>;
     };
     for (const spec of Object.values(body.specs)) {
-      if (spec.title === title) spec.renderer = { kind };
+      const kind = overrides[spec.title];
+      spec.renderer = kind ? { kind } : null;
     }
     await route.fulfill({ response, json: body });
   });
@@ -56,10 +63,11 @@ async function runGraph(page: Page): Promise<void> {
 
 test('nodes without a declared renderer keep the result-chips fallback', async ({ page }) => {
   const external = trackExternalRequests(page);
+  await overrideRenderers(page, {});
   await page.goto('/');
   await expect(page.getByTestId('flow-canvas')).toBeVisible();
 
-  // No spec in the served demo declares `renderer` yet → no render surfaces.
+  // With every declaration stripped, no spec declares `renderer` → no surfaces.
   await expect(page.getByTestId('render-surface')).toHaveCount(0);
 
   await runGraph(page);
@@ -79,7 +87,7 @@ test('an unknown renderer kind degrades to the same chips (open-vocabulary fallb
   page,
 }) => {
   const external = trackExternalRequests(page);
-  await injectRenderer(page, 'parse_expr', 'kind-this-bundle-does-not-ship');
+  await overrideRenderers(page, { parse_expr: 'kind-this-bundle-does-not-ship' });
   await page.goto('/');
   await expect(page.getByTestId('flow-canvas')).toBeVisible();
 
@@ -97,7 +105,7 @@ test('a registered kind mounts in the result strip only; shell chrome is untouch
   page,
 }) => {
   const external = trackExternalRequests(page);
-  await injectRenderer(page, 'parse_expr', 'dev-json');
+  await overrideRenderers(page, { parse_expr: 'dev-json' });
   await page.goto('/');
   await expect(page.getByTestId('flow-canvas')).toBeVisible();
 
@@ -134,7 +142,7 @@ test('a registered kind mounts in the result strip only; shell chrome is untouch
 
 test('the results panel resolves the same registry for the output node (D7)', async ({ page }) => {
   const external = trackExternalRequests(page);
-  await injectRenderer(page, 'dashboard', 'dev-json');
+  await overrideRenderers(page, { dashboard: 'dev-json' });
   await page.goto('/');
   await expect(page.getByTestId('flow-canvas')).toBeVisible();
 

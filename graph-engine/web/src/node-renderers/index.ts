@@ -11,13 +11,13 @@
 //   import { lazyNodeRenderer } from './registry';
 //   registerNodeRenderer('html-card', lazyNodeRenderer(() => import('./html-card')));
 //
-// TODO(ADR 0010 stream 10-K): register the `html-card` kind here (sandbox=""
-// srcDoc iframe, declared `height` config) — the first product kind. The
-// `dev-json` registration below is a seam-proof only and can be removed once a
-// product kind exists.
-
 import { DevJsonRenderer } from './DevJsonRenderer';
-import { registerNodeRenderer } from './registry';
+import { lazyNodeRenderer, registerNodeRenderer } from './registry';
+
+// `html-card` (ADR 0010 D5/D6, stream 10-K): the node's HTML-string output in
+// a sandbox="" srcDoc iframe at the declared `height` — the first product
+// kind. Lazy code-split chunk: npm-bundled, zero CDN.
+registerNodeRenderer('html-card', lazyNodeRenderer(() => import('./html-card')));
 
 // Seam-proof kind: no served spec declares it (packs gain `renderer=` in
 // 10-E/10-K), so it never shows in the demo; e2e injects it to prove the slot.
