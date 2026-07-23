@@ -18,12 +18,22 @@
     would auto-collapse to ``True`` and lose the "120 < 210" itself, so the
     comparison string is built as plain Python text instead.
 
-    forces.csv  ─> read_table ─> select_extreme(max, "force")    ──┐
-                                                                    ├─> handcalc ─┬─ latex ─> latex_to_mathml ─┐
-    members.csv ─> read_table ─> select_extreme(min, "capacity") ──┘             │                            │
-                              │                                                   └─ results ─> calc_notes ─┐  │
-                              └────────────────────────────> check_capacity ─ text ─────────────────────┐  ├─> join_text ─> render_math_card
-                                                                                                         └──┘
+Dataflow, edge by edge — node ids are the ``@main`` variable names (ADR 0004
+D3), ``x.y`` is output socket ``y`` of node ``x``::
+
+    forces.csv  ─> forces (read_table) ──table──> max_force (select_extreme, max "force")
+    members.csv ─> members (read_table) ─table──> min_capacity (select_extreme, min "capacity")
+
+    max_force.value ────┬─> steps (handcalc)            ┬─> verdict (check_capacity)
+    min_capacity.value ─┴─>  "margin = C_min - F_max"   ┴─>  force < capacity ?
+
+    steps.latex ───> mathml (latex_to_mathml) ──────────────────────┐
+    steps.results ─> notes (calc_notes) ─┐                          ├─> report (render_math_card)
+    verdict.text ────────────────────────┴─> caption (join_text) ───┘
+
+Each extreme's ``value`` socket **fans out** to both consumers, and ``steps``
+fans out again (``latex`` to the math block, ``results`` to the caption notes) —
+the two branches re-join on the card, closing the diamond.
 
 Simple, generic mock data only — no real engineering formulas, just a
 highest-vs-lowest comparison.
@@ -106,31 +116,42 @@ def capacity_check_report(
     forces_path: str = "forces.csv", members_path: str = "members.csv"
 ) -> str:
     """Read both CSVs, pick the extremes, typeset the margin, and check it."""
+    # Two independent CSV arcs: each file becomes one {columns, rows} table.
     forces = read_table(path=forces_path)
     members = read_table(path=members_path)
 
+    # Reduce each arc to its governing extreme (sockets: name, value): the
+    # highest applied force and the lowest available capacity.
     max_force = select_extreme(forces, column="force", mode="max")
     min_capacity = select_extreme(members, column="capacity", mode="min")
 
+    # The arcs meet here. Each extreme's `value` fans out to BOTH consumers
+    # below: the typeset margin (display) and the PASS/FAIL check (logic).
+    #
     # Display concern: handcalcs typesets the substituted numbers. The equation's
     # free symbols (C_min, F_max) are the node's derived sockets, wired straight
     # from the two extremes (ADR 0007) — no pack_values bundling node.
     steps = handcalc(lines="margin = C_min - F_max", C_min=min_capacity.value, F_max=max_force.value)
+    # steps.latex → native MathML, so the card renders with zero JS (no CDN).
     mathml = latex_to_mathml(steps.latex)
 
     # Logic concern: a separate node decides PASS/FAIL (unchanged — it is a
     # comparison, not the equation).
     verdict = check_capacity(force=max_force.value, capacity=min_capacity.value)
 
-    # Caption concern: the value-notes come FROM the calc's own results, so the
-    # symbol names are declared exactly once — in the equation — and the
-    # handcalc → caption dependency is an explicit wire on the canvas.
+    # Caption concern: the value-notes come FROM the calc's own results
+    # (steps.results — handcalc's second fan-out, ADR 0013), so the symbol
+    # names are declared exactly once — in the equation — and the
+    # handcalc → calc_notes caption dependency is an explicit wire on the canvas.
     #
     # Straight-line form (ADR 0004 D7): each call is its own assignment — no
     # nested calls in arguments — so the composite round-trips through the
     # graph⟷source bijection and can be served + edited in the UI.
     notes = calc_notes(steps.results)
+    # The display and logic branches re-join: caption = notes + verdict text.
     caption = join_text(notes, verdict.text)
+    # One card closes the diamond — typeset math on top, caption underneath —
+    # and its `result` socket is the graph output (the `return` below).
     report = render_math_card(title="Capacity check", mathml=mathml, caption=caption)
     return report
 
