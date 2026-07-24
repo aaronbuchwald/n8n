@@ -37,7 +37,7 @@ wheels = [
 [[package]]
 name = "calcsheet"
 version = "0.1.0"
-source = { directory = "../calcsheet" }
+source = { editable = "../calcsheet" }
 dependencies = [
     { name = "latex2mathml" },
     { name = "sympy" },
@@ -158,9 +158,9 @@ sym = [
 
 [package.metadata]
 requires-dist = [
-    { name = "calcsheet", marker = "extra == 'demo'", directory = "../calcsheet" },
-    { name = "calcsheet", marker = "extra == 'dev'", directory = "../calcsheet" },
-    { name = "calcsheet", marker = "extra == 'sym'", directory = "../calcsheet" },
+    { name = "calcsheet", marker = "extra == 'demo'", editable = "../calcsheet" },
+    { name = "calcsheet", marker = "extra == 'dev'", editable = "../calcsheet" },
+    { name = "calcsheet", marker = "extra == 'sym'", editable = "../calcsheet" },
     { name = "fastapi", marker = "extra == 'demo'", specifier = ">=0.110" },
     { name = "fastapi", marker = "extra == 'dev'", specifier = ">=0.110" },
     { name = "fastapi", marker = "extra == 'server'", specifier = ">=0.110" },

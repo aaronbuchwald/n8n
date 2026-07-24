@@ -53,9 +53,11 @@ dev = [
 ]
 
 # `calcsheet` is the sibling library in this repo, not a PyPI release — resolve
-# it from the checkout so `nodepacks/sheet` can import it.
+# it from the checkout so `nodepacks/sheet` can import it. `editable` so an edit
+# in ../calcsheet is live here: a copied install goes stale silently, and the
+# symptom is an ImportError blaming calcsheet for something it already has.
 [tool.uv.sources]
-calcsheet = { path = "../calcsheet" }
+calcsheet = { path = "../calcsheet", editable = true }
 
 [build-system]
 requires = ["hatchling"]

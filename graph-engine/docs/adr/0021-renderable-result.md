@@ -379,10 +379,15 @@ assignment, so it round-trips the bijection):
 
 ```python
 sheet = calc(title="Capacity check", as_of="2026-07-24",
-             formulas=..., checks=..., F_max=F_max.result, C_min=C_min.result)
-card = render_html(result=sheet.result, header="Acme Corp")
-paper = render_pdf(result=sheet.result, page_numbers=True)
+             formulas=..., checks=..., F_max=F_max, C_min=C_min)
+card = render_html(result=sheet, header="Acme Corp")
+paper = render_pdf(result=sheet, page_numbers=True)
 ```
+
+A single-output node is referenced by its bare variable, not `x.result`: that
+is what the emitter writes, so anything else would leave the file needing a
+migration the moment it is saved. (Corrected during the Stream B build; the
+first draft of this snippet used the explicit `.result` form.)
 
 ## Migration path (does not break the shipped example)
 

@@ -101,6 +101,15 @@ class Result:
 
         return result_from_dict(data)
 
+    def to_jsonable(self) -> dict[str, object]:
+        """Opt in to the host's self-description protocol (ADR 0021 D2).
+
+        Deliberately explicit rather than letting a host sniff ``to_dict``:
+        `to_dict` is a shape, `to_jsonable` is a promise that the shape is
+        JSON-safe — and only the type itself can make that promise.
+        """
+        return self.to_dict()
+
 
 def format_value(value: object, precision: int) -> str:
     """Format a value for display: floats to ``precision`` significant digits.

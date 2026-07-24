@@ -38,6 +38,11 @@ def test_the_round_trip_is_lossless(result):
     assert Result.from_dict(result.to_dict()) == result
 
 
+def test_a_result_opts_in_to_the_host_serialisation_protocol(result):
+    """A host probes `to_jsonable`; this is the explicit promise it looks for."""
+    assert result.to_jsonable() == result.to_dict()
+
+
 def test_the_round_trip_survives_a_trip_through_json(result):
     assert Result.from_dict(json.loads(json.dumps(result.to_dict()))) == result
 
