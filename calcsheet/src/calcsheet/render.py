@@ -45,14 +45,18 @@ body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
 .status--fail{background:var(--fail-soft);color:var(--fail)}
 .status--pass{background:var(--pass-soft);color:var(--pass)}
 
-.sec{padding:14px 20px}
+.sec{padding:14px 20px;overflow-x:auto}
 .sec+.sec{border-top:1px solid var(--line)}
 .sec__label{font-family:var(--mono);font-size:10px;text-transform:uppercase;
             letter-spacing:.14em;color:var(--faint);margin:0 0 10px}
 
 /* the four-slot rows: symbol = definition = value+unit ... reference */
+/* The SECTION is the horizontal scrollport and the grid inside it takes
+   min-width:max-content — they must be DIFFERENT elements, or the "scroll
+   container" just grows and its parent clips instead. Content must never be
+   unreachable. */
 .rows{display:grid;grid-template-columns:auto auto 1fr auto minmax(4.5rem,auto) auto;
-      row-gap:12px;column-gap:10px;align-items:baseline;
+      row-gap:12px;column-gap:10px;align-items:baseline;min-width:max-content;
       font-family:var(--mono);font-size:14px}
 .sym{text-align:right}
 .eq{color:var(--faint)}
@@ -65,7 +69,8 @@ math{font-size:1em}
 
 .checks{display:grid;gap:8px}
 .chk{display:grid;grid-template-columns:1fr auto auto;align-items:center;gap:12px;
-     padding:9px 12px;border:1px solid var(--line);border-radius:8px}
+     padding:9px 12px;border:1px solid var(--line);border-radius:8px;
+     min-width:max-content}
 .chk__eq{font-family:var(--mono);font-size:13.5px}
 .chk__bool{font-family:var(--mono);font-size:12px;color:var(--muted);
            font-variant-numeric:tabular-nums;white-space:nowrap}
