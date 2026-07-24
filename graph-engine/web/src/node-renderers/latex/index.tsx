@@ -17,13 +17,23 @@ import type { NodeRendererProps } from '../registry';
 
 const DEFAULT_SOCKET = 'latex';
 
+/**
+ * Widen the vertical gap between aligned rows: a bare `\\` row break carries
+ * only KaTeX's small default jot, so give each an explicit `\\[0.6em]` (skipping
+ * ones that already declare a length). Doubles the inter-line spacing so
+ * multi-line handcalcs blocks breathe, matching the MathML output card.
+ */
+function spaceAlignedRows(latex: string): string {
+  return latex.replace(/\\\\(?!\s*\[)/g, '\\\\[0.6em]');
+}
+
 /** Typeset LaTeX to an HTML string; null when KaTeX rejects it (→ chips). */
 async function renderLatex(latex: string): Promise<string | null> {
   try {
     const KT = await import('katex');
     // @ts-expect-error - CSS imports work in Vite but TypeScript doesn't know about them
     await import('katex/dist/katex.css');
-    return KT.renderToString(latex, {
+    return KT.renderToString(spaceAlignedRows(latex), {
       throwOnError: true,
       trust: false,
       displayMode: true,

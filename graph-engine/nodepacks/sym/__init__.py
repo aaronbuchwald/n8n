@@ -458,7 +458,12 @@ def render_math_card(title: str = "Calculation", mathml: str = "", caption: str 
         "max-width:28rem;padding:1rem;border:1px solid #ddd;border-radius:8px;"
         'box-shadow:0 1px 3px rgba(0,0,0,.08)">'
         f'<h1 style="font-size:1rem;margin:0 0 .5rem">{html.escape(title)}</h1>'
-        f'<div style="overflow-x:auto;font-size:1.05rem">{mathml}</div>'
+        # A column flex with a `gap` between the per-line `<math display="block">`
+        # rows: it controls the inter-line spacing precisely (browser default
+        # margins on adjacent math blocks collapse to almost nothing) — doubled
+        # so multi-line equations breathe.
+        f'<div style="display:flex;flex-direction:column;gap:.7em;'
+        f'overflow-x:auto;font-size:1.05rem">{mathml}</div>'
         f'<p style="margin:.5rem 0 0;color:#666;font-size:.85rem">{html.escape(caption)}</p>'
         "</div>"
     )

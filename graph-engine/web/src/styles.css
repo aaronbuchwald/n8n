@@ -1167,25 +1167,48 @@ body,
   flex: 1;
   min-height: 0;
   display: flex;
-  gap: 14px;
   padding: 12px 14px;
   overflow: hidden;
 }
 
-.ge-results__render {
-  flex: none;
-  width: 22rem;
+/* Both regions are now resizable panels (react-resizable-panels): the render is
+   the dominant default, the per-node list collapsible to zero. They fill their
+   panel and clip internally. */
+.ge-results__render,
+.ge-results__nodes {
+  min-width: 0;
+  height: 100%;
   display: flex;
   flex-direction: column;
   gap: 6px;
+  overflow: hidden;
 }
 
-.ge-results__nodes {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+/* The drag handle between the two regions — a slim hit area with a centered
+   grip line that brightens on hover/drag. */
+.ge-results__sash {
+  flex: 0 0 12px;
+  align-self: stretch;
+  position: relative;
+  cursor: col-resize;
+}
+
+.ge-results__sash::before {
+  content: '';
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  left: 50%;
+  width: 2px;
+  transform: translateX(-50%);
+  border-radius: 2px;
+  background: var(--ge-node-border);
+  transition: background 0.12s ease;
+}
+
+.ge-results__sash:hover::before,
+.ge-results__sash[data-resize-handle-state='drag']::before {
+  background: var(--ge-accent);
 }
 
 .ge-results__label {

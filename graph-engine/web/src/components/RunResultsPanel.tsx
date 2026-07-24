@@ -1,4 +1,6 @@
 import { Suspense } from 'react';
+import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
+
 import type { RunResult } from '../api';
 import { rendererFor } from '../node-renderers';
 import { previewType, previewValue } from '../preview';
@@ -110,8 +112,16 @@ export function RunResultsPanel({
         </div>
       )}
 
-      <div className="ge-results__body">
-        <div className="ge-results__render">
+      {/* A draggable split: the output render is the primary surface (dominant
+          by default), and the per-node outputs sit beside it — resizable, and
+          collapsible all the way closed for when they aren't wanted. Sizes
+          persist under the library's autoSaveId. */}
+      <PanelGroup
+        className="ge-results__body"
+        direction="horizontal"
+        autoSaveId="ge-results-split"
+      >
+        <Panel id="render" order={1} defaultSize={64} minSize={30} className="ge-results__render">
           <div className="ge-results__label">output render</div>
           {OutputRenderer && outputNode ? (
             <Suspense fallback={<div className="ge-results__empty">…</div>}>
@@ -151,9 +161,19 @@ export function RunResultsPanel({
                 : `${previewType(output)}: ${previewValue(output)}`}
             </div>
           )}
-        </div>
+        </Panel>
 
-        <div className="ge-results__nodes">
+        <PanelResizeHandle className="ge-results__sash" data-testid="results-sash" />
+
+        <Panel
+          id="nodes"
+          order={2}
+          defaultSize={36}
+          minSize={12}
+          collapsible
+          collapsedSize={0}
+          className="ge-results__nodes"
+        >
           <div className="ge-results__label">per-node outputs</div>
           <div className="ge-results__list">
             {executed.map((nodeId) => {
@@ -188,8 +208,8 @@ export function RunResultsPanel({
               </div>
             )}
           </div>
-        </div>
-      </div>
+        </Panel>
+      </PanelGroup>
     </section>
   );
 }
