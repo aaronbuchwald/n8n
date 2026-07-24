@@ -333,6 +333,97 @@ export const PANELS: Panel[] = [
     ],
   },
 
+  // ── 2b. Node catalog (ADR 0017 W1) ─────────────────────────────────────────
+  // A PURE ADDITION alongside the palette for this stream; W4 replaces the
+  // palette panel above with this one. Covers D8 assertions 1, 2, 4.
+  {
+    id: 'node-catalog',
+    name: 'Node catalog',
+    description:
+      'The on-demand, capability-grouped "Add node" command palette (ADR 0017): a top-bar button opens an anchored popover with an autofocused search and collapsible capability sections (Input/Data · Table · Math · Logic · Render/Output, + Other), plus a "Create new node…" footer.',
+    testids: [
+      'add-node-button',
+      'node-catalog',
+      'node-catalog-search',
+      'node-catalog-section',
+      'node-catalog-section-toggle',
+      'node-catalog-entry',
+      'node-catalog-empty',
+      'node-catalog-new-node',
+    ],
+    actions: [
+      {
+        id: 'open-close-catalog',
+        description: 'The top-bar button opens the anchored popover (search autofocused); Escape closes it.',
+        trigger: 'Click [data-testid="add-node-button"]; then press Escape.',
+        expect:
+          '[data-testid="node-catalog"] becomes visible with the search present, then hides on Escape (empty query).',
+        steps: [
+          { kind: 'click', target: { testid: 'add-node-button' } },
+          { kind: 'waitVisible', target: { testid: 'node-catalog' } },
+          { kind: 'pressKey', key: 'Escape' },
+        ],
+        checks: [
+          { kind: 'hidden', target: { testid: 'node-catalog' } },
+          { kind: 'externalRequestsZero' },
+        ],
+      },
+      {
+        id: 'capability-sections',
+        description:
+          'Nodes group into the five capability sections; the exact-id map beats the module default (table.read_table is Input/Data).',
+        trigger: 'Open the catalog; read the sections and the read_table entry.',
+        expect:
+          'Sections input-data, table, math, logic and render-output are each visible; the table.read_table entry carries data-category="input-data".',
+        steps: [{ kind: 'click', target: { testid: 'add-node-button' } }],
+        checks: [
+          { kind: 'visible', target: { selector: '[data-testid="node-catalog-section"][data-category="input-data"]' } },
+          { kind: 'visible', target: { selector: '[data-testid="node-catalog-section"][data-category="table"]' } },
+          { kind: 'visible', target: { selector: '[data-testid="node-catalog-section"][data-category="math"]' } },
+          { kind: 'visible', target: { selector: '[data-testid="node-catalog-section"][data-category="logic"]' } },
+          { kind: 'visible', target: { selector: '[data-testid="node-catalog-section"][data-category="render-output"]' } },
+          {
+            kind: 'attr',
+            target: { selector: '[data-testid="node-catalog-entry"][data-spec-id="table.read_table"]' },
+            name: 'data-category',
+            value: 'input-data',
+          },
+          { kind: 'externalRequestsZero' },
+        ],
+      },
+      {
+        id: 'search-filters',
+        description: 'The search filters across sections and empties exhausted ones.',
+        trigger: 'Open the catalog; fill [data-testid="node-catalog-search"] with "read_table".',
+        expect: 'The table.read_table entry stays visible; the math section disappears.',
+        steps: [
+          { kind: 'click', target: { testid: 'add-node-button' } },
+          { kind: 'fill', target: { testid: 'node-catalog-search' }, value: 'read_table' },
+        ],
+        checks: [
+          { kind: 'visible', target: { selector: '[data-testid="node-catalog-entry"][data-spec-id="table.read_table"]' } },
+          { kind: 'hidden', target: { selector: '[data-testid="node-catalog-section"][data-category="math"]' } },
+          { kind: 'externalRequestsZero' },
+        ],
+      },
+      {
+        id: 'search-empty-state',
+        description: 'A query matching nothing dead-ends on the empty state, but the new-node footer stays.',
+        trigger: 'Open the catalog; fill the search with "zz-no-such-node".',
+        expect: '[data-testid="node-catalog-empty"] is visible and [data-testid="node-catalog-new-node"] is still present.',
+        steps: [
+          { kind: 'click', target: { testid: 'add-node-button' } },
+          { kind: 'fill', target: { testid: 'node-catalog-search' }, value: 'zz-no-such-node' },
+        ],
+        checks: [
+          { kind: 'visible', target: { testid: 'node-catalog-empty' } },
+          { kind: 'visible', target: { testid: 'node-catalog-new-node' } },
+          { kind: 'externalRequestsZero' },
+        ],
+      },
+    ],
+  },
+
   // ── 3. Canvas (GraphView) ──────────────────────────────────────────────────
   {
     id: 'canvas',

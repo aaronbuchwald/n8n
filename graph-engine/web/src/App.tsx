@@ -6,11 +6,12 @@ import { GraphPicker } from './components/GraphPicker';
 import { ExportPanel } from './components/ExportPanel';
 import { NodeInspector } from './components/NodeInspector';
 import { Palette } from './components/Palette';
+import { NodeCatalog } from './components/NodeCatalog';
 import { NewNodePanel } from './components/NewNodePanel';
 import { RunResultsPanel } from './components/RunResultsPanel';
 import { Workbench, type WorkbenchHandle } from './components/workbench/Workbench';
 import type { DockTab } from './components/workbench/RightDock';
-import { GraphView, type FocusRequest } from './GraphView';
+import { GraphView, type FocusRequest, type GraphViewHandle } from './GraphView';
 import { inspectNode } from './inspect';
 import {
   clearRun,
@@ -75,6 +76,9 @@ export default function App() {
   // Imperative handle to the workbench shell — the "Reset layout" affordance
   // snaps every region back to defaults without a reload (ADR 0014 D5).
   const workbenchRef = useRef<WorkbenchHandle>(null);
+  // Imperative handle to the canvas — the node catalog reads the visible-canvas
+  // centre from it to place a click-inserted node (ADR 0017 D4).
+  const graphViewRef = useRef<GraphViewHandle>(null);
 
   // --- store reads (selectors return stored refs or primitives) ---------------
   const graph = useSyncSelector((s) => s.effective.graph);
@@ -385,8 +389,19 @@ export default function App() {
           >
             {exportState.pending ? 'Exporting…' : 'Export Python'}
           </button>
+          {/* The node catalog (ADR 0017 W1): the on-demand, capability-grouped
+              "Add node" command palette. A pure addition alongside the left
+              Palette (11-W5) for this stream; W4 retires the old surface. Its
+              footer "Create new node…" opens the same New-node dock tab the
+              stand-in button below does. */}
+          <NodeCatalog
+            disabled={!ready}
+            getInsertPosition={() => graphViewRef.current?.getInsertPosition() ?? null}
+            onSelectNode={selectNode}
+            onCreateNewNode={() => setCreatingSource(true)}
+          />
           {/* Stand-in entry point for authoring a new @node (ADR 0011 D7); the
-              palette header (11-W5) grows its own trigger once it lands. */}
+              catalog footer (17-W1) now offers the same, and W4 removes this. */}
           <button
             type="button"
             className="ge-btn"
@@ -473,6 +488,7 @@ export default function App() {
               palette={<Palette />}
               canvas={
                 <GraphView
+                  ref={graphViewRef}
                   key={graphId ?? '(default)'}
                   selectedNodeId={selectedNodeId}
                   onSelectNode={selectNode}
