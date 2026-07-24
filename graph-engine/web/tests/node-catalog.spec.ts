@@ -13,12 +13,14 @@ test.describe.configure({ mode: 'serial' });
 // assertions 1 (open/close), 2 (sections + exact-id mapping), and 4 (search +
 // collapse override + empty state).
 //
-// Stream 17-W2 adds the D5 keyboard model + collapse persistence — D8's
-// assertions 3 (collapse persists across reload, cleared by Reset layout), 5
-// (keyboard insert: Ctrl+K / arrows / Enter → a node exists + inspector opens),
-// and 6 (Alt+Enter multi-add keeps the catalog open). The insert tests mutate
-// the real demo module and restore the pristine graph in a `finally`, exactly
-// like palette.spec.ts.
+// Stream 17-W2 adds the D5 keyboard model + collapsed-by-default sections —
+// D8's assertions 3 (every open starts collapsed; a header click expands, a
+// reopen re-collapses; search still reveals matches), 5 (keyboard insert:
+// Ctrl+K / arrows / Enter → a node exists + inspector opens), and 6 (Alt+Enter
+// multi-add keeps the catalog open). Section collapse is now EPHEMERAL — reset
+// each open — so nothing persists across reload and Reset layout has no catalog
+// slice to clear. The insert tests mutate the real demo module and restore the
+// pristine graph in a `finally`, exactly like palette.spec.ts.
 //
 // Stream 17-W3 adds the D6 drag-out-of-catalog assertion 7 (the ghost state on
 // dragstart, cancel-restores vs drop-closes, and a canvas node minted at the
@@ -48,6 +50,13 @@ function section(page: Page, category: string) {
 
 function entry(page: Page, specId: string) {
   return page.locator(`[data-testid="node-catalog-entry"][data-spec-id="${specId}"]`);
+}
+
+/** Expand a collapsed-by-default section by clicking its header toggle. */
+async function expandSection(page: Page, category: string) {
+  const toggle = section(page, category).getByTestId('node-catalog-section-toggle');
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
 }
 
 test('opens from the top bar with the search focused and closes on Escape / outside click', async ({
@@ -86,10 +95,15 @@ test('groups nodes into the capability sections, with the exact-id map beating t
   await page.getByTestId('add-node-button').click();
   await expect(page.getByTestId('node-catalog')).toBeVisible();
 
-  // The demo (showcase = showcase + sym + table) surfaces all five sections,
-  // each with at least one entry.
+  // The demo (showcase = showcase + sym + table) surfaces all five sections.
+  // Sections open collapsed (headers + counts only), so their entries appear
+  // only once the header is clicked to expand.
   for (const category of ['input-data', 'table', 'math', 'logic', 'render-output']) {
     await expect(section(page, category)).toBeVisible();
+    await expect(
+      section(page, category).locator('[data-testid="node-catalog-entry"]').first(),
+    ).toBeHidden();
+    await expandSection(page, category);
     await expect(
       section(page, category).locator('[data-testid="node-catalog-entry"]').first(),
     ).toBeVisible();
@@ -117,17 +131,17 @@ test('search filters across sections, overrides collapse, and shows an empty sta
   await expect(entry(page, 'table.read_table')).toBeVisible();
   await expect(section(page, 'math')).toBeHidden();
 
-  // Collapse override: fold Math shut, then a query matching only a Math entry
-  // still reveals it (a search can't be swallowed by a fold).
+  // Collapse override: Math opens collapsed (every open does), yet a query
+  // matching only a Math entry still reveals it — a search can't be swallowed
+  // by a fold.
   await search.fill('');
   const mathToggle = section(page, 'math').getByTestId('node-catalog-section-toggle');
-  await mathToggle.click();
   await expect(mathToggle).toHaveAttribute('aria-expanded', 'false');
   await expect(entry(page, 'sym.evaluate_numeric')).toBeHidden();
   await search.fill('evaluate_numeric');
   await expect(entry(page, 'sym.evaluate_numeric')).toBeVisible();
 
-  // Clearing the query restores the stored collapse state.
+  // Clearing the query returns to the collapsed-by-default view.
   await search.fill('');
   await expect(entry(page, 'sym.evaluate_numeric')).toBeHidden();
 
@@ -188,7 +202,13 @@ test('arrow keys rove a single virtual highlight across section boundaries and w
   await openApp(page);
   await openCatalog(page);
 
-  // Exactly one row is highlighted on open — the first visible entry.
+  // Sections open collapsed, so there are no navigable rows until we expand
+  // them; expand all five so the highlight has a list to rove across sections.
+  for (const category of ['input-data', 'table', 'math', 'logic', 'render-output']) {
+    await expandSection(page, category);
+  }
+
+  // Exactly one row is highlighted — the first visible entry.
   await expect(activeEntry(page)).toHaveCount(1);
   const first = await activeEntry(page).getAttribute('data-spec-id');
   const search = page.getByTestId('node-catalog-search');
@@ -212,26 +232,34 @@ test('arrow keys rove a single virtual highlight across section boundaries and w
   expect(external, 'EXTERNAL_REQUESTS must be 0').toHaveLength(0);
 });
 
-// ── D8 assertion 3 — collapse persists across reload, cleared by Reset layout ─
-test('a folded section stays folded across reload and Reset layout re-expands it', async ({
+// ── D8 assertion 3 — sections start collapsed on every open; search still reveals ─
+test('sections open collapsed, a header click expands, a reopen re-collapses, and search still reveals matches', async ({
   page,
 }) => {
   const external = trackExternalRequests(page);
   await openApp(page);
   await openCatalog(page);
 
-  // Fold Math shut; its entries hide and the toggle reads collapsed.
+  // On open every section is collapsed: the Math header is present and reads
+  // collapsed, but its entries are not rendered until it is expanded.
   const mathToggle = section(page, 'math').getByTestId('node-catalog-section-toggle');
+  await expect(mathToggle).toHaveAttribute('aria-expanded', 'false');
+  await expect(entry(page, 'sym.evaluate_numeric')).toBeHidden();
+
+  // Clicking the header expands the section; clicking again re-collapses it.
+  await mathToggle.click();
+  await expect(mathToggle).toHaveAttribute('aria-expanded', 'true');
+  await expect(entry(page, 'sym.evaluate_numeric')).toBeVisible();
   await mathToggle.click();
   await expect(mathToggle).toHaveAttribute('aria-expanded', 'false');
   await expect(entry(page, 'sym.evaluate_numeric')).toBeHidden();
 
-  // The durable slice is written under the versioned key `ge:catalog:v1`.
-  const stored = await page.evaluate(() => window.localStorage.getItem('ge:catalog:v1'));
-  expect(stored).toContain('math');
-
-  // Reload → the collapse survives (persisted, not component-local state).
-  await openApp(page);
+  // Expand it, then close and reopen — the catalog is collapsed again (the
+  // expand state is ephemeral, reset on every open, never persisted).
+  await mathToggle.click();
+  await expect(mathToggle).toHaveAttribute('aria-expanded', 'true');
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('node-catalog')).toBeHidden();
   await openCatalog(page);
   await expect(section(page, 'math').getByTestId('node-catalog-section-toggle')).toHaveAttribute(
     'aria-expanded',
@@ -239,18 +267,18 @@ test('a folded section stays folded across reload and Reset layout re-expands it
   );
   await expect(entry(page, 'sym.evaluate_numeric')).toBeHidden();
 
-  // Reset layout clears `ge:catalog:v1` too — the one escape hatch for all
-  // persisted UI state (close the popover first so the click lands on the btn).
-  await page.keyboard.press('Escape');
-  await expect(page.getByTestId('node-catalog')).toBeHidden();
-  await page.getByTestId('reset-layout').click();
+  // Nothing persisted the collapse: the retired `ge:catalog:v1` key is absent.
+  const stored = await page.evaluate(() => window.localStorage.getItem('ge:catalog:v1'));
+  expect(stored).toBeNull();
 
-  await openCatalog(page);
-  await expect(section(page, 'math').getByTestId('node-catalog-section-toggle')).toHaveAttribute(
-    'aria-expanded',
-    'true',
-  );
+  // Search still auto-reveals matches even though sections are collapsed by
+  // default — a Math match surfaces without expanding anything.
+  const search = page.getByTestId('node-catalog-search');
+  await search.fill('evaluate_numeric');
   await expect(entry(page, 'sym.evaluate_numeric')).toBeVisible();
+  // Clearing the query returns to the collapsed-by-default view.
+  await search.fill('');
+  await expect(entry(page, 'sym.evaluate_numeric')).toBeHidden();
 
   expect(external, 'EXTERNAL_REQUESTS must be 0').toHaveLength(0);
 });
