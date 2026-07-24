@@ -7,7 +7,9 @@ it in dependency order, and writes one assignment per node::
 
 * a **connected** input becomes a reference to the upstream node's variable
   (``_src`` for a single output, ``_src['socket']`` for a named one),
-* an **unconnected** input with a widget value becomes a ``repr()`` literal,
+* an **unconnected** input with a widget value becomes a ``repr()`` literal — a
+  multi-line string spelled as the ADR 0020 block form, same helper the
+  composite emitter uses, so both exports read alike,
 * **positional-only** params are emitted positionally,
 * imports are collected and **aliased on collision**: two nodes named ``total``
   from different modules import as ``total`` / ``total_2`` and call the alias, so
@@ -24,6 +26,7 @@ from typing import Optional, Union
 
 from .bind import BoundGraph, BoundNode, bind
 from .graph import Graph
+from .literals import INDENT, render_call, render_literal
 from .registry import NodeRegistry
 from .spec import is_multi_output
 
@@ -59,15 +62,15 @@ def _aliases(bound: BoundGraph) -> tuple[dict[str, str], list[str]]:
     return alias_of, imports
 
 
-def _render_value(bound: BoundNode, param: str) -> str:
+def _render_value(bound: BoundNode, param: str, arg_indent: str) -> str:
     if param in bound.wired:
         source, socket = bound.wired[param]
         var = _var(source.id)
         return f"{var}[{socket!r}]" if is_multi_output(source.spec) else var
-    return repr(bound.literals[param])
+    return render_literal(bound.literals[param], arg_indent)
 
 
-def _arg_exprs(bound: BoundNode) -> str:
+def _arg_exprs(bound: BoundNode, arg_indent: str) -> list[str]:
     inputs = bound.inputs_spec
     provided = set(bound.wired) | set(bound.literals)
     parts: list[str] = []
@@ -80,16 +83,18 @@ def _arg_exprs(bound: BoundNode) -> str:
         for k in range(last + 1):
             inp = pos_only[k]
             if inp["name"] in provided:
-                parts.append(_render_value(bound, inp["name"]))
+                parts.append(_render_value(bound, inp["name"], arg_indent))
             else:
-                parts.append(inp.get("defaultRepr") or repr(inp["default"]))
+                parts.append(
+                    inp.get("defaultRepr") or render_literal(inp["default"], arg_indent)
+                )
 
     for inp in inputs:
         if inp["kind"] == "positionalOnly":
             continue
         if inp["name"] in provided:
-            parts.append(f"{inp['name']}={_render_value(bound, inp['name'])}")
-    return ", ".join(parts)
+            parts.append(f"{inp['name']}={_render_value(bound, inp['name'], arg_indent)}")
+    return parts
 
 
 def to_python(
@@ -102,7 +107,13 @@ def to_python(
     bound = graph if isinstance(graph, BoundGraph) else bind(graph, registry)
 
     alias_of, imports = _aliases(bound)
-    body = [f"{_var(n.id)} = {alias_of[n.type]}({_arg_exprs(n)})" for n in bound.nodes]
+    # Statements sit at column 0 here, so an expanded call's arguments indent one
+    # level in — same shared rendering as the composite (ADR 0020 D7).
+    body = [
+        f"{_var(n.id)} = "
+        f"{render_call(alias_of[n.type], _arg_exprs(n, INDENT), '')}"
+        for n in bound.nodes
+    ]
 
     lines: list[str] = []
     if header:

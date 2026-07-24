@@ -44,12 +44,17 @@ def scale(value: int, factor: int = 2) -> int:
     return value * factor
 
 
+def note(text: str = "", label: str = "note", n: int = 0) -> str:  # multi-line str param
+    return f"{label}:{text}:{n}"
+
+
 @pytest.fixture
 def toy_registry() -> NodeRegistry:
     reg = NodeRegistry()
     reg.register(split, outputs=["lo", "hi"])
     reg.register(diff)
     reg.register(scale)
+    reg.register(note)
     return reg
 
 
@@ -249,6 +254,205 @@ def bad():
 '''
     with pytest.raises(EngineError, match="D7"):
         from_composite(source, DEFAULT_REGISTRY)
+
+
+# -- multi-line string literals: block form (ADR 0020) ---------------------
+#
+# The emitted spelling of a multi-line value is parenthesized implicit string
+# concatenation — one repr()-escaped fragment per line, each carrying its own
+# '\n' — inside an expanded call (D1/D3). These are additions: the tests above
+# pin the unchanged single-line behaviour and pass untouched.
+
+CALC = "r = F_max / C_min  # demand / capacity\nU = 100 * r [%]  # utilisation"
+
+# Values that make naive multi-line spellings (triple quotes, dedent) go wrong.
+TORTURE_VALUES = {
+    "trailing_newline": "a\nb\n",
+    "only_newline": "\n",
+    "crlf": "a\r\nb\r\n",
+    "crlf_trailing": "first\r\nsecond\r\n",
+    "embedded_quotes": "he said \"hi\"\nshe said 'bye'\nboth \"'\n",
+    "backslashes_latex": "\\nu = \\frac{a}{b}\\\\\nE = m c^2  # \\nu, not a newline",
+    "triple_quote": 'a """ b\nc """',
+    "ends_with_quote": "ends with a quote'\nand a double \"\n",
+    "ends_with_backslash": "path C:\\\\tmp\\\\\nnext line",
+    "tabs_and_cr": "a\tb\rc\nd\te",
+    "blank_lines": "first\n\n\nlast",
+}
+
+
+def _note_graph(value: str, **extra) -> Graph:
+    graph = Graph()
+    graph.add("n", f"{__name__}.note", inputs={"text": value, **extra})
+    graph.output = {"node": "n", "socket": "result"}
+    return graph
+
+
+def test_multiline_literal_emits_as_parenthesized_fragments(toy_registry: NodeRegistry):
+    source = to_composite(_note_graph(CALC, label="calc"), toy_registry)
+    assert (
+        "    n = note(\n"
+        "        text=(\n"
+        "            'r = F_max / C_min  # demand / capacity\\n'\n"
+        "            'U = 100 * r [%]  # utilisation'\n"
+        "        ),\n"
+        "        label='calc',\n"
+        "    )\n"
+    ) in source
+    # One fragment per value line, each ending in its own escaped newline but
+    # the last — and no triple quotes anywhere.
+    assert '"""' not in source and "'''" not in source
+
+
+def test_multiline_literal_is_one_constant_for_the_parser(toy_registry: NodeRegistry):
+    # CPython concatenates adjacent string literals at parse time, which is why
+    # the parse side needs no change at all (ADR 0020 D4).
+    import ast
+
+    source = to_composite(_note_graph(CALC), toy_registry)
+    call = next(
+        s.value
+        for s in ast.walk(ast.parse(source))
+        if isinstance(s, ast.Assign) and isinstance(s.value, ast.Call)
+    )
+    text_arg = next(kw.value for kw in call.keywords if kw.arg == "text")
+    assert isinstance(text_arg, ast.Constant) and text_arg.value == CALC
+
+
+@pytest.mark.parametrize("value", TORTURE_VALUES.values(), ids=list(TORTURE_VALUES))
+def test_multiline_roundtrip_is_byte_exact(value: str, toy_registry: NodeRegistry):
+    graph = _note_graph(value)
+    _assert_roundtrip_identity(graph, toy_registry)
+    # The parsed-back value is the SAME BYTES — no dedent, no strip, no added or
+    # lost trailing newline, no \r\n normalization.
+    restored = from_composite(to_composite(graph, toy_registry), toy_registry)
+    assert restored.node("n").inputs["text"] == value
+
+
+@pytest.mark.parametrize("value", TORTURE_VALUES.values(), ids=list(TORTURE_VALUES))
+def test_multiline_emit_is_idempotent(value: str, toy_registry: NodeRegistry):
+    source = to_composite(_note_graph(value), toy_registry)
+    once = to_composite(from_composite(source, toy_registry), toy_registry)
+    assert once == source
+    # emit(parse(emit(x))) == emit(x), and it stays stable a second time round.
+    assert to_composite(from_composite(once, toy_registry), toy_registry) == source
+
+
+def test_single_line_values_keep_plain_repr(toy_registry: NodeRegistry):
+    source = to_composite(_note_graph("Capacity check", label="t"), toy_registry)
+    # One physical line, no parentheses grown around the value (non-negotiable 5).
+    assert "    n = note(text='Capacity check', label='t')\n" in source
+    assert source.count("\n    n = ") == 1
+
+
+def test_a_long_single_line_value_does_not_expand(toy_registry: NodeRegistry):
+    # The predicate is a newline, not a length heuristic (D2).
+    long_value = "x" * 300
+    source = to_composite(_note_graph(long_value), toy_registry)
+    assert f"    n = note(text='{long_value}')\n" in source
+
+
+def test_non_string_values_keep_container_repr(toy_registry: NodeRegistry):
+    # A string nested in a container keeps container repr() — out of scope (D2).
+    graph = Graph()
+    graph.add("s", f"{__name__}.split", inputs={"x": 3})
+    graph.output = {"node": "s", "socket": "lo"}
+    source = to_composite(graph, toy_registry)
+    assert "    s = split(x=3)\n" in source
+
+
+def test_crossing_the_boundary_does_not_thrash(toy_registry: NodeRegistry):
+    """A value oscillating across the newline boundary re-emits stably.
+
+    Single → multi → single returns byte-identical source: representation is a
+    pure function of the value, so nothing accumulates (D2/D6).
+    """
+    single = to_composite(_note_graph("one line"), toy_registry)
+    multi = to_composite(_note_graph("one line\ntwo lines"), toy_registry)
+    assert single != multi
+    assert to_composite(_note_graph("one line"), toy_registry) == single
+    assert to_composite(from_composite(multi, toy_registry), toy_registry) == multi
+    # And back down: the block form leaves no residue behind.
+    demoted = from_composite(multi, toy_registry)
+    demoted.node("n").inputs["text"] = "one line"
+    assert to_composite(demoted, toy_registry) == single
+
+
+def test_only_the_multiline_argument_goes_block_form(toy_registry: NodeRegistry):
+    source = to_composite(_note_graph(CALC, label="single", n=7), toy_registry)
+    # Siblings stay ordinary reprs, one per line, in the expanded call.
+    assert "        label='single',\n" in source
+    assert "        n=7,\n" in source
+
+
+def test_wired_reference_in_a_block_form_statement(toy_registry: NodeRegistry):
+    graph = Graph()
+    graph.add("s", f"{__name__}.split", inputs={"x": 1})
+    graph.add("n", f"{__name__}.note", inputs={"text": CALC})
+    graph.connect("s", "lo", "n", "n")
+    graph.output = {"node": "n", "socket": "result"}
+
+    source = to_composite(graph, toy_registry)
+    assert "        n=s['lo'],\n" in source
+    _assert_roundtrip_identity(graph, toy_registry)
+
+
+# -- the parser keeps accepting every hand-written spelling (D4) ------------
+
+
+def _handwritten(argument: str) -> str:
+    return (
+        "from engine import main\n"
+        f"from {__name__} import note\n"
+        "\n\n"
+        "@main\n"
+        "def report():\n"
+        f"    n = note(text={argument})\n"
+        "    return n\n"
+    )
+
+
+def test_parser_accepts_every_handwritten_spelling(toy_registry: NodeRegistry):
+    escaped = _handwritten(repr(CALC))
+    concatenated = _handwritten(
+        "(\n"
+        "        'r = F_max / C_min  # demand / capacity\\n'\n"
+        "        'U = 100 * r [%]  # utilisation'\n"
+        "    )"
+    )
+    # A triple-quoted literal takes its content literally: to denote the same
+    # value its lines must start at column 0 (the reason it is not the emitted
+    # form, ADR 0020 Option 1).
+    triple = _handwritten(
+        '"""r = F_max / C_min  # demand / capacity\nU = 100 * r [%]  # utilisation"""'
+    )
+    for label, source in [
+        ("escaped", escaped),
+        ("implicit concatenation", concatenated),
+        ("triple-quoted", triple),
+    ]:
+        graph = from_composite(source, toy_registry)
+        assert graph.node("n").inputs["text"] == CALC, label
+        # All three denote one value, so all three normalize to the same bytes
+        # the first time the statement is re-emitted.
+        assert to_composite(graph, toy_registry) == to_composite(
+            from_composite(escaped, toy_registry), toy_registry
+        ), label
+
+
+def test_dedent_argument_is_still_rejected(toy_registry: NodeRegistry):
+    source = (
+        "from engine import main\n"
+        "import textwrap\n"
+        f"from {__name__} import note\n"
+        "\n\n"
+        "@main\n"
+        "def report():\n"
+        '    n = note(text=textwrap.dedent("""a\\nb"""))\n'
+        "    return n\n"
+    )
+    with pytest.raises(EngineError, match="literal"):
+        from_composite(source, toy_registry)
 
 
 def test_unknown_type_names_the_node():

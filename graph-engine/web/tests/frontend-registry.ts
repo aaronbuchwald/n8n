@@ -66,6 +66,13 @@ export type Assertion =
   | { kind: 'containsText'; target: Target; text: string; timeoutMs?: number }
   | { kind: 'attr'; target: Target; name: string; value: string | null }
   | { kind: 'externalRequestsZero' }
+  /**
+   * The CONTENT-REACHABILITY invariant over the whole rendered page: no element
+   * may overflow an axis unless it or an ancestor is a scrollport on that axis.
+   * `toBeVisible()` cannot see this — it is true for clipped content. The rule,
+   * its exemption and the report live in `tests/reachability.ts`.
+   */
+  | { kind: 'contentReachable'; state: string }
   | { kind: 'custom'; note: string };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -80,6 +87,11 @@ export interface PanelAction {
   expect: string;
   /** Entry URL to boot before the steps run. Defaults to '/'. */
   url?: string;
+  /**
+   * Viewport to apply BEFORE booting. Layout bugs (clipping in particular) only
+   * appear once boxes get small, so a few actions pin a narrow window.
+   */
+  viewport?: { width: number; height: number };
   /** Machine steps the harness drives (the app is already booted + layout-ready). */
   steps: Interaction[];
   /** Machine assertions proving `expect`. */
@@ -713,7 +725,7 @@ export const PANELS: Panel[] = [
         description: 'Selecting another entry swaps the canvas and writes ?graph=<id> to the URL.',
         trigger: 'Open the menu, click [data-testid="graph-picker-option-capacity_check"].',
         expect:
-          'The URL gains ?graph=capacity_check, capacity_check nodes (check_verdict) render, and the button reads "Capacity check".',
+          'The URL gains ?graph=capacity_check, capacity_check nodes (calc_card) render, and the button reads "Capacity check".',
         steps: [
           { kind: 'click', target: { testid: 'graph-picker-button' } },
           { kind: 'waitVisible', target: { testid: 'graph-picker-menu' } },
@@ -726,7 +738,7 @@ export const PANELS: Panel[] = [
         ],
         checks: [
           { kind: 'containsText', target: { testid: 'graph-picker-button' }, text: 'Capacity check' },
-          { kind: 'visible', target: { selector: '[data-testid="spec-node"]', hasText: 'check_verdict' } },
+          { kind: 'visible', target: { selector: '[data-testid="spec-node"]', hasText: 'calc_card' } },
           { kind: 'externalRequestsZero' },
         ],
       },
@@ -1111,9 +1123,9 @@ export const PANELS: Panel[] = [
         id: 'derived-sockets-inspectable',
         description:
           "A dynamic node's derived, wired sockets (C_min/F_max) are listed read-only with their wired tag.",
-        trigger: 'On ?graph=capacity_check select the steps node; read the derived input rows.',
+        trigger: 'On ?graph=handcalc_demo select the steps node; read the derived input rows.',
         expect: 'A derived inspector-input row shows a .ge-inspector__tag--wired tag and no editor slot.',
-        url: '/?graph=capacity_check',
+        url: '/?graph=handcalc_demo',
         steps: [{ kind: 'click', target: nodeHeader('steps') }],
         checks: [
           { kind: 'visible', target: { testid: 'node-inspector' } },
@@ -1231,7 +1243,7 @@ export const PANELS: Panel[] = [
     id: 'calc-widget',
     name: 'Calc widget (dynamic handcalc)',
     description:
-      "The dynamic equation editor (ADR 0007) on capacity_check's handcalc node (id steps): live derived symbol chips, invalid-equation refusal, commit reshapes sockets, and symbol-removal prune-with-toast.",
+      "The dynamic equation editor (ADR 0007) on handcalc_demo's handcalc node (id steps): live derived symbol chips, invalid-equation refusal, commit reshapes sockets, and symbol-removal prune-with-toast.",
     testids: [
       'widget-editor-calc-input',
       'calc-sockets',
@@ -1240,14 +1252,19 @@ export const PANELS: Panel[] = [
       'calc-derive-error',
       'calc-commit-error',
       'calc-toast',
+      'calc-preview',
+      'calc-preview-row',
+      'calc-preview-unit',
+      'calc-preview-ref',
+      'calc-format-hint',
     ],
     actions: [
       {
         id: 'derived-sockets-render',
         description: "The node's derived sockets (C_min, F_max, lines) render on the canvas from the store.",
-        trigger: 'Boot ?graph=capacity_check; read the steps node sockets.',
+        trigger: 'Boot ?graph=handcalc_demo; read the steps node sockets.',
         expect: 'Socket name C_min is visible on the steps card.',
-        url: '/?graph=capacity_check',
+        url: '/?graph=handcalc_demo',
         steps: [],
         checks: [
           {
@@ -1261,9 +1278,9 @@ export const PANELS: Panel[] = [
       {
         id: 'open-calc-editor',
         description: 'Selecting the steps node shows the calc editor in the inspector with the committed equation.',
-        trigger: 'On ?graph=capacity_check click the steps node-title; read [data-testid="widget-editor-calc-input"].',
+        trigger: 'On ?graph=handcalc_demo click the steps node-title; read [data-testid="widget-editor-calc-input"].',
         expect: 'widget-editor-calc-input is visible.',
-        url: '/?graph=capacity_check',
+        url: '/?graph=handcalc_demo',
         steps: [
           { kind: 'click', target: { selector: '.react-flow__node[data-id="steps"] [data-testid="node-title"]' } },
           { kind: 'waitVisible', target: { testid: 'node-inspector' } },
@@ -1281,7 +1298,7 @@ export const PANELS: Panel[] = [
           'Open the calc editor, fill it with the equation + " + extra"; observe the "extra" chip go data-state="added".',
         expect:
           'The [data-testid="calc-symbol-chip"][data-symbol="extra"] gains data-state="added" and no PUT fires.',
-        url: '/?graph=capacity_check',
+        url: '/?graph=handcalc_demo',
         steps: [
           { kind: 'click', target: { selector: '.react-flow__node[data-id="steps"] [data-testid="node-title"]' } },
           { kind: 'waitVisible', target: { testid: 'widget-editor-calc-input' } },
@@ -1310,7 +1327,7 @@ export const PANELS: Panel[] = [
         // browser logs a "Failed to load resource … 422" console error which is
         // expected here, so the probe ignores it for this action only.
         expectsServerRejection: true,
-        url: '/?graph=capacity_check',
+        url: '/?graph=handcalc_demo',
         steps: [
           { kind: 'click', target: { selector: '.react-flow__node[data-id="steps"] [data-testid="node-title"]' } },
           { kind: 'waitVisible', target: { testid: 'widget-editor-calc-input' } },
@@ -1325,9 +1342,9 @@ export const PANELS: Panel[] = [
         id: 'commit-reshapes-sockets',
         description: 'A valid commit reshapes the node sockets on the canvas (folded from the store).',
         trigger:
-          'Add a new symbol, give it an inline value, Ctrl+Enter to apply (PUT /api/graphs/capacity_check/graph).',
+          'Add a new symbol, give it an inline value, Ctrl+Enter to apply (PUT /api/graphs/handcalc_demo/graph).',
         expect:
-          'The new socket appears on the steps card. DESTRUCTIVE — rewrites capacity_check.py (restore in finally).',
+          'The new socket appears on the steps card. DESTRUCTIVE — rewrites handcalc_demo.py (restore in finally).',
         review: true,
         steps: [
           {
@@ -1351,6 +1368,61 @@ export const PANELS: Panel[] = [
           },
         ],
         checks: [{ kind: 'custom', note: 'calc-toast shows the unwire message; the pruned edge is absent server-side.' }],
+      },
+      {
+        id: 'calcsheet-dialect-anatomy',
+        description:
+          "The calcsheet dialect (ADR 0018) renders each formulas entry as its anatomy: typeset expression, unit chip, reference gutter — `#`/`[unit]` are structure, not raw text.",
+        trigger:
+          'On ?graph=capacity_check click the card node-title; read the formulas preview rows.',
+        expect:
+          'calc-preview-row carries data-fallback="false"; calc-preview-unit reads "%" and calc-preview-ref reads "utilisation" on line 2.',
+        url: '/?graph=capacity_check',
+        steps: [
+          { kind: 'click', target: nodeHeader('card') },
+          { kind: 'waitVisible', target: { testid: 'calc-preview', nth: 0 }, timeoutMs: 15000 },
+        ],
+        checks: [
+          {
+            kind: 'attr',
+            target: { selector: '[data-testid="calc-preview-row"][data-line="2"]', nth: 0 },
+            name: 'data-fallback',
+            value: 'false',
+          },
+          {
+            kind: 'containsText',
+            target: {
+              selector: '[data-testid="calc-preview-row"][data-line="2"] [data-testid="calc-preview-unit"]',
+              nth: 0,
+            },
+            text: '%',
+          },
+          {
+            kind: 'containsText',
+            target: {
+              selector: '[data-testid="calc-preview-row"][data-line="1"] [data-testid="calc-preview-ref"]',
+              nth: 0,
+            },
+            text: 'demand / capacity',
+          },
+          { kind: 'externalRequestsZero' },
+        ],
+      },
+      {
+        id: 'calcsheet-format-hint',
+        description: 'A persistent hint line teaches the mini-syntax and the apply keys (ADR 0018 D4).',
+        trigger: 'On ?graph=capacity_check select the card node; read [data-testid="calc-format-hint"].',
+        expect: 'calc-format-hint contains "one entry per line" and "# text = reference".',
+        url: '/?graph=capacity_check',
+        steps: [
+          { kind: 'click', target: nodeHeader('card') },
+          { kind: 'waitVisible', target: { testid: 'calc-format-hint', nth: 0 }, timeoutMs: 15000 },
+        ],
+        checks: [
+          { kind: 'containsText', target: { testid: 'calc-format-hint', nth: 0 }, text: 'one entry per line' },
+          { kind: 'containsText', target: { testid: 'calc-format-hint', nth: 0 }, text: '# text = reference' },
+          { kind: 'externalRequestsZero' },
+        ],
       },
     ],
   },
@@ -1471,9 +1543,9 @@ export const PANELS: Panel[] = [
       {
         id: 'latex-renderer',
         description: "handcalc's latex renderer typesets its LaTeX socket with KaTeX in the host DOM.",
-        trigger: 'On ?graph=capacity_check run the graph; read the latex-renderer.',
+        trigger: 'On ?graph=handcalc_demo run the graph; read the latex-renderer.',
         expect: '[data-testid="latex-renderer"] renders KaTeX markup (not a raw string).',
-        url: '/?graph=capacity_check',
+        url: '/?graph=handcalc_demo',
         steps: [
           { kind: 'click', target: { testid: 'run-button' } },
           { kind: 'waitVisible', target: { testid: 'run-results' }, timeoutMs: 20000 },
@@ -1627,6 +1699,93 @@ export const PANELS: Panel[] = [
           { kind: 'waitVisible', target: { testid: 'run-results' }, timeoutMs: 20000 },
         ],
         checks: [{ kind: 'externalRequestsZero' }],
+      },
+    ],
+  },
+
+  // ── 18. Content reachability ───────────────────────────────────────────────
+  {
+    id: 'content-reachability',
+    name: 'Content reachability (nothing clipped without a scrollport)',
+    description:
+      'Every rendered element that overflows an axis must have itself or an ancestor scrolling on that axis, so the content can be brought into view. `toBeVisible()` is blind to this — it is true for content an `overflow:hidden` box has clipped away for good. Deliberate truncation is exempt ONLY when the full value stays recoverable (computed `text-overflow: ellipsis` + a non-empty `title` on x, `-webkit-line-clamp` + a non-empty `title` on y, or an explicit `data-truncates="ok"`). The rule, the exemption and the failure report live in `tests/reachability.ts`; the calc card — sandboxed into an opaque-origin iframe on the canvas, so unreachable to page.evaluate — is covered by rendering it directly with setContent in `tests/content-reachability.spec.ts`.',
+    testids: ['workbench', 'run-results', 'node-inspector', 'node-catalog'],
+    actions: [
+      {
+        id: 'reachable-boot-narrow',
+        description: 'A booted canvas clips nothing unreachably in a narrow window.',
+        trigger: 'Boot at 900×700 and walk every element for unscrollable overflow.',
+        expect: 'Zero elements overflow an axis with no scrolling ancestor on that axis.',
+        viewport: { width: 900, height: 700 },
+        steps: [],
+        checks: [
+          { kind: 'contentReachable', state: 'boot showcase @ 900×700' },
+          { kind: 'externalRequestsZero' },
+        ],
+      },
+      {
+        id: 'reachable-tall-card-narrow',
+        description:
+          'The output panel holding a self-sized card taller than itself stays scrollable (the shipped `.ge-results__render` clipping bug).',
+        trigger: 'Boot ?graph=capacity_check at 900×700, Run, then walk every element.',
+        expect: 'The results render column scrolls to the rest of the card instead of clipping it.',
+        url: '/?graph=capacity_check',
+        viewport: { width: 900, height: 700 },
+        steps: [
+          { kind: 'click', target: { testid: 'run-button' } },
+          { kind: 'waitVisible', target: { testid: 'run-results' }, timeoutMs: 20000 },
+        ],
+        checks: [
+          { kind: 'contentReachable', state: 'capacity_check after run @ 900×700' },
+          { kind: 'externalRequestsZero' },
+        ],
+      },
+      {
+        id: 'reachable-inspector-narrow',
+        description: 'The inspector on a node with long values clips nothing unreachably.',
+        trigger: 'Boot at 900×700, Run, select `expr`, then walk every element.',
+        expect: 'Long values are scrollable, wrapped, or ellipsised WITH a title.',
+        viewport: { width: 900, height: 700 },
+        steps: [
+          { kind: 'click', target: { testid: 'run-button' } },
+          { kind: 'waitVisible', target: { testid: 'run-results' }, timeoutMs: 20000 },
+          { kind: 'click', target: nodeHeader('expr') },
+          { kind: 'waitVisible', target: { testid: 'node-inspector' } },
+        ],
+        checks: [
+          { kind: 'contentReachable', state: 'inspector on expr, after run @ 900×700' },
+          { kind: 'externalRequestsZero' },
+        ],
+      },
+      {
+        id: 'reachable-catalog-narrow',
+        description: 'The open node-catalog popover clips nothing unreachably.',
+        trigger: 'Boot at 900×700, open the catalog, then walk every element.',
+        expect: 'The catalog body scrolls; nothing in it is cut off unreachably.',
+        viewport: { width: 900, height: 700 },
+        steps: [
+          { kind: 'click', target: { testid: 'add-node-button' } },
+          { kind: 'waitVisible', target: { testid: 'node-catalog' } },
+        ],
+        checks: [
+          { kind: 'contentReachable', state: 'node catalog open @ 900×700' },
+          { kind: 'externalRequestsZero' },
+        ],
+      },
+      {
+        id: 'reachable-after-run-wide',
+        description: 'The same walk in a wide window, where boxes are roomy.',
+        trigger: 'Boot at 1500×900, Run, then walk every element.',
+        expect: 'Zero elements overflow an axis with no scrolling ancestor on that axis.',
+        viewport: { width: 1500, height: 900 },
+        steps: [
+          { kind: 'click', target: { testid: 'run-button' } },
+          { kind: 'waitVisible', target: { testid: 'run-results' }, timeoutMs: 20000 },
+        ],
+        checks: [
+          { kind: 'contentReachable', state: 'showcase after run @ 1500×900' },
+          { kind: 'externalRequestsZero' },
+        ],
       },
     ],
   },

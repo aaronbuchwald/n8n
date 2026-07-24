@@ -8,7 +8,7 @@ import { test, expect, type Page } from '@playwright/test';
 //   * 1.2 node click → inspector with an `inspector-widget-slot` per widget input;
 //   * 1.3 each kind editable ONLY in the inspector — the card preview and the
 //     committed graph reflect the edit (text/number/math/table here; calc lives
-//     in calc-widget.spec.ts against capacity_check);
+//     in calc-widget.spec.ts against handcalc_demo);
 //   * 1.4 the card shows read-only previews + wireable sockets;
 //   * 1.8 clicking anywhere on a card (previews included) selects it; Escape closes.
 //

@@ -70,6 +70,22 @@ def test_roundtrip_multiline_calc():
     g.output = {"node": "steps", "socket": "latex"}
     _assert_roundtrip(g)
 
+    # The multi-line `lines` literal is spelled as the ADR 0020 block form: one
+    # fragment per calc entry, each carrying its own newline, inside an expanded
+    # call — the derived symbols still keyword args in appearance order.
+    source = to_composite(g, DEFAULT_REGISTRY)
+    assert (
+        "    steps = handcalc(\n"
+        "        lines=(\n"
+        "            'd = v*t\\n'\n"
+        "            'E = m*d'\n"
+        "        ),\n"
+        "        v=velocity,\n"
+        "        t=2.0,\n"
+        "        m=5.0,\n"
+        "    )\n"
+    ) in source
+
 
 def test_roundtrip_handcalc_results_wired_to_calc_notes():
     """ADR 0013 Change 2: handcalc.results → calc_notes round-trips (2.7).

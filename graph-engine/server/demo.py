@@ -34,6 +34,8 @@ _EXAMPLES = Path(__file__).resolve().parents[1] / "examples"
 EXAMPLES: dict[str, Path] = {
     "showcase": _EXAMPLES / "showcase",
     "capacity_check": _EXAMPLES / "capacity_check",
+    "capacity_check_split": _EXAMPLES / "capacity_check_split",
+    "handcalc_demo": _EXAMPLES / "handcalc_demo",
     "minimal": _EXAMPLES / "minimal",
 }
 DEFAULT_EXAMPLE = "showcase"

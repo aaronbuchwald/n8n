@@ -4,7 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 // ADR 0007 stream W, reconciled onto the 8-S1 store — the calc widget against
-// the LIVE demo server (no mocks), on capacity_check's `handcalc` node
+// the LIVE demo server (no mocks), on handcalc_demo's `handcalc` node
 // (graph id `steps`). What must hold end-to-end:
 //  * the node's derived sockets (C_min, F_max) render on the canvas, resolved
 //    from the STORE's derivedByNode view over the committed literal;
@@ -19,18 +19,18 @@ import { fileURLToPath } from 'node:url';
 //    the commit ingests the editor's own derive outcome (no parallel path);
 //  * everything serves from localhost — EXTERNAL_REQUESTS must stay 0.
 //
-// The test REALLY rewrites examples/capacity_check/capacity_check.py through
+// The test REALLY rewrites examples/handcalc_demo/handcalc_demo.py through
 // the server and restores the pristine graph in a finally; it runs in its own
 // sequenced project (see playwright.config.ts) because it mutates the shared
 // demo workspace.
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const MODULE_PY = path.resolve(HERE, '..', '..', 'examples', 'capacity_check', 'capacity_check.py');
+const MODULE_PY = path.resolve(HERE, '..', '..', 'examples', 'handcalc_demo', 'handcalc_demo.py');
 
-const GRAPH_ROUTE = '/api/graphs/capacity_check/graph';
-// capacity_check's handcalc is a two-line calc since ADR 0016: the equation
-// plus the assertion that judges it (`check = margin > 0`), single-sourced.
-// The edits below append to / replace this whole value.
+const GRAPH_ROUTE = '/api/graphs/handcalc_demo/graph';
+// handcalc_demo's handcalc is a two-line calc: the equation plus the assertion
+// that judges it (`check = margin > 0`), single-sourced. The edits below append
+// to / replace this whole value.
 const ORIGINAL_EQ = 'margin = C_min - F_max\ncheck = margin > 0';
 
 test.describe.configure({ mode: 'serial' });
@@ -92,7 +92,7 @@ test('calc widget: live derived chips, invalid-equation refusal, commit reshapes
   const deriveCalls = trackDeriveCalls(page);
   const puts = trackGraphPuts(page);
 
-  await page.goto('/?graph=capacity_check');
+  await page.goto('/?graph=handcalc_demo');
   await expect(page.locator('[data-testid="flow-canvas"][data-layout-ready="true"]')).toBeVisible({
     timeout: 15_000,
   });
@@ -117,7 +117,8 @@ test('calc widget: live derived chips, invalid-equation refusal, commit reshapes
     await expect(editor).toHaveValue(ORIGINAL_EQ);
 
     // --- 1.6 derived sockets are inspectable ---------------------------------
-    // C_min / F_max are derived from the equation and WIRED (from select_extreme):
+    // C_min / F_max are derived from the equation and WIRED (from the two
+    // reductions):
     // the inspector lists them read-only, with their wired source tag, no editor.
     const cMinRow = inspector
       .locator('[data-testid="inspector-input"]')

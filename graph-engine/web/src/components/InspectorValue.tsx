@@ -12,7 +12,12 @@ const COPIED_RESET_MS = 1500;
  * a value block. Copies the FULL raw text via the async clipboard API and shows
  * a brief "Copied ✓" confirmation that reverts on its own.
  */
-function CopyButton({ value }: { value: string }) {
+/**
+ * Copy-to-clipboard, revealed on hover/focus of its container. Shared by the
+ * read-only value blocks here AND by the editors (a value you can edit still
+ * needs to be copyable — without minting a second, read-only box for it).
+ */
+export function CopyButton({ value, className }: { value: string; className?: string }) {
   const [copied, setCopied] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -38,7 +43,7 @@ function CopyButton({ value }: { value: string }) {
   return (
     <button
       type="button"
-      className="ge-inspector__copy"
+      className={className ?? 'ge-inspector__copy'}
       data-testid="inspector-value-copy"
       data-copied={copied ? 'true' : 'false'}
       aria-label={copied ? 'Value copied' : 'Copy value'}

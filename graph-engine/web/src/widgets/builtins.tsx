@@ -15,24 +15,63 @@ function asString(value: unknown): string {
   return typeof value === 'string' ? value : String(value);
 }
 
-/** `kind: "text"` — a single-line string editor. `config.placeholder`/`maxLength` honored. */
+/**
+ * `kind: "text"` — a string editor. `config.placeholder`/`maxLength` honored.
+ *
+ * Single-line by default; a `<textarea>` when the value is multi-line (ADR 0018
+ * D2 tier 1). Promotion is either **declared** (`Widget("text", multiline=True)`)
+ * or **by content**: a committed value containing a newline cannot even be
+ * *displayed* in a single-line `<input>`, let alone edited, so it promotes
+ * itself. Content promotion reads the COMMITTED value only — never the draft —
+ * so the editor can never change shape mid-edit.
+ */
 export function TextEditor({ value, config, input, onCommit }: WidgetEditorProps) {
-  const [draft, setDraft] = useState(asString(value));
+  const committed = asString(value);
+  const [draft, setDraft] = useState(committed);
   useEffect(() => setDraft(asString(value)), [value]);
 
   const commit = () => {
     if (draft !== value) onCommit(draft);
   };
+  const placeholder = typeof config.placeholder === 'string' ? config.placeholder : input.name;
+  const maxLength = typeof config.maxLength === 'number' ? config.maxLength : undefined;
+
+  if (config.multiline === true || committed.includes('\n')) {
+    return (
+      <textarea
+        className="ge-widget-input ge-widget-textarea"
+        data-testid="widget-editor-text-multiline"
+        rows={Math.max(2, draft.split('\n').length)}
+        value={draft}
+        placeholder={placeholder}
+        maxLength={maxLength}
+        spellCheck={false}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        // D5: in a multi-line editor Enter is a NEWLINE and never commits;
+        // ⌘/Ctrl+Enter and focus leaving the field are the two commit gestures
+        // — verbatim the calc editor's model.
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+            e.preventDefault();
+            commit();
+          }
+        }}
+      />
+    );
+  }
+
   return (
     <input
       className="ge-widget-input"
       data-testid="widget-editor-text"
       type="text"
       value={draft}
-      placeholder={typeof config.placeholder === 'string' ? config.placeholder : input.name}
-      maxLength={typeof config.maxLength === 'number' ? config.maxLength : undefined}
+      placeholder={placeholder}
+      maxLength={maxLength}
       onChange={(e) => setDraft(e.target.value)}
       onBlur={commit}
+      // Single-line: Enter has no other meaning here, so it keeps committing.
       onKeyDown={(e) => {
         if (e.key === 'Enter') e.currentTarget.blur();
       }}

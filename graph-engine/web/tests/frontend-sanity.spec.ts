@@ -9,6 +9,7 @@ import {
   type PanelAction,
   type Target,
 } from './frontend-registry';
+import { expectContentReachable } from './reachability';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The frontend panel-sanity walk. Imports the canonical registry
@@ -45,6 +46,9 @@ test.beforeAll(() => {
       (RECORD ? ' — recording ON (SANITY_RECORD)' : ''),
   );
 });
+
+/** `devices['Desktop Chrome']` — what every action gets unless it pins its own. */
+const DEFAULT_VIEWPORT = { width: 1280, height: 720 };
 
 /** Localhost hostnames that count as "internal" for the offline posture. */
 const LOCAL_HOSTS = new Set(['127.0.0.1', 'localhost']);
@@ -218,6 +222,11 @@ async function runAssertion(
     case 'externalRequestsZero':
       expect(probes.external, `external (non-localhost) requests: ${probes.external.join(', ')}`).toHaveLength(0);
       return;
+    case 'contentReachable':
+      // Whole-page walk: nothing may overflow an axis without a scrollport on
+      // that axis. See tests/reachability.ts for the rule and its exemption.
+      await expectContentReachable(page, check.state);
+      return;
     case 'custom':
       notes.push(`check(custom): ${check.note}`);
       return;
@@ -245,6 +254,10 @@ for (const panel of PANELS) {
         probes.external.length = 0;
         probes.consoleErrors.length = 0;
         probes.pageErrors.length = 0;
+
+        // Some actions pin a viewport (clipping bugs only show once boxes get
+        // small); restore the project default for every other action.
+        await page.setViewportSize(action.viewport ?? DEFAULT_VIEWPORT);
 
         // Fresh boot for every action so they are independent.
         await boot(page, action.url ?? '/');

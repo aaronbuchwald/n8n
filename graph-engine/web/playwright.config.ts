@@ -6,8 +6,10 @@ import { existsSync } from 'node:fs';
 const PREINSTALLED_CHROMIUM = '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
 const executablePath = existsSync(PREINSTALLED_CHROMIUM) ? PREINSTALLED_CHROMIUM : undefined;
 
-const WEB_PORT = 4173;
-const API_PORT = 8000;
+// Overridable so two checkouts (or two agents) on one box don't fight over the
+// same two ports. Defaults are unchanged.
+const WEB_PORT = Number(process.env.GE_WEB_PORT ?? 4173);
+const API_PORT = Number(process.env.GE_API_PORT ?? 8000);
 
 export default defineConfig({
   testDir: './tests',
@@ -30,6 +32,7 @@ export default defineConfig({
         /server-mount\.spec\.ts/,
         /canvas-editing\.spec\.ts/,
         /calc-widget\.spec\.ts/,
+        /formula-editing\.spec\.ts/,
         // Real showcase-workspace mutators — serialized into the chain below so
         // they never race the parallel pack (or each other) on showcase.py.
         /new-node-authoring\.spec\.ts/,
@@ -48,7 +51,7 @@ export default defineConfig({
       dependencies: ['chromium'],
     },
     {
-      // The calc widget (ADR 0007 W) commits equations against capacity_check,
+      // The calc widget (ADR 0007 W) commits equations against handcalc_demo,
       // REALLY rewriting its module and restoring it afterwards — it must own
       // the workspace alone too. Run alone with: --project=calc --no-deps
       name: 'calc',
@@ -57,13 +60,24 @@ export default defineConfig({
       dependencies: ['editing'],
     },
     {
+      // Formula editing (ADR 0018) commits `sheet.calc_card` literals against
+      // capacity_check, REALLY rewriting its module and restoring it afterwards
+      // — same exclusive-workspace rule as `calc`, on a different example, so
+      // it gets its own link in the chain. Run alone with:
+      // --project=formula --no-deps
+      name: 'formula',
+      use: { ...devices['Desktop Chrome'] },
+      testMatch: /formula-editing\.spec\.ts/,
+      dependencies: ['calc'],
+    },
+    {
       // New-node authoring REALLY writes new @node functions into showcase.py
       // and restores them; its create/collision tests must not race each other
       // or any other showcase mutator. Serial, sequenced after the pack.
       name: 'new-node',
       use: { ...devices['Desktop Chrome'] },
       testMatch: /new-node-authoring\.spec\.ts/,
-      dependencies: ['calc'],
+      dependencies: ['formula'],
     },
     {
       // The node catalog's destructive tests (click-insert, multi-add, drag)
@@ -91,7 +105,10 @@ export default defineConfig({
       timeout: 120_000,
     },
     {
-      command: 'pnpm build && pnpm preview',
+      command: `pnpm build && pnpm exec vite preview --port ${WEB_PORT} --strictPort`,
+      // The bundle is served same-origin with /api via vite's preview proxy;
+      // point that proxy at whichever API port this run booted.
+      env: { GE_API_TARGET: `http://127.0.0.1:${API_PORT}` },
       url: `http://127.0.0.1:${WEB_PORT}`,
       reuseExistingServer: !process.env.CI,
       timeout: 120_000,

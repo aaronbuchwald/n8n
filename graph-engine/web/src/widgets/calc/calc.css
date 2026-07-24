@@ -15,6 +15,12 @@
   padding: 0.4rem 0.6rem;
   resize: vertical;
   line-height: 1.4;
+  /* One entry = one line, in the editor exactly as in the preview: soft-wrapping
+     would make the `rows` count (logical lines) too short and silently scroll
+     the draft out of view. Long entries scroll sideways instead. */
+  white-space: pre;
+  overflow-wrap: normal;
+  overflow-x: auto;
 }
 
 .ge-calc-preview {
@@ -25,10 +31,48 @@
   gap: 2px;
 }
 
+/* One preview entry, laid out as the anatomy the syntax encodes (ADR 0018 D4):
+   expression · unit chip · reference gutter — the same three slots the rendered
+   card gives them. Non-calcsheet dialects simply have the last two empty. */
+.ge-calc-preview__row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.ge-calc-preview__line {
+  min-width: 0;
+  overflow-x: auto;
+}
+
 .ge-calc-preview__line--raw {
   font-family: var(--ge-mono, monospace);
   font-size: 0.85em;
   color: var(--ge-muted, #8a93a6);
+  overflow-wrap: anywhere;
+}
+
+.ge-calc-preview__unit {
+  flex: none;
+  font-family: var(--ge-mono, monospace);
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  border: 1px solid var(--ge-node-border-strong, #3a4356);
+  color: var(--ge-value, #e3b262);
+}
+
+/* The reference is pushed to the right — its own gutter, the way the card
+   renders it, so `# text` visibly IS the reference field. */
+.ge-calc-preview__ref {
+  flex: none;
+  margin-left: auto;
+  padding-left: 8px;
+  font-size: 11px;
+  font-style: italic;
+  color: var(--ge-muted, #8a93a6);
+  text-align: right;
   overflow-wrap: anywhere;
 }
 
@@ -120,4 +164,51 @@
 .ge-calc-hint {
   font-size: 10px;
   color: var(--ge-muted, #8a93a6);
+}
+
+/* Copy-on-hover for the editor itself (ADR 0018 amendment): an editable value
+   still needs to be copyable, and a second read-only box for that is exactly
+   what this editor replaced. Mirrors the inspector value block's affordance. */
+.ge-calc-input-wrap {
+  position: relative;
+}
+
+.ge-widget-copy {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  padding: 2px 7px;
+  font-family: var(--ge-mono);
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--ge-muted);
+  background: var(--ge-panel);
+  border: 1px solid var(--ge-node-border);
+  border-radius: 5px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+
+.ge-calc-input-wrap:hover .ge-widget-copy,
+.ge-calc-input-wrap:focus-within .ge-widget-copy {
+  opacity: 1;
+}
+
+.ge-widget-copy:hover,
+.ge-widget-copy:focus-visible {
+  color: var(--ge-text);
+  border-color: var(--ge-accent);
+}
+
+.ge-widget-copy[data-copied='true'] {
+  opacity: 1;
+  color: var(--ge-output);
+  border-color: var(--ge-output);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ge-widget-copy {
+    transition: none;
+  }
 }

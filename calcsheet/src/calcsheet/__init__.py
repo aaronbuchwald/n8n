@@ -25,17 +25,33 @@ from __future__ import annotations
 from .errors import CalcError
 from .evaluate import CheckResult, Result, Row, evaluate_calc
 from .model import Calc, Check, Formula, Input
-from .render import render_html
+from .registry import (
+    RendererInfo,
+    get_renderer,
+    register_renderer,
+    renderer_info,
+    renderers,
+)
+from .render import HtmlOptions, render_html
+from .serialize import RESULT_SCHEMA_KEY, RESULT_SCHEMA_VERSION
 
 __all__ = [
+    "RESULT_SCHEMA_KEY",
+    "RESULT_SCHEMA_VERSION",
     "Calc",
     "CalcError",
     "Check",
     "CheckResult",
     "Formula",
+    "HtmlOptions",
     "Input",
+    "RendererInfo",
     "Result",
     "Row",
     "evaluate_calc",
+    "get_renderer",
+    "register_renderer",
+    "renderer_info",
+    "renderers",
     "render_html",
 ]

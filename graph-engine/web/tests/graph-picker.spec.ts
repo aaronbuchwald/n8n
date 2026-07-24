@@ -48,7 +48,7 @@ test('switches entries via the picker: URL key, full canvas swap, cleared run pa
 
   // Showcase-specific nodes are on the canvas; capacity_check's are not.
   await expect(nodeCard(page, 'parse_expr')).toBeVisible();
-  await expect(nodeCard(page, 'check_verdict')).toHaveCount(0);
+  await expect(nodeCard(page, 'calc_card')).toHaveCount(0);
 
   const badgeBefore = await page.getByTestId('branch-badge').textContent();
 
@@ -74,8 +74,8 @@ test('switches entries via the picker: URL key, full canvas swap, cleared run pa
   await expect(page.locator('[data-testid="flow-canvas"][data-layout-ready="true"]')).toBeVisible({
     timeout: 15_000,
   });
-  await expect(nodeCard(page, 'check_verdict')).toBeVisible();
-  await expect(nodeCard(page, 'select_extreme').first()).toBeVisible();
+  await expect(nodeCard(page, 'calc_card')).toBeVisible();
+  await expect(nodeCard(page, 'read_csv').first()).toBeVisible();
   await expect(nodeCard(page, 'parse_expr')).toHaveCount(0);
 
   // Run/export panels are per-entry and meaningless across a switch (D6).
@@ -88,7 +88,7 @@ test('switches entries via the picker: URL key, full canvas swap, cleared run pa
   await expect(button).toContainText('Capacity check');
 
   // --- the 8-S1 store still drives edits on the NEW entry ----------------
-  // A literal string input (`forces_path`, wired as `read_table`'s `path`)
+  // A literal string input (`forces_path`, wired as `read_csv`'s `path`)
   // renders a plain text chip (DefaultEditor). Committing it must PUT the
   // entry-SCOPED route, proving the write queue reads the switched `graphId`
   // out of the store rather than a stale/unscoped one. The PUT is mocked (as
@@ -98,7 +98,7 @@ test('switches entries via the picker: URL key, full canvas swap, cleared run pa
   const edited = JSON.parse(JSON.stringify(original));
   const NEW_PATH = 'forces-edited.csv';
   for (const node of edited.nodes) {
-    if (node.type === 'table.read_table') node.inputs.path = NEW_PATH;
+    if (node.type === 'sources.read_csv') node.inputs.path = NEW_PATH;
   }
   const scopedPutPath = '**/api/graphs/capacity_check/graph';
   await page.route(scopedPutPath, async (route) => {
@@ -109,9 +109,9 @@ test('switches entries via the picker: URL key, full canvas swap, cleared run pa
   });
 
   // ADR 0013: editing moved to the inspector. Open it and edit the `path`
-  // input's own slot (scoped by data-input — `read_table` has two literal
-  // inputs, `path` and `text`).
-  const card = nodeCard(page, 'read_table').first();
+  // input's own slot (scoped by data-input — `read_csv` has two literal
+  // inputs, `path` and `column`).
+  const card = nodeCard(page, 'read_csv').first();
   await card.getByTestId('node-title').click();
   const inspector = page.getByTestId('node-inspector');
   await expect(inspector).toBeVisible();

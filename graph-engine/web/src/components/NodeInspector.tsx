@@ -46,6 +46,18 @@ function inputValue(input: InspectedInput): ResolvedValue | null {
   return null;
 }
 
+/**
+ * ADR 0018 D1: on an EDITABLE row the editor already shows the literal, so a
+ * second read-only block duplicates it. The block survives only when the last
+ * run actually consumed something else than the literal now says (a rounded
+ * int, a default that changed after the run) — which makes it informative by
+ * construction. Read-only rows and outputs keep the block unconditionally.
+ */
+function runDiffersFromLiteral(input: InspectedInput): boolean {
+  if (input.run === null) return false;
+  return fullValue(input.run.value) !== fullValue(input.literal ? input.literal.value : '');
+}
+
 function ValueLine({ resolved }: { resolved: ResolvedValue | null }) {
   if (!resolved) {
     return <div className="ge-inspector__value ge-inspector__value--empty">no value yet</div>;
@@ -69,10 +81,13 @@ function InputRow({ input, nodeId }: { input: InspectedInput; nodeId: string }) 
   // The inspector is the editing surface now (ADR 0013 D4): an UNWIRED input
   // that declares a widget renders its editor inline, always expanded, under
   // the row head. Wired inputs (their value comes from the graph) and
-  // non-widget inputs stay read-only — the ValueLine still shows "what it is
-  // set to" / "what flowed in the last run" below the editor.
+  // non-widget inputs stay read-only — their ValueLine still shows "what it is
+  // set to" / "what flowed in the last run".
   const widgetSpec = input.spec?.widget ? input.spec : null;
   const editable = widgetSpec !== null && input.source.kind !== 'wired';
+  // D1: an editable row IS its editor — no duplicate block, and no "no value
+  // yet" placeholder either (the editor's own empty state covers that).
+  const showValue = !editable || runDiffersFromLiteral(input);
   return (
     <div className="ge-inspector__row" data-testid="inspector-input">
       <div className="ge-inspector__row-head">
@@ -90,7 +105,7 @@ function InputRow({ input, nodeId }: { input: InspectedInput; nodeId: string }) 
       {editable && widgetSpec && (
         <InspectorWidgetSlot input={widgetSpec} value={input.literal?.value} nodeId={nodeId} />
       )}
-      <ValueLine resolved={resolved} />
+      {showValue && <ValueLine resolved={resolved} />}
     </div>
   );
 }

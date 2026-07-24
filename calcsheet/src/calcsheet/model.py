@@ -52,10 +52,16 @@ class Check:
     ``expr`` must be relational or boolean (``"U < 100"``, ``"r > 0"``) — a
     plain number is not a verdict and is rejected. ``description`` says what
     the check is *for*, in prose.
+
+    ``utilisation`` optionally names the symbol whose value *is* this check's
+    utilisation (usually the left-hand side). It augments the verdict, never
+    replaces it: geometry checks like ``"spacing >= 4 * d"`` are naturally
+    boolean and stay that way, and ``passed`` remains authoritative.
     """
 
     expr: str
     description: str = ""
+    utilisation: str = ""
 
 
 @dataclass(frozen=True)

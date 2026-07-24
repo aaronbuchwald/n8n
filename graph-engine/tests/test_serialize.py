@@ -1,4 +1,5 @@
-"""Tests for server.serialize.to_jsonable — cycle- and NaN/Inf-safety."""
+"""Tests for server.serialize.to_jsonable — cycle-, NaN/Inf-safety and the
+self-description protocol (ADR 0021 D2)."""
 
 import math
 
@@ -33,3 +34,67 @@ def test_opaque_object_becomes_preview():
 
     out = to_jsonable(Widget())
     assert out["$type"] == "Widget" and "$repr" in out
+
+
+# -- the self-description protocol (ADR 0021 D2) ------------------------------
+#
+# Structural, never nominal: nothing here imports a pack, and no pack type is
+# named — a value opts in purely by having the method.
+
+
+def test_a_value_that_describes_itself_previews_as_real_json():
+    payload = {"schema": 1, "rows": [{"symbol": "U", "value": 57.1}]}
+
+    class Described:
+        def to_jsonable(self):
+            return dict(payload)
+
+    assert to_jsonable(Described()) == payload
+
+
+def test_the_described_view_is_itself_made_json_safe():
+    """What a hook returns is a claim, not a guarantee — it is checked too."""
+
+    class Sensor:
+        def to_jsonable(self):
+            return {"reading": math.inf, "probe": object()}
+
+    out = to_jsonable(Sensor())
+    assert out["reading"] == {"$repr": "inf", "$type": "float"}
+    assert out["probe"]["$type"] == "object"
+
+
+def test_a_value_without_the_protocol_still_becomes_a_preview():
+    class Opaque:
+        def render(self):  # a method, but not the hook
+            return "nope"
+
+    out = to_jsonable(Opaque())
+    assert out["$type"] == "Opaque" and "$repr" in out
+
+
+def test_a_to_dict_alone_is_not_the_protocol():
+    """`to_dict` is a shape; only `to_jsonable` promises the shape is JSON-safe."""
+
+    class Shaped:
+        def to_dict(self):
+            return {"looks": "serialisable"}
+
+    out = to_jsonable(Shaped())
+    assert out["$type"] == "Shaped" and "$repr" in out
+
+
+def test_a_raising_hook_degrades_to_a_preview_instead_of_failing_the_response():
+    class Broken:
+        def to_jsonable(self):
+            raise RuntimeError("boom")
+
+    assert to_jsonable(Broken())["$type"] == "Broken"
+
+
+def test_a_self_referential_view_terminates():
+    class Loop:
+        def to_jsonable(self):
+            return {"me": self}
+
+    assert to_jsonable(Loop())["me"]["$type"] == "Loop"

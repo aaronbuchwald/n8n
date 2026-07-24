@@ -5,23 +5,23 @@
 //  * `sandbox=""` — no scripts, no same-origin, no forms, no top-navigation.
 //    The value is untrusted node output; it can never touch the host page.
 //    Never `dangerouslySetInnerHTML`, here or in any kind, ever.
-//  * A scriptless iframe cannot report its content height, so the declared
-//    `height` config (px, default 180) sets the surface; content scrolls
-//    within — no resize shim, no `allow-scripts`.
+//  * A scriptless iframe cannot report its content height, so the frame is a
+//    declared size and the card scrolls inside it when its content is taller.
 //  * The iframe mounts only once a run produced a value (placeholder text
 //    before) and is `loading="lazy"` — the D5 canvas-cost ladder.
 //
-// Config: `{ socket?: string, height?: number }`. `socket` defaults to the
-// node's single output (the engine validates the declaration against the
-// node's outputs at import time). Non-string values, `{"$repr","$type"}`
-// previews and missing sockets degrade to the informative result chips.
-// The same component serves both surfaces (`card` and `panel`).
+// Config: `{ socket?: string, height?: number }`.
+// `socket` defaults to the node's single output (the engine validates the
+// declaration against the node's outputs at import time). Non-string values,
+// `{"$repr","$type"}` previews and missing sockets degrade to the informative
+// result chips. The same component serves both surfaces (`card` and `panel`).
 
 import { ResultChips } from '../ResultChips';
 import type { NodeRendererProps } from '../registry';
 import type { NodeSpec } from '../../types';
 
 const DEFAULT_HEIGHT = 180;
+
 
 /** The output socket this card reads: `config.socket`, else the sole output. */
 function socketName(config: Record<string, unknown>, spec: NodeSpec): string {
@@ -33,12 +33,13 @@ function socketName(config: Record<string, unknown>, spec: NodeSpec): string {
 }
 
 /** The declared surface height in px; malformed config falls back to default. */
-function surfaceHeight(config: Record<string, unknown>): number {
+function declaredHeight(config: Record<string, unknown>): number {
   const height = config.height;
   return typeof height === 'number' && Number.isFinite(height) && height > 0
     ? height
     : DEFAULT_HEIGHT;
 }
+
 
 export default function HtmlCardRenderer({
   spec,
@@ -83,7 +84,7 @@ export default function HtmlCardRenderer({
         sandbox=""
         loading="lazy"
         srcDoc={value}
-        style={{ height: surfaceHeight(config) }}
+        style={{ height: declaredHeight(config) }}
       />
     </div>
   );

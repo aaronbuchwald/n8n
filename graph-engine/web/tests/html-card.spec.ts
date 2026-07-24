@@ -12,6 +12,10 @@ import { test, expect, type Page } from '@playwright/test';
 //  * the results panel resolves the same kind for the output node (dashboard)
 //    with the same sandbox posture, replacing the old string-iframe special
 //    case;
+//  * a card taller than its frame (`sheet.calc_card` on capacity_check) keeps
+//    the DECLARED config height and scrolls its content inside the frame — a
+//    scriptless iframe cannot measure itself, and a pixel height is
+//    presentation, so it never enters the node's dataflow contract (ADR 0019);
 //  * everything serves from localhost — EXTERNAL_REQUESTS must stay 0.
 
 function nodeCard(page: Page, title: string) {
@@ -117,6 +121,77 @@ test('the results panel mounts the output node html-card with the same sandbox p
   const doc = results.frameLocator('[data-testid="html-card-frame"]');
   await expect(doc.locator('h1').first()).toHaveText('Widget showcase');
   await expect(page.getByTestId('run-result-frame')).toHaveCount(0);
+
+  expect(external, 'EXTERNAL_REQUESTS must be 0').toHaveLength(0);
+});
+
+test('a card frame uses its DECLARED height and taller content stays reachable inside it', async ({
+  page,
+}) => {
+  const external = trackExternalRequests(page);
+
+  // The declared height is the node type's own renderer config — read it from
+  // the served spec rather than restating a number the pack owns.
+  const served: { specs: Record<string, { renderer: { config: Record<string, unknown> } }> } =
+    await (await page.request.get('/api/specs')).json();
+  const declared = served.specs['sheet.calc_card'].renderer.config.height;
+  expect(typeof declared).toBe('number');
+
+  await page.goto('/?graph=capacity_check');
+  await expect(page.locator('[data-testid="flow-canvas"][data-layout-ready="true"]')).toBeVisible({
+    timeout: 15_000,
+  });
+
+  const card = nodeCard(page, 'calc_card');
+
+  // Before a run there is nothing to show: the placeholder is showing and no
+  // iframe exists yet (the D5 canvas-cost rule is unchanged).
+  await expect(card.getByTestId('html-card-renderer')).toContainText('run to render');
+  await expect(card.locator('[data-testid="html-card-frame"]')).toHaveCount(0);
+
+  const runResponse = page.waitForResponse(
+    (r) =>
+      new URL(r.url()).pathname.endsWith('/run') &&
+      r.request().method() === 'POST' &&
+      r.status() === 200,
+  );
+  await page.getByTestId('run-button').click();
+  // ONE output: the card document itself — a pixel height is presentation, so
+  // it is not published as a socket (the node's whole output IS the string).
+  const payload: { outputs: Record<string, Record<string, unknown>> } = await (
+    await runResponse
+  ).json();
+  expect(typeof payload.outputs.card.result).toBe('string');
+
+  const frame = card.getByTestId('html-card-frame');
+  await expect(frame).toBeVisible();
+  // The surface is the node type's DECLARED height — a scriptless iframe cannot
+  // measure itself, so nothing about the frame's size comes from the run.
+  await expect(frame).toHaveCSS('height', `${declared as number}px`);
+  // Fixing the size from outside does not weaken the frame: sandbox stays "".
+  await expect(frame).toHaveAttribute('sandbox', '');
+
+  // This calc is taller than the declared frame, and none of it is lost: the
+  // document scrolls INSIDE the frame, so the FAIL verdict in the footer is
+  // reachable.
+  const doc = card.frameLocator('[data-testid="html-card-frame"]');
+  await expect(doc.locator('.card__title')).toHaveText('Capacity check');
+  // The whole document is there — the footer verdict is the LAST thing in it.
+  await expect(doc.locator('.foot')).toContainText('Overall');
+  // …and the overflow is scrollable, not clipped: the content is taller than
+  // the frame and the document can actually be scrolled to reach it.
+  const handle = await frame.elementHandle();
+  const content = await handle?.contentFrame();
+  expect(content).not.toBeNull();
+  const scroll = await content!.evaluate(() => {
+    const el = document.scrollingElement;
+    if (el === null) return null;
+    el.scrollTop = el.scrollHeight;
+    return { overflow: el.scrollHeight - el.clientHeight, scrolled: el.scrollTop };
+  });
+  expect(scroll).not.toBeNull();
+  expect(scroll!.overflow).toBeGreaterThan(0);
+  expect(scroll!.scrolled).toBeGreaterThan(0);
 
   expect(external, 'EXTERNAL_REQUESTS must be 0').toHaveLength(0);
 });

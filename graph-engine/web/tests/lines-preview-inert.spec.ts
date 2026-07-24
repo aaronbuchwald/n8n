@@ -1,7 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 
 // Regression for the reported "clicking the lines preview brings up a garbage
-// link" on capacity_check's handcalc node (graph id `steps`). The `lines` calc
+// link" on handcalc_demo's handcalc node (graph id `steps`). The `lines` calc
 // literal (`margin = C_min - F_max`) renders as a READ-ONLY card preview
 // (ADR 0013 D2, block strip). The contract that must hold:
 //
@@ -43,7 +43,7 @@ test.describe('handcalc lines calc preview is inert (no garbage link)', () => {
       popped = true;
     });
 
-    await page.goto('/?graph=capacity_check');
+    await page.goto('/?graph=handcalc_demo');
     await calcPreview(page).waitFor();
 
     // (d) the equation still typesets via KaTeX (or an honest raw fallback line).
@@ -78,7 +78,7 @@ test.describe('handcalc lines calc preview is inert (no garbage link)', () => {
     // is invalid Python, so the server rejects the derive and NOTHING commits —
     // the demo module stays pristine — but the draft still typesets through the
     // same `renderKatex`. With `trust: false` pinned, no `<a>` is produced.
-    await page.goto('/?graph=capacity_check');
+    await page.goto('/?graph=handcalc_demo');
     await calcPreview(page).click({ position: { x: 6, y: 6 } });
     await expect(linesEditor(page)).toBeVisible();
 
