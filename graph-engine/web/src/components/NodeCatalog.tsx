@@ -1,4 +1,4 @@
-// ADR 0017 (node catalog) stream 17-W1 — the on-demand "Add node" catalog.
+// ADR 0017 (node catalog) — the on-demand "Add node" catalog.
 //
 // A top-bar button opens an anchored command-palette popover: an autofocused
 // search over every registered spec, grouped into the D2 capability sections
@@ -7,20 +7,29 @@
 // footer. Click-to-insert drops the node at the visible canvas centre (D4),
 // closes the catalog, and selects the new node so the Inspector opens.
 //
-// This is a PURE ADDITION: the left Palette (11-W5) still works and coexists;
-// W4 retires it later. Reads specs from the store exactly as the palette does
-// (no new fetch); every insert funnels through the existing `createNode`.
+// Stream 17-W1 delivered the surface (button, popover, search, click-collapse,
+// click-insert, footer). Stream 17-W2 (this file) adds the full D5 keyboard
+// model + ARIA and moves collapse persistence into `store/catalog.ts`:
+//   - Ctrl/Cmd+K opens (guarded from Monaco/editable targets), again closes.
+//   - A virtual highlight (`aria-activedescendant`) roves the visible rows with
+//     ↑/↓/Home/End, flowing across section boundaries and skipping headers.
+//   - ←/→ collapse/expand the highlighted row's section.
+//   - Enter inserts + closes; Alt+Enter (and Alt+click) inserts + stays open
+//     (multi-add). Escape is two-stage and consumed so App's cascade never
+//     double-fires.
+//   - Section collapse persists across reloads via `ge:catalog:v1`, cleared by
+//     "Reset layout". Highlight and query stay ephemeral (reset each open).
 //
-// Scope note: the full keyboard model (Ctrl/Cmd+K, virtual highlight, arrow
-// nav), collapse *persistence* (`store/catalog.ts`), and drag-out-of-catalog
-// are LATER streams (W2/W3). W1 delivers click-insert + search + collapsible
-// sections, leaving clean seams for those. Collapse here is ephemeral local
-// state; the popover's dismiss/Escape mirrors the GraphPicker precedent.
+// Drag-out-of-catalog is stream 17-W3 — rows are deliberately NOT `draggable`
+// yet. Reads specs from the store exactly as the palette does (no new fetch);
+// every insert funnels through the existing `createNode`.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { CATEGORY_SECTIONS, categoryFor, type CategoryId } from '../catalog/categories';
+import { setCatalogSectionCollapsed, toggleCatalogSection } from '../store/catalog';
 import { createNode } from '../store/sync';
+import { useCatalogSelector } from '../store/useCatalog';
 import { useSyncSelector } from '../store/useSyncSelector';
 import type { NodeSpec } from '../types';
 
@@ -42,6 +51,17 @@ interface CatalogEntry {
   summary: string; // first doc line, '' when undocumented
 }
 
+/** A visible (navigable) row: its spec id and the section it lives in. */
+interface VisibleEntry {
+  specId: string;
+  category: CategoryId;
+}
+
+/** DOM id for an entry's `role="option"` — the target of `aria-activedescendant`. */
+function optionDomId(specId: string): string {
+  return `ge-catalog-opt-${specId}`;
+}
+
 /** First line of the spec's docstring — the entry's one-line summary (D3). */
 function firstDocLine(doc: string): string {
   const newline = doc.indexOf('\n');
@@ -61,6 +81,15 @@ function staggerOffset(nodeCount: number): { dx: number; dy: number } {
   return { dx: (nodeCount % 6) * 24, dy: (nodeCount % 10) * 20 };
 }
 
+/** True when the event originates in an editable surface Ctrl+K must not steal. */
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return false;
+  return Boolean(
+    target.closest('input, textarea, [contenteditable], [contenteditable="true"]') ||
+      target.closest('.ge-source'), // Monaco owns Ctrl+K chords
+  );
+}
+
 export function NodeCatalog({
   disabled,
   getInsertPosition,
@@ -69,25 +98,61 @@ export function NodeCatalog({
 }: NodeCatalogProps) {
   const specs = useSyncSelector((s) => s.specs);
   const nodesById = useSyncSelector((s) => s.effective.nodesById);
+  // Durable collapse state (D5): the persisted `ge:catalog:v1` slice.
+  const collapsedList = useCatalogSelector((s) => s.collapsed);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
-  // Ephemeral collapse (W2 persists it via store/catalog.ts). Query overrides it.
-  const [collapsed, setCollapsed] = useState<ReadonlySet<CategoryId>>(new Set());
+  // Ephemeral virtual highlight (D5): the spec id of the roving `role="option"`.
+  // null falls back to the first visible entry (resolved below).
+  const [highlightedId, setHighlightedId] = useState<string | null>(null);
   const [inserting, setInserting] = useState(false);
 
   const rootRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+
+  const collapsedSet = useMemo(() => new Set(collapsedList), [collapsedList]);
 
   // Close if the app leaves the ready state while the catalog is open.
   useEffect(() => {
     if (disabled && open) setOpen(false);
   }, [disabled, open]);
 
-  // Autofocus the search on open; reset the ephemeral query each visit.
+  // Autofocus the search on open; reset the ephemeral query + highlight each
+  // visit (collapse state is durable and deliberately NOT reset here).
   useEffect(() => {
     if (open) searchRef.current?.focus();
-    else setQuery('');
+    else {
+      setQuery('');
+      setHighlightedId(null);
+    }
   }, [open]);
+
+  // A new query re-seeds the highlight to the first match (D5).
+  useEffect(() => {
+    setHighlightedId(null);
+  }, [query]);
+
+  // Ctrl/Cmd+K: open (focus search) when closed, close when open. When closed,
+  // ignored on an editable/Monaco target (the same guard shape as App's cascade)
+  // so the shortcut never steals a chord the editor owns. Capture phase +
+  // preventDefault so the browser's own Ctrl+K (e.g. Firefox search bar) yields.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const isK = (event.ctrlKey || event.metaKey) && (event.key === 'k' || event.key === 'K');
+      if (!isK) return;
+      if (open) {
+        event.preventDefault();
+        setOpen(false);
+        return;
+      }
+      if (disabled) return;
+      if (isEditableTarget(event.target)) return;
+      event.preventDefault();
+      setOpen(true);
+    };
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, [open, disabled]);
 
   // Light-dismiss (outside pointer-down) + Escape, mirroring GraphPicker. Escape
   // is two-stage: a non-empty query clears; an empty query closes. Consumed in
@@ -149,17 +214,40 @@ export function NodeCatalog({
   const totalMatches = sections.reduce((count, group) => count + group.entries.length, 0);
   // A query in progress overrides collapse so a match is never hidden in a fold.
   const searching = query.trim() !== '';
+  const isExpanded = (id: CategoryId) => searching || !collapsedSet.has(id);
 
-  const toggleSection = (id: CategoryId) => {
-    setCollapsed((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
+  // The flat list of navigable rows, in render order, only inside expanded
+  // sections — the roving highlight flows across this list (headers skipped).
+  const visibleEntries = useMemo<VisibleEntry[]>(() => {
+    const list: VisibleEntry[] = [];
+    for (const { section, entries } of sections) {
+      if (searching || !collapsedSet.has(section.id)) {
+        for (const { spec, category } of entries) list.push({ specId: spec.id, category });
+      }
+    }
+    return list;
+  }, [sections, searching, collapsedSet]);
 
-  const insert = async (specId: string) => {
+  // Resolve the effective highlight: the stored id if still visible, else the
+  // first visible row. `-1` when nothing matches (the empty state).
+  const activeIndex = useMemo(() => {
+    if (visibleEntries.length === 0) return -1;
+    const i = visibleEntries.findIndex((e) => e.specId === highlightedId);
+    return i >= 0 ? i : 0;
+  }, [visibleEntries, highlightedId]);
+  const activeEntry = activeIndex >= 0 ? visibleEntries[activeIndex] : null;
+  const activeSpecId = activeEntry?.specId ?? null;
+
+  // Keep the highlighted row scrolled into view (focus never leaves the search,
+  // so the browser won't do it for us).
+  useEffect(() => {
+    if (!open || !activeSpecId) return;
+    rootRef.current
+      ?.querySelector(`#${CSS.escape(optionDomId(activeSpecId))}`)
+      ?.scrollIntoView({ block: 'nearest' });
+  }, [open, activeSpecId]);
+
+  const insert = async (specId: string, keepOpen: boolean) => {
     if (inserting) return;
     setInserting(true);
     try {
@@ -173,12 +261,97 @@ export function NodeCatalog({
         position = fallbackPosition(count);
       }
       const { id } = await createNode(specId, position);
-      setOpen(false);
-      onSelectNode(id);
+      if (keepOpen) {
+        // Multi-add (D4): stay open, keep the search focused for the next add.
+        searchRef.current?.focus();
+      } else {
+        setOpen(false);
+        onSelectNode(id);
+      }
     } catch {
       // A mint failure is already surfaced on the store's writeError banner.
     } finally {
       setInserting(false);
+    }
+  };
+
+  // ← collapses the highlighted row's section; the highlight clamps into the
+  // shrunken list so it never lands on nothing (D5).
+  const collapseActiveSection = () => {
+    if (!activeEntry || searching) return; // collapse has no visible effect mid-search
+    if (collapsedSet.has(activeEntry.category)) return;
+    const nextCollapsed = new Set(collapsedSet);
+    nextCollapsed.add(activeEntry.category);
+    const nextVisible: VisibleEntry[] = [];
+    for (const { section, entries } of sections) {
+      if (!nextCollapsed.has(section.id)) {
+        for (const { spec, category } of entries) nextVisible.push({ specId: spec.id, category });
+      }
+    }
+    setCatalogSectionCollapsed(activeEntry.category, true);
+    if (nextVisible.length > 0) {
+      const clamped = Math.min(activeIndex, nextVisible.length - 1);
+      setHighlightedId(nextVisible[clamped].specId);
+    }
+  };
+
+  // → expands the highlighted row's section if it is collapsed (no-op otherwise);
+  // the highlight stays on the same row, which remains visible (D5).
+  const expandActiveSection = () => {
+    if (!activeEntry || searching) return;
+    if (!collapsedSet.has(activeEntry.category)) return;
+    setCatalogSectionCollapsed(activeEntry.category, false);
+  };
+
+  const moveHighlight = (delta: 1 | -1) => {
+    if (visibleEntries.length === 0) return;
+    const base = activeIndex < 0 ? 0 : activeIndex;
+    const next = (base + delta + visibleEntries.length) % visibleEntries.length;
+    setHighlightedId(visibleEntries[next].specId);
+  };
+
+  const jumpHighlight = (to: 'first' | 'last') => {
+    if (visibleEntries.length === 0) return;
+    setHighlightedId(visibleEntries[to === 'first' ? 0 : visibleEntries.length - 1].specId);
+  };
+
+  // The catalog's list navigation. Escape and Ctrl+K are handled in the capture
+  // effects above; here we own the arrows/Home/End/Enter while the search keeps
+  // real focus (all list movement is virtual — the listbox pattern).
+  const onSearchKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    switch (event.key) {
+      case 'ArrowDown':
+        event.preventDefault();
+        moveHighlight(1);
+        break;
+      case 'ArrowUp':
+        event.preventDefault();
+        moveHighlight(-1);
+        break;
+      case 'Home':
+        event.preventDefault();
+        jumpHighlight('first');
+        break;
+      case 'End':
+        event.preventDefault();
+        jumpHighlight('last');
+        break;
+      case 'ArrowLeft':
+        event.preventDefault();
+        collapseActiveSection();
+        break;
+      case 'ArrowRight':
+        event.preventDefault();
+        expandActiveSection();
+        break;
+      case 'Enter':
+        if (activeSpecId) {
+          event.preventDefault();
+          void insert(activeSpecId, event.altKey); // Alt+Enter = multi-add (stay open)
+        }
+        break;
+      default:
+        break;
     }
   };
 
@@ -219,8 +392,11 @@ export function NodeCatalog({
               role="combobox"
               aria-expanded={open}
               aria-controls="ge-catalog-listbox"
+              aria-activedescendant={activeSpecId ? optionDomId(activeSpecId) : undefined}
+              autoComplete="off"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
+              onKeyDown={onSearchKeyDown}
             />
           </div>
 
@@ -232,7 +408,7 @@ export function NodeCatalog({
             ) : (
               <div className="ge-catalog__sections" id="ge-catalog-listbox" role="listbox">
                 {sections.map(({ section, entries }) => {
-                  const expanded = searching || !collapsed.has(section.id);
+                  const expanded = isExpanded(section.id);
                   return (
                     <section
                       key={section.id}
@@ -245,7 +421,7 @@ export function NodeCatalog({
                         className="ge-catalog__section-toggle"
                         data-testid="node-catalog-section-toggle"
                         aria-expanded={expanded}
-                        onClick={() => toggleSection(section.id)}
+                        onClick={() => toggleCatalogSection(section.id)}
                       >
                         <span className="ge-catalog__chevron" aria-hidden="true">
                           {expanded ? '▾' : '▸'}
@@ -258,30 +434,37 @@ export function NodeCatalog({
                       </button>
                       {expanded && (
                         <ul className="ge-catalog__list">
-                          {entries.map(({ spec, category, summary }) => (
-                            <li key={spec.id}>
-                              <button
-                                type="button"
-                                className="ge-catalog__entry"
-                                data-testid="node-catalog-entry"
-                                data-spec-id={spec.id}
-                                data-category={category}
-                                role="option"
-                                aria-selected={false}
-                                disabled={inserting}
-                                title={summary || `add a ${spec.id} node`}
-                                onClick={() => void insert(spec.id)}
-                              >
-                                <span className="ge-catalog__entry-main">
-                                  <span className="ge-catalog__entry-name">{spec.name}</span>
-                                  {summary && (
-                                    <span className="ge-catalog__entry-doc">{summary}</span>
-                                  )}
-                                </span>
-                                <span className="ge-catalog__entry-id">{spec.id}</span>
-                              </button>
-                            </li>
-                          ))}
+                          {entries.map(({ spec, category, summary }) => {
+                            const active = spec.id === activeSpecId;
+                            return (
+                              <li key={spec.id}>
+                                <button
+                                  type="button"
+                                  id={optionDomId(spec.id)}
+                                  className={
+                                    'ge-catalog__entry' +
+                                    (active ? ' ge-catalog__entry--active' : '')
+                                  }
+                                  data-testid="node-catalog-entry"
+                                  data-spec-id={spec.id}
+                                  data-category={category}
+                                  role="option"
+                                  aria-selected={active}
+                                  disabled={inserting}
+                                  title={summary || `add a ${spec.id} node`}
+                                  onClick={(event) => void insert(spec.id, event.altKey)}
+                                >
+                                  <span className="ge-catalog__entry-main">
+                                    <span className="ge-catalog__entry-name">{spec.name}</span>
+                                    {summary && (
+                                      <span className="ge-catalog__entry-doc">{summary}</span>
+                                    )}
+                                  </span>
+                                  <span className="ge-catalog__entry-id">{spec.id}</span>
+                                </button>
+                              </li>
+                            );
+                          })}
                         </ul>
                       )}
                     </section>

@@ -333,14 +333,16 @@ export const PANELS: Panel[] = [
     ],
   },
 
-  // ── 2b. Node catalog (ADR 0017 W1) ─────────────────────────────────────────
+  // ── 2b. Node catalog (ADR 0017 W1–W2) ──────────────────────────────────────
   // A PURE ADDITION alongside the palette for this stream; W4 replaces the
-  // palette panel above with this one. Covers D8 assertions 1, 2, 4.
+  // palette panel above with this one. Covers D8 assertions 1, 2, 3, 4, 5, 6
+  // (W1: 1/2/4 — surface, sections, search; W2: 3/5/6 — collapse persistence,
+  // the keyboard model, and Alt+Enter multi-add).
   {
     id: 'node-catalog',
     name: 'Node catalog',
     description:
-      'The on-demand, capability-grouped "Add node" command palette (ADR 0017): a top-bar button opens an anchored popover with an autofocused search and collapsible capability sections (Input/Data · Table · Math · Logic · Render/Output, + Other), plus a "Create new node…" footer.',
+      'The on-demand, capability-grouped "Add node" command palette (ADR 0017): a top-bar button (or Ctrl/Cmd+K) opens an anchored popover with an autofocused search and collapsible capability sections (Input/Data · Table · Math · Logic · Render/Output, + Other), plus a "Create new node…" footer. Full keyboard model: a virtual aria-activedescendant highlight roved with ↑/↓/Home/End across sections, ←/→ collapse/expand, Enter inserts + closes, Alt+Enter inserts + stays open (multi-add), two-stage Escape. Section collapse persists under ge:catalog:v1 and is cleared by Reset layout.',
     testids: [
       'add-node-button',
       'node-catalog',
@@ -419,6 +421,154 @@ export const PANELS: Panel[] = [
           { kind: 'visible', target: { testid: 'node-catalog-empty' } },
           { kind: 'visible', target: { testid: 'node-catalog-new-node' } },
           { kind: 'externalRequestsZero' },
+        ],
+      },
+      {
+        id: 'keyboard-open',
+        description: 'Ctrl/Cmd+K opens the catalog (the quick-switcher shortcut, D5).',
+        trigger: 'Press Ctrl+K on the booted app.',
+        expect: '[data-testid="node-catalog"] becomes visible.',
+        steps: [{ kind: 'pressKey', key: 'Control+k' }],
+        checks: [
+          { kind: 'visible', target: { testid: 'node-catalog' } },
+          { kind: 'externalRequestsZero' },
+        ],
+      },
+      {
+        id: 'keyboard-virtual-highlight',
+        description:
+          'A single virtual highlight (aria-activedescendant) sits on the first row on open and moves with ↓, skipping headers and flowing across sections.',
+        trigger:
+          'Open the catalog; press ArrowDown on [data-testid="node-catalog-search"].',
+        expect:
+          'Exactly one [data-testid="node-catalog-entry"][aria-selected="true"] exists (the roved row).',
+        steps: [
+          { kind: 'click', target: { testid: 'add-node-button' } },
+          { kind: 'waitVisible', target: { testid: 'node-catalog' } },
+          { kind: 'press', target: { testid: 'node-catalog-search' }, key: 'ArrowDown' },
+        ],
+        checks: [
+          {
+            kind: 'count',
+            target: { selector: '[data-testid="node-catalog-entry"][aria-selected="true"]' },
+            count: 1,
+          },
+          { kind: 'externalRequestsZero' },
+        ],
+      },
+      {
+        id: 'collapse-persists-across-reload',
+        description:
+          'A folded section stays folded across a reload — collapse is persisted under ge:catalog:v1, not component-local (D5).',
+        trigger:
+          'Open the catalog, click the Math [data-testid="node-catalog-section-toggle"], reload, reopen.',
+        expect:
+          'After reload the Math section toggle reads aria-expanded="false".',
+        steps: [
+          { kind: 'click', target: { testid: 'add-node-button' } },
+          { kind: 'waitVisible', target: { testid: 'node-catalog' } },
+          {
+            kind: 'click',
+            target: {
+              selector:
+                '[data-testid="node-catalog-section"][data-category="math"] [data-testid="node-catalog-section-toggle"]',
+            },
+          },
+          { kind: 'reload' },
+          { kind: 'waitReady' },
+          { kind: 'click', target: { testid: 'add-node-button' } },
+          { kind: 'waitVisible', target: { testid: 'node-catalog' } },
+        ],
+        checks: [
+          {
+            kind: 'attr',
+            target: {
+              selector:
+                '[data-testid="node-catalog-section"][data-category="math"] [data-testid="node-catalog-section-toggle"]',
+            },
+            name: 'aria-expanded',
+            value: 'false',
+          },
+          { kind: 'externalRequestsZero' },
+        ],
+      },
+      {
+        id: 'reset-layout-clears-collapse',
+        description:
+          'Reset layout clears the persisted catalog collapse (ge:catalog:v1) alongside the workbench layout — one escape hatch for all persisted UI state (D5).',
+        trigger:
+          'Open the catalog, fold Math, press Escape, click [data-testid="reset-layout"], reopen.',
+        expect: 'The Math section toggle reads aria-expanded="true" again.',
+        steps: [
+          { kind: 'click', target: { testid: 'add-node-button' } },
+          { kind: 'waitVisible', target: { testid: 'node-catalog' } },
+          {
+            kind: 'click',
+            target: {
+              selector:
+                '[data-testid="node-catalog-section"][data-category="math"] [data-testid="node-catalog-section-toggle"]',
+            },
+          },
+          { kind: 'pressKey', key: 'Escape' },
+          { kind: 'click', target: { testid: 'reset-layout' } },
+          { kind: 'click', target: { testid: 'add-node-button' } },
+          { kind: 'waitVisible', target: { testid: 'node-catalog' } },
+        ],
+        checks: [
+          {
+            kind: 'attr',
+            target: {
+              selector:
+                '[data-testid="node-catalog-section"][data-category="math"] [data-testid="node-catalog-section-toggle"]',
+            },
+            name: 'aria-expanded',
+            value: 'true',
+          },
+          { kind: 'externalRequestsZero' },
+        ],
+      },
+      {
+        id: 'keyboard-insert',
+        description:
+          'Typing a query then Enter inserts the highlighted node, closes the catalog and selects the node (inspector opens). DESTRUCTIVE — mints + persists a node.',
+        trigger:
+          'Open the catalog, fill the search with "latex_to_mathml", press Enter on the search.',
+        expect:
+          'The catalog hides, a spec-node of the inserted type exists (by minted id), and [data-testid="node-inspector"] docks. Mutates showcase.py (restore in finally).',
+        review: true,
+        steps: [
+          {
+            kind: 'custom',
+            note: 'See node-catalog.spec.ts "typing then Enter inserts…": open → fill "latex_to_mathml" → Enter; capture the mint-id, await PUT /api/graph, assert the card + node-inspector, then restore the pristine graph via PUT /api/graph.',
+          },
+        ],
+        checks: [
+          {
+            kind: 'custom',
+            note: 'node-catalog hidden; a spec-node filtered by the minted node-id is visible; node-inspector + dock-tab-inspector visible.',
+          },
+        ],
+      },
+      {
+        id: 'multi-add',
+        description:
+          'Alt+Enter inserts without closing so several nodes can be added in one visit. DESTRUCTIVE — mints + persists nodes.',
+        trigger:
+          'Open the catalog, fill the search with "latex_to_mathml", press Alt+Enter twice.',
+        expect:
+          'Two distinct spec-nodes exist and [data-testid="node-catalog"] stays visible throughout. Mutates showcase.py (restore in finally).',
+        review: true,
+        steps: [
+          {
+            kind: 'custom',
+            note: 'See node-catalog.spec.ts "Alt+Enter inserts without closing…": open → fill "latex_to_mathml" → Alt+Enter (await mint) → Alt+Enter (await mint); assert two distinct minted cards and node-catalog still visible, then restore the pristine graph.',
+          },
+        ],
+        checks: [
+          {
+            kind: 'custom',
+            note: 'node-catalog stays visible across both inserts; two distinct minted spec-nodes are on the canvas.',
+          },
         ],
       },
     ],

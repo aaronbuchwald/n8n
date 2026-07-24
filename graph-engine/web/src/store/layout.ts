@@ -17,6 +17,8 @@
 // `LAYOUT_STORAGE_PREFIX`, `getLayout`, the mutators, and `resetLayout` are the
 // stable seam.
 
+import { resetCatalog } from './catalog';
+
 /** The three collapsible regions (the canvas is never collapsible). */
 export type RegionKey = 'left' | 'right' | 'bottom';
 
@@ -147,7 +149,9 @@ export function setRightWidth(kind: DockTabKind, widthPct: number): void {
  * Reset the whole workbench to defaults (the D5 "Reset layout" affordance and
  * the escape hatch for a corrupt saved layout). Clears BOTH key families — our
  * slice and every `react-resizable-panels:*` autoSaveId entry — then re-applies
- * defaults so the panel refs can snap back without a reload.
+ * defaults so the panel refs can snap back without a reload. Also clears the
+ * node-catalog's persisted collapse state (ADR 0017 D5) — one affordance is the
+ * escape hatch for ALL persisted UI state.
  */
 export function resetLayout(): void {
   try {
@@ -162,6 +166,7 @@ export function resetLayout(): void {
   } catch {
     // storage unavailable — nothing persisted to clear
   }
+  resetCatalog();
   commit(freeze(DEFAULTS));
 }
 

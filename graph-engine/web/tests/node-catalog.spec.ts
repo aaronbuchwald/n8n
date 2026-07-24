@@ -1,12 +1,19 @@
 import { test, expect, type Page } from '@playwright/test';
 
-// ADR 0017 stream 17-W1 — the on-demand "Add node" catalog, against the LIVE
-// demo server. W1 delivers the surface (button + anchored popover), the D2
-// capability taxonomy, collapsible sections, and search; it covers D8's
-// observable assertions 1 (open/close), 2 (sections + exact-id mapping), and
-// 4 (search + collapse override + empty state). Click-insert, the full keyboard
-// model and drag land in W2/W3 and are asserted there. This is a PURE ADDITION:
-// the left Palette (palette.spec.ts) still passes alongside it.
+// ADR 0017 — the on-demand "Add node" catalog, against the LIVE demo server.
+//
+// Stream 17-W1 delivered the surface (button + anchored popover), the D2
+// capability taxonomy, collapsible sections, and search — D8's observable
+// assertions 1 (open/close), 2 (sections + exact-id mapping), and 4 (search +
+// collapse override + empty state).
+//
+// Stream 17-W2 adds the D5 keyboard model + collapse persistence — D8's
+// assertions 3 (collapse persists across reload, cleared by Reset layout), 5
+// (keyboard insert: Ctrl+K / arrows / Enter → a node exists + inspector opens),
+// and 6 (Alt+Enter multi-add keeps the catalog open). The insert tests mutate
+// the real demo module and restore the pristine graph in a `finally`, exactly
+// like palette.spec.ts. Drag lands in W3. This is a PURE ADDITION: the left
+// Palette (palette.spec.ts) still passes alongside it.
 
 /** Collect requests leaving localhost; the offline posture requires none. */
 function trackExternalRequests(page: Page): string[] {
@@ -119,6 +126,212 @@ test('search filters across sections, overrides collapse, and shows an empty sta
   await search.fill('zz-no-such-node');
   await expect(page.getByTestId('node-catalog-empty')).toBeVisible();
   await expect(page.getByTestId('node-catalog-new-node')).toBeVisible();
+
+  expect(external, 'EXTERNAL_REQUESTS must be 0').toHaveLength(0);
+});
+
+async function openCatalog(page: Page): Promise<void> {
+  await page.getByTestId('add-node-button').click();
+  await expect(page.getByTestId('node-catalog')).toBeVisible();
+}
+
+/** The single row carrying the virtual highlight (aria-activedescendant). */
+function activeEntry(page: Page) {
+  return page.locator('[data-testid="node-catalog-entry"][aria-selected="true"]');
+}
+
+/** Await the next successful id mint (each insert funnels through it). */
+function nextMint(page: Page) {
+  return page.waitForResponse(
+    (r) => r.url().includes('/api/graph/mint-id') && r.status() === 200,
+  );
+}
+
+// ── D8 assertion 5 (keyboard open) — Ctrl/Cmd+K ──────────────────────────────
+test('Ctrl/Cmd+K opens the catalog with the search focused, and again closes it', async ({
+  page,
+}) => {
+  const external = trackExternalRequests(page);
+  await openApp(page);
+
+  const catalog = page.getByTestId('node-catalog');
+  await expect(catalog).toBeHidden();
+
+  // The quick-switcher shortcut opens it (guarded away from editable targets),
+  // search autofocused.
+  await page.keyboard.press('Control+k');
+  await expect(catalog).toBeVisible();
+  await expect(page.getByTestId('node-catalog-search')).toBeFocused();
+
+  // Pressing it again closes.
+  await page.keyboard.press('Control+k');
+  await expect(catalog).toBeHidden();
+
+  expect(external, 'EXTERNAL_REQUESTS must be 0').toHaveLength(0);
+});
+
+// ── D5 virtual highlight — roving aria-activedescendant across sections ───────
+test('arrow keys rove a single virtual highlight across section boundaries and wrap', async ({
+  page,
+}) => {
+  const external = trackExternalRequests(page);
+  await openApp(page);
+  await openCatalog(page);
+
+  // Exactly one row is highlighted on open — the first visible entry.
+  await expect(activeEntry(page)).toHaveCount(1);
+  const first = await activeEntry(page).getAttribute('data-spec-id');
+  const search = page.getByTestId('node-catalog-search');
+  // The highlight is virtual (aria-activedescendant on the search, not DOM focus).
+  await expect(search).toHaveAttribute('aria-activedescendant', `ge-catalog-opt-${first}`);
+
+  // ↓ advances the highlight to a different row (still exactly one).
+  await search.press('ArrowDown');
+  await expect(activeEntry(page)).toHaveCount(1);
+  const second = await activeEntry(page).getAttribute('data-spec-id');
+  expect(second).not.toBe(first);
+
+  // From the first row, ↑ wraps to the LAST visible row — which lives in the
+  // last non-empty section (render-output), proving the highlight flows across
+  // section boundaries rather than clamping within one.
+  await search.press('Home');
+  await search.press('ArrowUp');
+  await expect(activeEntry(page)).toHaveCount(1);
+  await expect(activeEntry(page)).toHaveAttribute('data-category', 'render-output');
+
+  expect(external, 'EXTERNAL_REQUESTS must be 0').toHaveLength(0);
+});
+
+// ── D8 assertion 3 — collapse persists across reload, cleared by Reset layout ─
+test('a folded section stays folded across reload and Reset layout re-expands it', async ({
+  page,
+}) => {
+  const external = trackExternalRequests(page);
+  await openApp(page);
+  await openCatalog(page);
+
+  // Fold Math shut; its entries hide and the toggle reads collapsed.
+  const mathToggle = section(page, 'math').getByTestId('node-catalog-section-toggle');
+  await mathToggle.click();
+  await expect(mathToggle).toHaveAttribute('aria-expanded', 'false');
+  await expect(entry(page, 'sym.evaluate_numeric')).toBeHidden();
+
+  // The durable slice is written under the versioned key `ge:catalog:v1`.
+  const stored = await page.evaluate(() => window.localStorage.getItem('ge:catalog:v1'));
+  expect(stored).toContain('math');
+
+  // Reload → the collapse survives (persisted, not component-local state).
+  await openApp(page);
+  await openCatalog(page);
+  await expect(section(page, 'math').getByTestId('node-catalog-section-toggle')).toHaveAttribute(
+    'aria-expanded',
+    'false',
+  );
+  await expect(entry(page, 'sym.evaluate_numeric')).toBeHidden();
+
+  // Reset layout clears `ge:catalog:v1` too — the one escape hatch for all
+  // persisted UI state (close the popover first so the click lands on the btn).
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('node-catalog')).toBeHidden();
+  await page.getByTestId('reset-layout').click();
+
+  await openCatalog(page);
+  await expect(section(page, 'math').getByTestId('node-catalog-section-toggle')).toHaveAttribute(
+    'aria-expanded',
+    'true',
+  );
+  await expect(entry(page, 'sym.evaluate_numeric')).toBeVisible();
+
+  expect(external, 'EXTERNAL_REQUESTS must be 0').toHaveLength(0);
+});
+
+// ── D8 assertion 5 — keyboard insert (type → Enter) creates + selects a node ──
+test('typing then Enter inserts the highlighted node, closes the catalog and opens the inspector', async ({
+  page,
+}) => {
+  const external = trackExternalRequests(page);
+  await openApp(page);
+
+  const original = await (await page.request.get('/api/graph')).json();
+  let mintedId: string | null = null;
+  try {
+    await openCatalog(page);
+    const search = page.getByTestId('node-catalog-search');
+
+    // Narrow to a single demo spec so the highlighted (first visible) row is
+    // deterministic, then insert it with Enter.
+    await search.fill('latex_to_mathml');
+    await expect(entry(page, 'sym.latex_to_mathml')).toBeVisible();
+    await expect(activeEntry(page)).toHaveAttribute('data-spec-id', 'sym.latex_to_mathml');
+
+    const mint = nextMint(page);
+    const put = page.waitForResponse(
+      (r) => r.url().endsWith('/api/graph') && r.request().method() === 'PUT' && r.status() === 200,
+    );
+    await search.press('Enter');
+
+    mintedId = ((await (await mint).json()) as { id: string }).id;
+    await put;
+
+    // The catalog closed on insert (D4).
+    await expect(page.getByTestId('node-catalog')).toBeHidden();
+
+    // A canvas node of the inserted type exists, identified by its minted id…
+    const card = page
+      .locator('[data-testid="spec-node"]')
+      .filter({ has: page.locator('[data-testid="node-id"]', { hasText: mintedId }) });
+    await expect(card).toBeVisible();
+
+    // …and it is selected, so the Inspector docked (the natural next step, D4).
+    await expect(page.getByTestId('node-inspector')).toBeVisible();
+    await expect(page.getByTestId('dock-tab-inspector')).toBeVisible();
+  } finally {
+    const restore = await page.request.put('/api/graph', { data: { graph: original } });
+    expect(restore.ok()).toBe(true);
+  }
+
+  expect(external, 'EXTERNAL_REQUESTS must be 0').toHaveLength(0);
+});
+
+// ── D8 assertion 6 — Alt+Enter multi-add keeps the catalog open ──────────────
+test('Alt+Enter inserts without closing so several nodes can be added in one visit', async ({
+  page,
+}) => {
+  const external = trackExternalRequests(page);
+  await openApp(page);
+
+  const original = await (await page.request.get('/api/graph')).json();
+  const minted: string[] = [];
+  try {
+    await openCatalog(page);
+    const search = page.getByTestId('node-catalog-search');
+    await search.fill('latex_to_mathml');
+    await expect(activeEntry(page)).toHaveAttribute('data-spec-id', 'sym.latex_to_mathml');
+
+    // First Alt+Enter: a node is minted and the catalog STAYS open.
+    let mint = nextMint(page);
+    await search.press('Alt+Enter');
+    minted.push(((await (await mint).json()) as { id: string }).id);
+    await expect(page.getByTestId('node-catalog')).toBeVisible();
+
+    // Second Alt+Enter: a second, distinct node — still open.
+    mint = nextMint(page);
+    await search.press('Alt+Enter');
+    minted.push(((await (await mint).json()) as { id: string }).id);
+    await expect(page.getByTestId('node-catalog')).toBeVisible();
+
+    expect(minted[0]).not.toBe(minted[1]);
+    for (const id of minted) {
+      await expect(
+        page
+          .locator('[data-testid="spec-node"]')
+          .filter({ has: page.locator('[data-testid="node-id"]', { hasText: id }) }),
+      ).toBeVisible();
+    }
+  } finally {
+    const restore = await page.request.put('/api/graph', { data: { graph: original } });
+    expect(restore.ok()).toBe(true);
+  }
 
   expect(external, 'EXTERNAL_REQUESTS must be 0').toHaveLength(0);
 });
