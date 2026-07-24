@@ -1,4 +1,4 @@
-import { Suspense, lazy, useCallback, useEffect, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
 
 import { createSource, fetchSource, fetchSourceTargets, saveSource, type SourceTarget } from '../api';
 import { ingestSource, ingestSourceSave, setSourceDirty } from '../store/sync';
@@ -214,6 +214,31 @@ function CreateSourceEditor({ onClose, onCreated }: CreateSourceEditorProps) {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+  const destRef = useRef<HTMLDivElement>(null);
+
+  // Light-dismiss the destination picker like every other menu (GraphPicker,
+  // node catalog): an outside pointer-down or Escape closes it — no need to
+  // reopen "(change)" to back out. Escape is consumed so it doesn't bubble.
+  useEffect(() => {
+    if (!pickerOpen) return;
+    const onPointerDown = (event: MouseEvent) => {
+      if (destRef.current && event.target instanceof Node && !destRef.current.contains(event.target)) {
+        setPickerOpen(false);
+      }
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      event.stopPropagation();
+      setPickerOpen(false);
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      window.removeEventListener('keydown', onKeyDown, true);
+    };
+  }, [pickerOpen]);
 
   useEffect(() => {
     let cancelled = false;
@@ -276,45 +301,48 @@ function CreateSourceEditor({ onClose, onCreated }: CreateSourceEditorProps) {
 
       {/* HD1's key property: the destination is shown BEFORE the write, never
           a silent auto-placement — always rendered once targets have loaded,
-          regardless of whether the user ever opens the picker. */}
-      <div className="ge-source__dest" data-testid="source-dest">
-        {destination ? (
-          <>
-            will be written to <code className="ge-source__dest-path">{destination.path}</code>{' '}
-            <button
-              type="button"
-              className="ge-source__dest-change"
-              data-testid="source-dest-change"
-              onClick={() => setPickerOpen((open) => !open)}
-              aria-expanded={pickerOpen}
-            >
-              (change)
-            </button>
-          </>
-        ) : (
-          'resolving destination…'
-        )}
-      </div>
-      {pickerOpen && (
-        <ul className="ge-source__dest-picker" data-testid="source-dest-picker">
-          {targets.map((target, i) => (
-            <li key={target.module}>
+          regardless of whether the user ever opens the picker. The wrapper is
+          the light-dismiss boundary (an outside click closes the picker). */}
+      <div className="ge-source__dest-wrap" ref={destRef}>
+        <div className="ge-source__dest" data-testid="source-dest">
+          {destination ? (
+            <>
+              will be written to <code className="ge-source__dest-path">{destination.path}</code>{' '}
               <button
                 type="button"
-                className="ge-btn ge-btn--ghost ge-source__dest-option"
-                data-testid={`source-dest-option-${target.module}`}
-                onClick={() => {
-                  setTargetModule(target.module);
-                  setPickerOpen(false);
-                }}
+                className="ge-source__dest-change"
+                data-testid="source-dest-change"
+                onClick={() => setPickerOpen((open) => !open)}
+                aria-expanded={pickerOpen}
               >
-                {target.path}
-                {i === 0 && <span className="ge-source__dest-default"> (default)</span>}
+                (change)
               </button>
-            </li>
-          ))}
-        </ul>
-      )}
+            </>
+          ) : (
+            'resolving destination…'
+          )}
+        </div>
+        {pickerOpen && (
+          <ul className="ge-source__dest-picker" data-testid="source-dest-picker">
+            {targets.map((target, i) => (
+              <li key={target.module}>
+                <button
+                  type="button"
+                  className="ge-btn ge-btn--ghost ge-source__dest-option"
+                  data-testid={`source-dest-option-${target.module}`}
+                  onClick={() => {
+                    setTargetModule(target.module);
+                    setPickerOpen(false);
+                  }}
+                >
+                  {target.path}
+                  {i === 0 && <span className="ge-source__dest-default"> (default)</span>}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
 
       <div className="ge-source__editor" data-testid="source-editor-body">
         <Suspense
