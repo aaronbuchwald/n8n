@@ -1,5 +1,11 @@
 import { test, expect, type Page } from '@playwright/test';
 
+// The destructive tests (insert/multi-add/drag) really mutate the showcase
+// graph and restore it in a finally — run them serially so a restore never
+// races the next test's mutation (they own the workspace via the `catalog`
+// project; see playwright.config.ts).
+test.describe.configure({ mode: 'serial' });
+
 // ADR 0017 — the on-demand "Add node" catalog, against the LIVE demo server.
 //
 // Stream 17-W1 delivered the surface (button + anchored popover), the D2

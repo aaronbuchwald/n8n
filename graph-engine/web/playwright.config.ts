@@ -30,6 +30,10 @@ export default defineConfig({
         /server-mount\.spec\.ts/,
         /canvas-editing\.spec\.ts/,
         /calc-widget\.spec\.ts/,
+        // Real showcase-workspace mutators — serialized into the chain below so
+        // they never race the parallel pack (or each other) on showcase.py.
+        /new-node-authoring\.spec\.ts/,
+        /node-catalog\.spec\.ts/,
       ],
     },
     {
@@ -51,6 +55,25 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'] },
       testMatch: /calc-widget\.spec\.ts/,
       dependencies: ['editing'],
+    },
+    {
+      // New-node authoring REALLY writes new @node functions into showcase.py
+      // and restores them; its create/collision tests must not race each other
+      // or any other showcase mutator. Serial, sequenced after the pack.
+      name: 'new-node',
+      use: { ...devices['Desktop Chrome'] },
+      testMatch: /new-node-authoring\.spec\.ts/,
+      dependencies: ['calc'],
+    },
+    {
+      // The node catalog's destructive tests (click-insert, multi-add, drag)
+      // REALLY mutate the showcase graph (→ showcase.py writeback) and restore
+      // it — they must own the workspace alone too (ADR 0017). Run alone with:
+      // --project=catalog --no-deps
+      name: 'catalog',
+      use: { ...devices['Desktop Chrome'] },
+      testMatch: /node-catalog\.spec\.ts/,
+      dependencies: ['new-node'],
     },
   ],
   // Boot the LIVE stack the app renders from:

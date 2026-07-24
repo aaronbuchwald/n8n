@@ -4,6 +4,11 @@ import path from 'node:path';
 
 import { test, expect, type Page } from '@playwright/test';
 
+// Both tests write a new @node into showcase.py and restore it — serialize so
+// the create test's write never leaks into the collision test's file check
+// (they own the workspace via the `new-node` project; see playwright.config.ts).
+test.describe.configure({ mode: 'serial' });
+
 // ADR 0011 D7/HD1 (stream 11-W6): defining a brand-new @node in Monaco, written
 // to a real backing .py, immediately placeable. Runs against the live demo
 // (showcase.py) — no spec rewriting, no network beyond localhost
