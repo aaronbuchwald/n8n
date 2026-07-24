@@ -242,14 +242,11 @@ test('a node with no matching spec disables "Open node definition" with a reason
     return route.continue();
   });
 
-  // The extra node auto-lays-out into the bottom-right corner. With the
-  // workbench framing the graph into a narrower canvas (palette + right dock),
-  // that corner sits under the interactive minimap, which would swallow the
-  // click. The minimap is irrelevant to what this test asserts (a no-spec node
-  // disables "Open node definition"), so hide it after the app settles.
+  // The extra node auto-lays-out into the bottom-right corner, under the
+  // minimap. The minimap is now a non-interactive overview (pointer-events:
+  // none), so the click passes through to the node — no need to hide it.
   await page.setViewportSize({ width: 1600, height: 900 });
   await gotoAndSettle(page);
-  await page.addStyleTag({ content: '.react-flow__minimap { display: none !important; }' });
   await selectNode(page, 'ghost');
   const editButton = page.getByTestId('inspector-open-definition');
   await expect(editButton).toBeDisabled();

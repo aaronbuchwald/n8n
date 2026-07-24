@@ -405,6 +405,10 @@ body,
   border: 1px solid var(--ge-node-border);
   border-radius: 10px;
   overflow: hidden;
+  /* Visual overview only — never intercept clicks/drags, so nodes beneath it in
+     the bottom-right corner stay reachable. Users pan the canvas directly. */
+  pointer-events: none;
+  opacity: 0.85;
 }
 
 .react-flow__controls {

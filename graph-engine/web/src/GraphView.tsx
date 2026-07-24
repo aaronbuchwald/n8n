@@ -573,7 +573,9 @@ function GraphCanvas({
         proOptions={{ hideAttribution: true }}
       >
         <Background variant={BackgroundVariant.Dots} gap={28} size={1.4} />
-        <MiniMap pannable zoomable />
+        {/* Non-interactive overview: pointer events pass through (see styles.css)
+            so nodes beneath the minimap in the bottom-right corner stay clickable. */}
+        <MiniMap />
         {/* Same fit options as the app's own framing, so both fits agree. */}
         <Controls showInteractive={false} fitViewOptions={FIT_VIEW} />
         <Panel position="top-right" className="ge-canvas-tools">
