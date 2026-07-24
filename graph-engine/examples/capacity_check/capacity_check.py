@@ -116,8 +116,8 @@ def capacity_check_report(
         F_max=F_max,
         C_min=C_min,
     )
-    # The card's `result` socket (the self-contained HTML document) is the graph
-    # output; its sibling `height` socket tells the UI how tall to draw it.
+    # The card's single `result` socket — the self-contained HTML document — is
+    # the graph output.
     return card
 
 
