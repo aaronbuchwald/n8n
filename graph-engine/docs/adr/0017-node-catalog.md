@@ -370,6 +370,18 @@ meanwhile, and the owner has explicitly deferred any activity-bar concept).
 The canvas simply gains 10–25% width on every screen, which is the point of
 the whole redesign.
 
+**Amends ADR 0014 (workbench layout).** As of stream 17-W4 (landed), the left
+region ADR 0014 defined (`left │ center │ right`, `LEFT = { default: 15, min: 10,
+max: 25 }`, the `left` rail and the `☰ Nodes` collapse affordance) is removed:
+the workbench region model is now `center (canvas ╱ bottom) │ right`, two sashes.
+The layout store's `RegionKey` drops `left`, its persisted collapse map narrows to
+`{ right, bottom }`, and its storage key bumps `ge:workbench:v1` → `ge:workbench:v2`
+(a stale v1 blob falls to defaults through the existing fail-safe parse — the
+accepted one-time reset). ADR 0014's region diagram is superseded-in-part by this
+note; reinstating a left region later remains a small, additive `Workbench.tsx`
+change, as ADR 0014's model intended. (ADR 0014's own document is not present on
+this branch; this note is the authoritative record of the amendment here.)
+
 ### D8 — Testability: testids and the observable contract
 
 New testids (single-value, kebab-case, consistent with the existing registry):

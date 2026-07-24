@@ -5,7 +5,6 @@ import { BranchBadge } from './components/BranchBadge';
 import { GraphPicker } from './components/GraphPicker';
 import { ExportPanel } from './components/ExportPanel';
 import { NodeInspector } from './components/NodeInspector';
-import { Palette } from './components/Palette';
 import { NodeCatalog } from './components/NodeCatalog';
 import { NewNodePanel } from './components/NewNodePanel';
 import { RunResultsPanel } from './components/RunResultsPanel';
@@ -70,7 +69,8 @@ export default function App() {
   // Whether the inspector is expanded into the selected node's source editor.
   const [editingSource, setEditingSource] = useState(false);
   // Whether the "New node" authoring panel is open (ADR 0011 D7, stream 11-W6).
-  // Stand-in trigger until the palette (11-W5) grows its own "New node" entry.
+  // Opened from the node catalog's "Create new node…" footer (ADR 0017 W4
+  // retired the stand-in top-bar "+ New node" button that used to trigger it).
   const [creatingSource, setCreatingSource] = useState(false);
   const [focusRequest, setFocusRequest] = useState<FocusRequest | null>(null);
   // Imperative handle to the workbench shell — the "Reset layout" affordance
@@ -389,28 +389,16 @@ export default function App() {
           >
             {exportState.pending ? 'Exporting…' : 'Export Python'}
           </button>
-          {/* The node catalog (ADR 0017 W1): the on-demand, capability-grouped
-              "Add node" command palette. A pure addition alongside the left
-              Palette (11-W5) for this stream; W4 retires the old surface. Its
-              footer "Create new node…" opens the same New-node dock tab the
-              stand-in button below does. */}
+          {/* The node catalog (ADR 0017): the on-demand, capability-grouped
+              "Add node" command palette — the sole node-entry surface now that
+              W4 has retired the old left Palette (11-W5). Its footer "Create
+              new node…" opens the New-node dock tab (setCreatingSource). */}
           <NodeCatalog
             disabled={!ready}
             getInsertPosition={() => graphViewRef.current?.getInsertPosition() ?? null}
             onSelectNode={selectNode}
             onCreateNewNode={() => setCreatingSource(true)}
           />
-          {/* Stand-in entry point for authoring a new @node (ADR 0011 D7); the
-              catalog footer (17-W1) now offers the same, and W4 removes this. */}
-          <button
-            type="button"
-            className="ge-btn"
-            data-testid="new-node-button"
-            disabled={!ready}
-            onClick={() => setCreatingSource(true)}
-          >
-            + New node
-          </button>
           {/* Reset the workbench layout to defaults without a reload — also the
               escape hatch for a corrupt saved layout (ADR 0014 D5). */}
           <button
@@ -474,18 +462,17 @@ export default function App() {
 
       {ready && (
         <div className="ge-main">
-          {/* The VS Code-style workbench (ADR 0014 W1): resizable/collapsible
-              regions around the canvas. The commit seam (A-D5) wraps the whole
-              shell so BOTH the canvas widgets and the now-docked inspector's
-              widget slot resolve the store's stable `commitLiteral`.
-              The Palette (11-W5), GraphView, RunResults, and the inspector are
-              passed in as layout-ignorant slots (D6). Export and New-node now
-              live as right-dock tabs too — W3 relocated them off the canvas and
-              into `dockTabs` (they used to float over `ge-main`). */}
+          {/* The VS Code-style workbench (ADR 0014 W1; ADR 0017 W4 narrowed it
+              to `center │ right`): resizable/collapsible regions around the
+              canvas. The commit seam (A-D5) wraps the whole shell so BOTH the
+              canvas widgets and the now-docked inspector's widget slot resolve
+              the store's stable `commitLiteral`. GraphView, RunResults, and the
+              inspector are passed in as layout-ignorant slots (D6). Export and
+              New-node live as right-dock tabs too — W3 relocated them off the
+              canvas and into `dockTabs`. */}
           <WidgetEditingProvider value={commitLiteral}>
             <Workbench
               ref={workbenchRef}
-              palette={<Palette />}
               canvas={
                 <GraphView
                   ref={graphViewRef}

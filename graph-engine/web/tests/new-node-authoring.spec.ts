@@ -32,6 +32,17 @@ async function gotoAndSettle(page: Page) {
   });
 }
 
+/**
+ * Open the New-node authoring tab. ADR 0017 W4 retired the stand-in top-bar
+ * "+ New node" button; the node catalog's "Create new node…" footer is now the
+ * sole trigger (it closes the catalog and opens the same dock tab).
+ */
+async function openNewNode(page: Page) {
+  await page.getByTestId('add-node-button').click();
+  await expect(page.getByTestId('node-catalog')).toBeVisible();
+  await page.getByTestId('node-catalog-new-node').click();
+}
+
 async function waitForMonaco(page: Page) {
   await expect(page.getByTestId('source-monaco')).toBeVisible();
   await page.waitForFunction(() => {
@@ -68,9 +79,9 @@ test('authoring a new @node in Monaco shows the destination before writing, then
   try {
     await gotoAndSettle(page);
 
-    // No palette yet (11-W5 lands the header trigger later) — the topbar
-    // stand-in entry point opens the create-mode editor.
-    await page.getByTestId('new-node-button').click();
+    // The node catalog's "Create new node…" footer opens the create-mode editor
+    // (ADR 0017 W4 — the sole entry point now the stand-in button is gone).
+    await openNewNode(page);
     const panel = page.getByTestId('new-node-panel');
     await expect(panel).toBeVisible();
     const editor = panel.getByTestId('source-editor');
@@ -148,7 +159,7 @@ test('a rejected create (name collision) surfaces inline and never writes the fi
   const originalFile = readFileSync(SHOWCASE_FILE, 'utf-8');
   try {
     await gotoAndSettle(page);
-    await page.getByTestId('new-node-button').click();
+    await openNewNode(page);
     const editor = page.getByTestId('new-node-panel').getByTestId('source-editor');
     await expect(editor.getByTestId('source-dest')).toContainText('will be written to');
 

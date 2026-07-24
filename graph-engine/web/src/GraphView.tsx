@@ -32,7 +32,7 @@ import {
 import '@xyflow/react/dist/style.css';
 
 import { buildFlow, layoutFlowNodes, pinnedIdsOf } from './buildGraph';
-import { PALETTE_SPEC_MIME } from './components/Palette';
+import { PALETTE_SPEC_MIME } from './catalog/dnd';
 import { SpecNode } from './components/SpecNode';
 import {
   connectEdge,

@@ -19,8 +19,9 @@
 
 import { resetCatalog } from './catalog';
 
-/** The three collapsible regions (the canvas is never collapsible). */
-export type RegionKey = 'left' | 'right' | 'bottom';
+/** The collapsible regions (the canvas is never collapsible). ADR 0017 W4
+ *  retired the left region; the workbench narrows to `center │ right`. */
+export type RegionKey = 'right' | 'bottom';
 
 /** Dock tabs remember width per *kind*, not per tab (ADR 0014 D3). */
 export type DockTabKind = 'inspector' | 'code';
@@ -34,16 +35,18 @@ export interface LayoutState {
   activeRightTab: string | null;
 }
 
-/** The versioned key for OUR slice; `v1` is the schema version (D5). */
-export const STORAGE_KEY = 'ge:workbench:v1';
+/** The versioned key for OUR slice; `v2` is the schema version (bumped by ADR
+ *  0017 W4 when the left region dropped out of `collapsed`; a stale v1 blob
+ *  simply falls to defaults via the fail-safe parse below). */
+export const STORAGE_KEY = 'ge:workbench:v2';
 
 /** The prefix react-resizable-panels' `autoSaveId` writes sash sizes under. */
 export const LAYOUT_STORAGE_PREFIX = 'react-resizable-panels:';
 
 // Defaults mirror today's CSS at a 1440px reference viewport (ADR 0014 D1):
-// palette ~236px (~15%), inspector dock ~340px (~24%), code dock ~34rem (~34%).
+// inspector dock ~340px (~24%), code dock ~34rem (~34%).
 const DEFAULTS: LayoutState = {
-  collapsed: { left: false, right: false, bottom: false },
+  collapsed: { right: false, bottom: false },
   rightWidthByTab: { inspector: 24, code: 34 },
   activeRightTab: null,
 };
@@ -69,7 +72,6 @@ function parse(raw: string | null): LayoutState {
     const widths: Partial<Record<DockTabKind, number>> = data.rightWidthByTab ?? {};
     return {
       collapsed: {
-        left: Boolean(collapsed.left),
         right: Boolean(collapsed.right),
         bottom: Boolean(collapsed.bottom),
       },

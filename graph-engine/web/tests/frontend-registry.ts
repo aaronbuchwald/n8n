@@ -124,31 +124,17 @@ export const PANELS: Panel[] = [
     id: 'workbench-shell',
     name: 'Workbench shell',
     description:
-      'The VS Code-style resizable/collapsible region frame (ADR 0014): palette │ canvas ╱ run-results │ right-dock, three sashes, per-region rails, and Reset layout.',
+      'The VS Code-style resizable/collapsible region frame (ADR 0014; ADR 0017 W4 retired the left palette region): canvas ╱ run-results │ right-dock, two sashes, per-region rails, and Reset layout.',
     testids: [
       'workbench',
-      'sash-left',
       'sash-right',
       'sash-bottom',
-      'collapse-left',
       'collapse-bottom',
-      'rail-left',
       'rail-right',
       'rail-bottom',
       'reset-layout',
     ],
     actions: [
-      {
-        id: 'resize-left-sash',
-        description: 'Drag the left sash to widen the palette region.',
-        trigger: 'Drag [data-testid="sash-left"] +120px along x.',
-        expect: 'The palette ([data-testid="palette"]) grows wider than before the drag.',
-        steps: [{ kind: 'dragHandle', target: { testid: 'sash-left' }, dx: 120, dy: 0 }],
-        checks: [
-          { kind: 'visible', target: { testid: 'palette' } },
-          { kind: 'externalRequestsZero' },
-        ],
-      },
       {
         id: 'resize-right-sash',
         description: 'Drag the right sash to widen the right dock.',
@@ -173,24 +159,6 @@ export const PANELS: Panel[] = [
         ],
         checks: [
           { kind: 'visible', target: { testid: 'run-results' } },
-          { kind: 'externalRequestsZero' },
-        ],
-      },
-      {
-        id: 'collapse-expand-left',
-        description: 'Collapse the palette to its left rail, then re-expand from the rail.',
-        trigger:
-          'Click [data-testid="collapse-left"]; then click [data-testid="rail-left"] to re-expand.',
-        expect:
-          'rail-left appears and palette hides; after re-expand rail-left hides and palette is visible again.',
-        steps: [
-          { kind: 'click', target: { testid: 'collapse-left' } },
-          { kind: 'waitVisible', target: { testid: 'rail-left' } },
-          { kind: 'click', target: { testid: 'rail-left' } },
-        ],
-        checks: [
-          { kind: 'hidden', target: { testid: 'rail-left' } },
-          { kind: 'visible', target: { testid: 'palette' } },
           { kind: 'externalRequestsZero' },
         ],
       },
@@ -233,12 +201,12 @@ export const PANELS: Panel[] = [
       {
         id: 'reset-layout',
         description:
-          'Perturb the layout (widen palette + collapse dock), then Reset layout snaps every region back to defaults without a reload.',
+          'Perturb the layout (widen dock + collapse it), then Reset layout snaps every region back to defaults without a reload.',
         trigger:
-          'Drag sash-left +140px, click collapse-right, then click [data-testid="reset-layout"].',
+          'Drag sash-right -140px, click collapse-right, then click [data-testid="reset-layout"].',
         expect: 'rail-right hides (dock re-expanded) and right-dock is visible — defaults restored in place.',
         steps: [
-          { kind: 'dragHandle', target: { testid: 'sash-left' }, dx: 140, dy: 0 },
+          { kind: 'dragHandle', target: { testid: 'sash-right' }, dx: -140, dy: 0 },
           { kind: 'click', target: { testid: 'collapse-right' } },
           { kind: 'waitVisible', target: { testid: 'rail-right' } },
           { kind: 'click', target: { testid: 'reset-layout' } },
@@ -252,93 +220,13 @@ export const PANELS: Panel[] = [
     ],
   },
 
-  // ── 2. Palette ─────────────────────────────────────────────────────────────
-  {
-    id: 'palette',
-    name: 'Node palette',
-    description:
-      'The left-region searchable node catalog (ADR 0011 W5): registered @node types grouped by module, click/drag to place, and a needs-wiring strip.',
-    testids: [
-      'palette',
-      'palette-search',
-      'palette-group',
-      'palette-entry',
-      'palette-empty',
-      'needs-wiring',
-      'needs-wiring-badge',
-    ],
-    actions: [
-      {
-        id: 'list-grouped-nodes',
-        description: 'The palette lists registered types grouped by module (showcase / sym / table).',
-        trigger: 'Boot the app; read the palette groups.',
-        expect:
-          'A [data-testid="palette-group"] exists for showcase, sym and table; entries render a name + one-line doc.',
-        steps: [],
-        checks: [
-          { kind: 'visible', target: { testid: 'palette' } },
-          { kind: 'visible', target: { selector: '[data-testid="palette-group"][data-module="showcase"]' } },
-          { kind: 'visible', target: { selector: '[data-testid="palette-group"][data-module="sym"]' } },
-          { kind: 'visible', target: { selector: '[data-testid="palette-group"][data-module="table"]' } },
-          { kind: 'countAtLeast', target: { testid: 'palette-entry' }, min: 3 },
-          { kind: 'externalRequestsZero' },
-        ],
-      },
-      {
-        id: 'search-filters',
-        description: 'Typing in the search box filters entries and empties exhausted groups.',
-        trigger: 'Fill [data-testid="palette-search"] with "read_table".',
-        expect:
-          'The table.read_table entry stays visible; the sym group empties.',
-        steps: [{ kind: 'fill', target: { testid: 'palette-search' }, value: 'read_table' }],
-        checks: [
-          { kind: 'visible', target: { selector: '[data-testid="palette-entry"][data-spec-id="table.read_table"]' } },
-          { kind: 'hidden', target: { selector: '[data-testid="palette-group"][data-module="sym"]' } },
-          { kind: 'externalRequestsZero' },
-        ],
-      },
-      {
-        id: 'search-empty-state',
-        description: 'A query that matches nothing shows the empty state instead of a blank rail.',
-        trigger: 'Fill [data-testid="palette-search"] with "zz-no-such-node".',
-        expect: '[data-testid="palette-empty"] is visible.',
-        steps: [{ kind: 'fill', target: { testid: 'palette-search' }, value: 'zz-no-such-node' }],
-        checks: [
-          { kind: 'visible', target: { testid: 'palette-empty' } },
-          { kind: 'externalRequestsZero' },
-        ],
-      },
-      {
-        id: 'place-node',
-        description:
-          'Clicking a palette entry mints a server id and adds+persists the node (rewrites the real module).',
-        trigger:
-          'Click the sym.pick [data-testid="palette-entry"]; a node card appears and PUT /api/graph persists it.',
-        expect:
-          'A new spec-node card with the minted id renders; its unwired required input badges needs-wiring. DESTRUCTIVE — mutates showcase.py (restore in finally).',
-        review: true,
-        steps: [
-          {
-            kind: 'custom',
-            note: 'Click palette-entry[data-spec-id="sym.pick"] then restore the pristine graph via PUT /api/graph. See tests/palette.spec.ts for the full mutate+restore flow.',
-          },
-        ],
-        checks: [
-          {
-            kind: 'custom',
-            note: 'After the click: a [data-testid="spec-node"] filtered by the minted [data-testid="node-id"] is visible, and [data-testid="needs-wiring-badge"] for that node contains "values".',
-          },
-        ],
-      },
-    ],
-  },
-
-  // ── 2b. Node catalog (ADR 0017 W1–W3) ──────────────────────────────────────
-  // A PURE ADDITION alongside the palette for this stream; W4 replaces the
-  // palette panel above with this one. Covers D8 assertions 1, 2, 3, 4, 5, 6, 7
+  // ── 2. Node catalog (ADR 0017) ─────────────────────────────────────────────
+  // The sole node-entry surface now that ADR 0017 W4 retired the old left
+  // Palette (11-W5). Covers D8 assertions 1, 2, 3, 4, 5, 6, 7, 8
   // (W1: 1/2/4 — surface, sections, search; W2: 3/5/6 — collapse persistence,
   // the keyboard model, and Alt+Enter multi-add; W3: 7 — drag out of the
-  // catalog via the D6 ghost state).
+  // catalog via the D6 ghost state; W4: 8 — the "Create new node…" handoff to
+  // the New-node dock tab, now the only trigger for authoring).
   {
     id: 'node-catalog',
     name: 'Node catalog',
@@ -421,6 +309,26 @@ export const PANELS: Panel[] = [
         checks: [
           { kind: 'visible', target: { testid: 'node-catalog-empty' } },
           { kind: 'visible', target: { testid: 'node-catalog-new-node' } },
+          { kind: 'externalRequestsZero' },
+        ],
+      },
+      {
+        id: 'new-node-handoff',
+        description:
+          'The "Create new node…" footer closes the catalog and opens the New-node dock tab — the sole authoring entry point now the stand-in "+ New node" button is gone (D8 assertion 8).',
+        trigger:
+          'Open the catalog; click [data-testid="node-catalog-new-node"].',
+        expect:
+          'The catalog hides and [data-testid="new-node-panel"] / [data-testid="dock-tab-newnode"] dock in the right dock.',
+        steps: [
+          { kind: 'click', target: { testid: 'add-node-button' } },
+          { kind: 'waitVisible', target: { testid: 'node-catalog' } },
+          { kind: 'click', target: { testid: 'node-catalog-new-node' } },
+        ],
+        checks: [
+          { kind: 'hidden', target: { testid: 'node-catalog' } },
+          { kind: 'visible', target: { testid: 'new-node-panel' } },
+          { kind: 'visible', target: { testid: 'dock-tab-newnode' } },
           { kind: 'externalRequestsZero' },
         ],
       },
@@ -602,7 +510,7 @@ export const PANELS: Panel[] = [
     id: 'canvas',
     name: 'Graph canvas',
     description:
-      'The ReactFlow canvas (GraphView): nodes as spec cards, wiring, pan/zoom preserved on resize, select-to-inspect, Tidy layout, drag-reposition, connect, delete, palette drop.',
+      'The ReactFlow canvas (GraphView): nodes as spec cards, wiring, pan/zoom preserved on resize, select-to-inspect, Tidy layout, drag-reposition, connect, delete, spec-MIME drop (from the catalog).',
     testids: [
       'flow-canvas',
       'spec-node',
@@ -657,11 +565,11 @@ export const PANELS: Panel[] = [
         id: 'pan-zoom-preserved-on-resize',
         description:
           'Resizing a panel changes the canvas box but must NOT re-fit/re-zoom the graph (ADR 0014 #5 override).',
-        trigger: 'Snapshot .react-flow__viewport transform; drag sash-left +140px and sash-right -140px.',
+        trigger: 'Snapshot .react-flow__viewport transform; drag sash-right -140px then +140px.',
         expect: 'The .react-flow__viewport transform is byte-identical before and after (no refit).',
         steps: [
-          { kind: 'dragHandle', target: { testid: 'sash-left' }, dx: 140, dy: 0 },
           { kind: 'dragHandle', target: { testid: 'sash-right' }, dx: -140, dy: 0 },
+          { kind: 'dragHandle', target: { testid: 'sash-right' }, dx: 140, dy: 0 },
         ],
         checks: [
           {
@@ -747,9 +655,11 @@ export const PANELS: Panel[] = [
         checks: [{ kind: 'custom', note: 'Served graph no longer contains the deleted node or its edges.' }],
       },
       {
-        id: 'palette-drop',
-        description: 'A palette entry dropped on the canvas lands at the drop point, born pinned.',
-        trigger: 'Dispatch a drop of the palette MIME payload onto [data-testid="flow-canvas"].',
+        id: 'spec-drop',
+        description:
+          'A node dropped on the canvas via the spec-MIME payload (dragged from the catalog) lands at the drop point, born pinned.',
+        trigger:
+          'Dispatch a drop of the spec-MIME payload (application/x-graph-engine-spec) onto [data-testid="flow-canvas"].',
         expect:
           "The new node's top-left sits under the drop point and badges needs-wiring. DESTRUCTIVE — mints + persists a node.",
         review: true,
@@ -954,9 +864,10 @@ export const PANELS: Panel[] = [
     id: 'new-node',
     name: 'New node authoring',
     description:
-      'Author a brand-new @node in Monaco, written to a real .py, shown as a right-dock "New node" tab (NewNodePanel → SourceEditor create-mode). The write destination is shown BEFORE writing.',
+      'Author a brand-new @node in Monaco, written to a real .py, shown as a right-dock "New node" tab (NewNodePanel → SourceEditor create-mode). Opened from the node catalog\'s "Create new node…" footer (ADR 0017 W4 retired the stand-in "+ New node" button). The write destination is shown BEFORE writing.',
     testids: [
-      'new-node-button',
+      'add-node-button',
+      'node-catalog-new-node',
       'new-node-panel',
       'source-dest',
       'source-dest-change',
@@ -966,12 +877,14 @@ export const PANELS: Panel[] = [
     actions: [
       {
         id: 'newnode-opens-dock-tab',
-        description: 'Clicking + New node opens the authoring tab with the destination shown up front.',
-        trigger: 'Click [data-testid="new-node-button"].',
+        description: 'The catalog\'s "Create new node…" footer opens the authoring tab with the destination shown up front.',
+        trigger: 'Click [data-testid="add-node-button"], then [data-testid="node-catalog-new-node"].',
         expect:
           '[data-testid="new-node-panel"] mounts in the dock; [data-testid="source-dest"] shows "will be written to … showcase.py".',
         steps: [
-          { kind: 'click', target: { testid: 'new-node-button' } },
+          { kind: 'click', target: { testid: 'add-node-button' } },
+          { kind: 'waitVisible', target: { testid: 'node-catalog' } },
+          { kind: 'click', target: { testid: 'node-catalog-new-node' } },
           { kind: 'waitVisible', target: { testid: 'new-node-panel' } },
         ],
         checks: [
@@ -984,10 +897,12 @@ export const PANELS: Panel[] = [
       {
         id: 'newnode-destination-picker',
         description: 'The "(change)" control opens a picker over eligible destination modules.',
-        trigger: 'Open New node, click [data-testid="source-dest-change"].',
+        trigger: 'Open New node (catalog footer), click [data-testid="source-dest-change"].',
         expect: '[data-testid="source-dest-picker"] lists the eligible modules (showcase.py offered as default).',
         steps: [
-          { kind: 'click', target: { testid: 'new-node-button' } },
+          { kind: 'click', target: { testid: 'add-node-button' } },
+          { kind: 'waitVisible', target: { testid: 'node-catalog' } },
+          { kind: 'click', target: { testid: 'node-catalog-new-node' } },
           { kind: 'waitVisible', target: { testid: 'new-node-panel' } },
           { kind: 'click', target: { testid: 'source-dest-change' } },
         ],
@@ -1000,10 +915,12 @@ export const PANELS: Panel[] = [
       {
         id: 'newnode-close-tab',
         description: 'Closing the New node tab via its × clears the tab and its body.',
-        trigger: 'Open New node, click [data-testid="dock-tab-close-newnode"].',
+        trigger: 'Open New node (catalog footer), click [data-testid="dock-tab-close-newnode"].',
         expect: 'dock-tab-newnode and new-node-panel disappear.',
         steps: [
-          { kind: 'click', target: { testid: 'new-node-button' } },
+          { kind: 'click', target: { testid: 'add-node-button' } },
+          { kind: 'waitVisible', target: { testid: 'node-catalog' } },
+          { kind: 'click', target: { testid: 'node-catalog-new-node' } },
           { kind: 'waitVisible', target: { testid: 'dock-tab-newnode' } },
           { kind: 'click', target: { testid: 'dock-tab-close-newnode' } },
         ],
@@ -1609,13 +1526,13 @@ export const PANELS: Panel[] = [
     name: 'Layout persistence across reload',
     description:
       'The UI-local layout store (ADR 0014 D5) + the library autoSaveId persist sash sizes and collapsed state across a reload, and survive a corrupt saved blob by falling back to defaults.',
-    testids: ['workbench', 'rail-right', 'palette', 'flow-canvas'],
+    testids: ['workbench', 'rail-right', 'right-dock', 'flow-canvas'],
     actions: [
       {
         id: 'collapse-survives-reload',
-        description: 'A collapsed region and a resized palette survive a full page reload.',
+        description: 'A collapsed region and a resized dock survive a full page reload.',
         trigger:
-          'Widen the palette (sash-left +120px), collapse the dock (collapse-right), reload the page.',
+          'Widen the dock (sash-right -120px), collapse the dock (collapse-right), reload the page.',
         expect: 'After reload rail-right is still visible (dock stayed collapsed) and right-dock stays hidden.',
         review: true,
         steps: [
@@ -1629,9 +1546,9 @@ export const PANELS: Panel[] = [
       {
         id: 'corrupt-blob-fallback',
         description: 'A corrupt saved layout falls back to defaults instead of wedging the shell.',
-        trigger: 'Seed ge:workbench:v1 with "{not json" before boot; load the app.',
+        trigger: 'Seed ge:workbench:v2 with "{not json" before boot; load the app.',
         expect:
-          'The app boots at defaults: palette + flow-canvas + right-dock + dock-placeholder all reachable, no region collapsed.',
+          'The app boots at defaults: flow-canvas + right-dock + dock-placeholder all reachable, no region collapsed.',
         review: true,
         steps: [
           {
@@ -1639,7 +1556,7 @@ export const PANELS: Panel[] = [
             note: 'See workbench-layout.spec.ts "a corrupt saved layout falls back": addInitScript seeding junk, then assert defaults. Needs pre-boot seeding the runner injects before goto.',
           },
         ],
-        checks: [{ kind: 'custom', note: 'palette/flow-canvas/right-dock/dock-placeholder visible; no rails.' }],
+        checks: [{ kind: 'custom', note: 'flow-canvas/right-dock/dock-placeholder visible; no rails.' }],
       },
     ],
   },
