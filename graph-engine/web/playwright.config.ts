@@ -28,31 +28,20 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'] },
       testIgnore: [
         /server-mount\.spec\.ts/,
-        /palette\.spec\.ts/,
         /canvas-editing\.spec\.ts/,
         /calc-widget\.spec\.ts/,
       ],
     },
     {
-      // The palette create-flow spec REALLY rewrites the demo module (ADR 0011
-      // W5) and restores it afterwards — but while its half-wired node exists,
-      // any spec that boots against the shared server serves a graph whose
-      // full-bind /api/run 422s. Sequence it after the parallel pack instead of
-      // racing it. Run alone with: --project=palette --no-deps
-      name: 'palette',
-      use: { ...devices['Desktop Chrome'] },
-      testMatch: /palette\.spec\.ts/,
-      dependencies: ['chromium'],
-    },
-    {
       // Canvas structural editing (ADR 0011 11-W4) mutates the demo module,
       // its layout sidecar, and asserts byte-level .py stability — it must own
-      // the workspace alone. Serial within the file; sequenced last.
-      // Run alone with: --project=editing --no-deps
+      // the workspace alone. Serial within the file; sequenced after the
+      // parallel pack (ADR 0017 W4 retired the old `palette` project it used to
+      // follow). Run alone with: --project=editing --no-deps
       name: 'editing',
       use: { ...devices['Desktop Chrome'] },
       testMatch: /canvas-editing\.spec\.ts/,
-      dependencies: ['palette'],
+      dependencies: ['chromium'],
     },
     {
       // The calc widget (ADR 0007 W) commits equations against capacity_check,

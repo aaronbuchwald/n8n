@@ -35,9 +35,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { CATEGORY_SECTIONS, categoryFor, type CategoryId } from '../catalog/categories';
-// The catalog reuses the W5→W4 drag contract byte-for-byte; W4 relocates this
-// constant out of Palette, so for now it is imported, not moved.
-import { PALETTE_SPEC_MIME } from './Palette';
+// The catalog reuses the W5→W4 drag contract byte-for-byte; the constant now
+// lives in a neutral module (W4 retired the Palette it used to live in).
+import { PALETTE_SPEC_MIME } from '../catalog/dnd';
 import { setCatalogSectionCollapsed, toggleCatalogSection } from '../store/catalog';
 import { createNode } from '../store/sync';
 import { useCatalogSelector } from '../store/useCatalog';

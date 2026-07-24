@@ -1,11 +1,12 @@
-// ADR 0014 W1 — the workbench shell.
+// ADR 0014 W1 — the workbench shell (ADR 0017 W4: the left region is retired).
 //
 // The whole region layout lives here (D6: all region knowledge in one place —
-// `components/workbench/*`). It composes react-resizable-panels into the D1
-// region model: one horizontal group `left │ center │ right`, the center itself
-// a vertical group `canvas ╱ bottom`, three sashes, and rails rendered OUTSIDE
-// the groups for collapsed regions. Content components (Palette, the dock tabs,
+// `components/workbench/*`). It composes react-resizable-panels into the region
+// model `center (canvas ╱ bottom) │ right` — two sashes, and rails rendered
+// OUTSIDE the groups for collapsed regions. Content components (the dock tabs,
 // Run results, and the canvas) are passed in as slots and stay layout-ignorant.
+// ADR 0017 W4 removed the left region (the node palette): the on-demand top-bar
+// node catalog replaced it, so the canvas gains the former left region's width.
 //
 // The seams the follow-up streams build on:
 //   * `canvas` — the canvas host slot. W2 owns GraphView's ResizeObserver; the
@@ -37,7 +38,6 @@ import type { ReactNode } from 'react';
 // Defaults in the library's native percent unit, translated from today's CSS at
 // a 1440px reference viewport (ADR 0014 D1). Constraints are proportional by
 // nature, so percent costs us nothing here.
-const LEFT = { default: 15, min: 10, max: 25 };
 const RIGHT = { default: 24, min: 15, max: 50 };
 const BOTTOM = { default: 30, min: 12, max: 60 };
 const CENTER_MIN = 30;
@@ -52,8 +52,6 @@ export interface WorkbenchHandle {
 }
 
 interface WorkbenchProps {
-  /** Left region content (the node palette). */
-  palette: ReactNode;
   /** The canvas host slot (W2 owns its resize integration). */
   canvas: ReactNode;
   /** Bottom region content (run results), or null when no run exists. */
@@ -65,13 +63,12 @@ interface WorkbenchProps {
 }
 
 export const Workbench = forwardRef<WorkbenchHandle, WorkbenchProps>(function Workbench(
-  { palette, canvas, bottom, bottomBadge, dockTabs },
+  { canvas, bottom, bottomBadge, dockTabs },
   ref,
 ) {
   const collapsed = useLayoutSelector((s) => s.collapsed);
   const activeRightTab = useLayoutSelector((s) => s.activeRightTab);
 
-  const leftRef = useRef<ImperativePanelHandle>(null);
   const rightRef = useRef<ImperativePanelHandle>(null);
   const bottomRef = useRef<ImperativePanelHandle>(null);
 
@@ -99,12 +96,10 @@ export const Workbench = forwardRef<WorkbenchHandle, WorkbenchProps>(function Wo
       if (collapse && !handle.isCollapsed()) handle.collapse();
       else if (!collapse && handle.isCollapsed()) handle.expand();
     };
-    sync(leftRef.current, want.left);
     sync(rightRef.current, want.right);
     sync(bottomRef.current, want.bottom);
     // Force the store back to the snapshot in case a library mount callback
     // toggled it before this effect ran.
-    setRegionCollapsed('left', want.left);
     setRegionCollapsed('right', want.right);
     setRegionCollapsed('bottom', want.bottom);
   }, []);
@@ -114,10 +109,8 @@ export const Workbench = forwardRef<WorkbenchHandle, WorkbenchProps>(function Wo
     () => ({
       reset() {
         resetLayout();
-        leftRef.current?.expand();
         rightRef.current?.expand();
         bottomRef.current?.expand();
-        leftRef.current?.resize(LEFT.default);
         rightRef.current?.resize(RIGHT.default);
         bottomRef.current?.resize(BOTTOM.default);
       },
@@ -162,47 +155,13 @@ export const Workbench = forwardRef<WorkbenchHandle, WorkbenchProps>(function Wo
 
   return (
     <div className="ge-workbench" data-testid="workbench">
-      {collapsed.left && (
-        <Rail region="left" icon="☰" label="Nodes" onExpand={() => leftRef.current?.expand()} />
-      )}
-
       <PanelGroup
         className="ge-wb-main"
         direction="horizontal"
         autoSaveId={MAIN_GROUP_ID}
         id={MAIN_GROUP_ID}
       >
-        <Panel
-          id="left"
-          order={1}
-          ref={leftRef}
-          className="ge-wb-panel ge-wb-panel--left"
-          collapsible
-          collapsedSize={0}
-          minSize={LEFT.min}
-          maxSize={LEFT.max}
-          defaultSize={LEFT.default}
-          onCollapse={() => setRegionCollapsed('left', true)}
-          onExpand={() => setRegionCollapsed('left', false)}
-        >
-          <div className="ge-region ge-region--left">
-            {palette}
-            <button
-              type="button"
-              className="ge-region__collapse ge-region__collapse--left"
-              data-testid="collapse-left"
-              aria-label="Collapse palette"
-              title="Collapse palette"
-              onClick={() => leftRef.current?.collapse()}
-            >
-              &lsaquo;
-            </button>
-          </div>
-        </Panel>
-
-        <PanelResizeHandle className="ge-wb-sash ge-wb-sash--v" data-testid="sash-left" />
-
-        <Panel id="center" order={2} minSize={CENTER_MIN} className="ge-wb-panel ge-wb-panel--center">
+        <Panel id="center" order={1} minSize={CENTER_MIN} className="ge-wb-panel ge-wb-panel--center">
           <div className="ge-wb-center">
             <PanelGroup
               className="ge-wb-center-group"
@@ -262,7 +221,7 @@ export const Workbench = forwardRef<WorkbenchHandle, WorkbenchProps>(function Wo
 
         <Panel
           id="right"
-          order={3}
+          order={2}
           ref={rightRef}
           className="ge-wb-panel ge-wb-panel--right"
           collapsible

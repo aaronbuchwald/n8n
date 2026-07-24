@@ -18,7 +18,6 @@ interface RailProps {
 }
 
 const EDGE_LABEL: Record<RegionKey, string> = {
-  left: 'Expand palette',
   right: 'Expand dock',
   bottom: 'Expand run results',
 };
