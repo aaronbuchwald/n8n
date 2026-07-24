@@ -18,7 +18,14 @@ async function gotoCapacityCheck(page: Page) {
 }
 
 async function runGraph(page: Page) {
-  const runResponse = page.waitForResponse((r) => r.url().includes('/api/run') && r.status() === 200);
+  // The app posts to the SCOPED run route (/api/graphs/<id>/run), which has no
+  // "/api/run" substring — match a POST whose path ends in /run instead.
+  const runResponse = page.waitForResponse(
+    (r) =>
+      new URL(r.url()).pathname.endsWith('/run') &&
+      r.request().method() === 'POST' &&
+      r.status() === 200,
+  );
   await page.getByTestId('run-button').click();
   await runResponse;
   await expect(page.getByTestId('run-results')).toBeVisible();
