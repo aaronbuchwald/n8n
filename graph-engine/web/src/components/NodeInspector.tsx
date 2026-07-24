@@ -2,9 +2,10 @@ import { useEffect, useState } from 'react';
 
 import { fetchNodeStatement, type NodeStatement } from '../api';
 import type { InspectedInput, InspectedNode, InputSource, ResolvedValue } from '../inspect';
-import { previewType, previewValue } from '../preview';
+import { fullValue, previewType } from '../preview';
 import { useSyncSelector } from '../store/useSyncSelector';
 import { InspectorWidgetSlot } from '../widgets/InspectorWidgetSlot';
+import { InspectorValueBlock } from './InspectorValue';
 import { SourceEditor } from './SourceEditor';
 
 interface NodeInspectorProps {
@@ -49,12 +50,9 @@ function ValueLine({ resolved }: { resolved: ResolvedValue | null }) {
   if (!resolved) {
     return <div className="ge-inspector__value ge-inspector__value--empty">no value yet</div>;
   }
-  const text = previewValue(resolved.value);
-  return (
-    <div className="ge-inspector__value" title={text}>
-      {text}
-    </div>
-  );
+  // The inspector shows the COMPLETE value (not the canvas's compact preview) so
+  // long outputs — a latex blob, a results dict — can be read and copied in full.
+  return <InspectorValueBlock text={fullValue(resolved.value)} testid="inspector-value" />;
 }
 
 // The declared type, and — when a run value is present with a different
@@ -135,9 +133,11 @@ function CallSiteRow({ nodeId }: { nodeId: string }) {
       <h3 className="ge-inspector__label">Call site</h3>
       {statement ? (
         <>
-          <pre className="ge-inspector__callsite-code" data-testid="callsite-source">
-            {statement.source.trimEnd()}
-          </pre>
+          <InspectorValueBlock
+            text={statement.source.trimEnd()}
+            variant="code"
+            testid="callsite-source"
+          />
           <div
             className="ge-inspector__callsite-loc"
             data-testid="callsite-loc"

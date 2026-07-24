@@ -28,6 +28,24 @@ export function previewValue(v: unknown): string {
   }
 }
 
+/**
+ * The COMPLETE, readable text of a value — never truncated. Unlike
+ * `previewValue` (a compact one-liner for the canvas/chips), this is what the
+ * inspector renders in its scrollable value blocks so a full output (a long
+ * `latex` string, a `results` dict) can be read and copied. Structured values
+ * are pretty-printed across lines; strings pass through verbatim.
+ */
+export function fullValue(v: unknown): string {
+  if (isReprPreview(v)) return v.$repr;
+  if (typeof v === 'string') return v;
+  if (v === null || typeof v === 'number' || typeof v === 'boolean') return String(v);
+  try {
+    return JSON.stringify(v, null, 2);
+  } catch {
+    return String(v);
+  }
+}
+
 /** The Python-ish type name for a value, for a small dimmed label. */
 export function previewType(v: unknown): string {
   if (isReprPreview(v)) return v.$type;
