@@ -37,7 +37,16 @@ Check(expr, description="")              # boolean expression over the scope
 Calc(title, as_of, inputs, formulas, checks, precision=3)
 
 calc.evaluate() -> Result
-render_html(result) -> str
+render_html(result, options=None) -> str
+
+HtmlOptions(theme="auto", header="", footer="")   # per-renderer, frozen, JSON-able
+
+result.to_dict() -> dict          # versioned, json.dumps-able archival form
+Result.from_dict(payload)         # lossless: from_dict(to_dict(r)) == r
+
+renderers() -> tuple[RendererInfo, ...]           # catalogue; imports no backend
+renderer_info(name) / get_renderer(name)          # lazy resolution by name
+register_renderer(info)                           # third-party backends
 ```
 
 ```python
@@ -90,11 +99,43 @@ html = render_html(result)
 | value + unit | right-aligned, tabular numerals, unit upright and muted |
 | reference | right-hand gutter, plain text, hairline rule |
 
+Two optional slots sit around it: `HtmlOptions.header` is a banner above the
+card, `HtmlOptions.footer` is the notes line under the verdict (source pins, a
+code edition, scope caveats). Both are empty by default, and an options-free
+render is byte-for-byte the card this package has always emitted — the CSS for
+a slot is only emitted when the slot is filled.
+
 The substituted middle step is deliberately dropped — that is the C4 model, and
 it is why `handcalcs` is not used here. Design checks render as one row each:
 check expression as math, its description, the substituted boolean
 (`57.1 < 50 = False`) and a PASS/FAIL badge. Light and dark themes ship via
 `prefers-color-scheme`.
+
+### One result, many renderings
+
+`evaluate_calc` runs once; a rendering is a free function over the `Result` it
+returns. That is the whole extension contract — a new backend is one module
+with a `render_<name>(result, options=None)` function, its own frozen options
+dataclass, and (optionally) a `RendererInfo`. Nothing about `Result` changes.
+
+```python
+result = calc.evaluate()                                  # ONE evaluation…
+html = render_html(result, HtmlOptions(header="Acme Corp"))  # …many renderings
+archive = result.to_dict()                                # versioned JSON form
+```
+
+`renderers()` is a **catalogue, not the API**: it exists so tooling can list
+what is available and what each backend produces (`media_type`, `output`)
+without importing any of them. Authors keep calling the free functions. A
+backend that is listed but not installed fails at `get_renderer(name)` — the
+call — with the install command in the message, never at import or enumeration
+time.
+
+Options types are per-renderer by design: page numbering is meaningless for a
+scrolling HTML card, so there is no shared superset that every backend would
+have to police. Overlapping concepts reuse the same field *names* (`theme`,
+`header`, `footer`) by convention, and every field is a scalar so the whole
+options object round-trips JSON.
 
 ## Setup, tests, example
 
@@ -102,7 +143,7 @@ From a clean checkout, in this directory (`calcsheet/`). `uv` creates and syncs
 the environment on the first run — no separate install step:
 
 ```bash
-# tests (32 of them)
+# tests (61 of them)
 uv run --extra dev python -m pytest -q
 
 # the example: writes out/capacity-check.html and opens it in a browser

@@ -71,6 +71,19 @@ class Result:
     values: Mapping[str, float] = field(default_factory=dict)
     passed: bool = True
 
+    def to_dict(self) -> dict[str, object]:
+        """This result as a versioned, ``json.dumps``-able dict."""
+        from .serialize import result_to_dict
+
+        return result_to_dict(self)
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, object]) -> Result:
+        """Rebuild a result from :meth:`to_dict` — lossless both ways."""
+        from .serialize import result_from_dict
+
+        return result_from_dict(data)
+
 
 def format_value(value: object, precision: int) -> str:
     """Format a value for display: floats to ``precision`` significant digits.
