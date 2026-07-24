@@ -761,21 +761,9 @@ body,
 }
 
 /* ADR 0015 D2: the read-only call-site row — THIS node's real @main statement,
-   shown as file bytes with a path · Lx–Ly label beneath the input editors. */
-.ge-inspector__callsite-code {
-  margin: 0;
-  padding: 8px 10px;
-  border-radius: 7px;
-  border: 1px solid var(--ge-node-border);
-  background: var(--ge-bg);
-  font-family: var(--ge-mono);
-  font-size: 11px;
-  line-height: 1.5;
-  color: var(--ge-text);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
+   shown as file bytes with a path · Lx–Ly label beneath the input editors. The
+   source itself renders through the shared .ge-inspector__value-scroll surface
+   (scrollable + copyable); only the location label is styled here. */
 .ge-inspector__callsite-loc {
   font-family: var(--ge-mono);
   font-size: 10px;
@@ -976,22 +964,129 @@ body,
   background: var(--ge-danger-soft);
 }
 
-/* Values clamp to three lines; the full text lives in the title tooltip. */
+/* The "no value yet" placeholder (a run value that hasn't been produced). Real
+   values render through .ge-inspector__value-wrap below. */
 .ge-inspector__value {
   font-family: var(--ge-mono);
   font-size: 11px;
   line-height: 1.45;
   color: var(--ge-text);
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  word-break: break-all;
 }
 
 .ge-inspector__value--empty {
   color: var(--ge-faint);
   font-style: italic;
+}
+
+/* ---- inspector value blocks: full value, scrollable + expandable + copyable ----
+   Input values, output values, and the call-site source all render through the
+   same surface so long outputs (a latex blob, a results dict, a source snippet)
+   can be read and copied in full instead of being clipped. */
+.ge-inspector__value-wrap {
+  position: relative;
+  --ge-inspector-value-collapsed: 148px;
+}
+
+.ge-inspector__value-scroll {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 7px;
+  border: 1px solid var(--ge-node-border);
+  background: var(--ge-bg);
+  font-family: var(--ge-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--ge-text);
+  /* Collapsed by default: cap the height and scroll; nothing is hidden. */
+  max-height: var(--ge-inspector-value-collapsed);
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+/* Long/structured values (dict, latex) wrap; the block scrolls vertically. */
+.ge-inspector__value-scroll--value {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Source keeps its formatting: wrap long lines but preserve indentation. */
+.ge-inspector__value-scroll--code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  tab-size: 4;
+}
+
+/* Expanded: let the field grow much larger (still scrollable for huge values). */
+.ge-inspector__value-scroll.is-expanded {
+  max-height: min(60vh, 640px);
+}
+
+/* Copy button — hidden until the block is hovered or anything inside it (incl.
+   the button) is focused, so it's keyboard-reachable, not mouse-only. */
+.ge-inspector__copy {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  padding: 2px 7px;
+  font-family: var(--ge-mono);
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--ge-muted);
+  background: var(--ge-panel);
+  border: 1px solid var(--ge-node-border);
+  border-radius: 5px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+
+.ge-inspector__value-wrap:hover .ge-inspector__copy,
+.ge-inspector__value-wrap:focus-within .ge-inspector__copy {
+  opacity: 1;
+}
+
+.ge-inspector__copy:hover {
+  color: var(--ge-text);
+  border-color: var(--ge-node-border-strong);
+}
+
+.ge-inspector__copy:focus-visible {
+  opacity: 1;
+  outline: 2px solid var(--ge-accent);
+  outline-offset: 1px;
+}
+
+.ge-inspector__copy[data-copied='true'] {
+  color: var(--ge-output);
+  border-color: var(--ge-output);
+}
+
+/* "Show more / Show less" — only rendered when the value overflows the cap. */
+.ge-inspector__value-toggle {
+  margin-top: 4px;
+  padding: 1px 4px;
+  font-family: var(--ge-mono);
+  font-size: 10px;
+  color: var(--ge-accent);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.ge-inspector__value-toggle:hover {
+  text-decoration: underline;
+}
+
+.ge-inspector__value-toggle:focus-visible {
+  outline: 2px solid var(--ge-accent);
+  outline-offset: 1px;
+  border-radius: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ge-inspector__copy {
+    transition: none;
+  }
 }
 
 /* ---- run results panel (below the canvas) ---- */
