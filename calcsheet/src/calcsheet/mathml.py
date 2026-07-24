@@ -14,6 +14,7 @@ from collections.abc import Iterable, Mapping
 import latex2mathml.converter
 import sympy
 from sympy.core.basic import Basic
+from sympy.core.relational import Relational
 from sympy.logic.boolalg import Boolean
 
 from .errors import CalcError
@@ -91,6 +92,27 @@ def substitute(expr: Basic, scope: Mapping[str, float]) -> Basic:
 def is_boolean(expr: Basic) -> bool:
     """True when ``expr`` is a verdict (relational or boolean), not a quantity."""
     return isinstance(expr, Boolean)
+
+
+def is_symbol_named(expr: Basic, name: str) -> bool:
+    """True when ``expr`` is exactly the bare symbol ``name`` (not ``2 * name``)."""
+    return isinstance(expr, sympy.Symbol) and expr.name == name
+
+
+def bound_sides(expr: Basic) -> tuple[Basic, Basic] | None:
+    """``(bounded, bound)`` when ``expr`` says "this must not exceed that".
+
+    ``eta <= 1.0`` and ``1.0 >= eta`` both give ``(eta, 1.0)``; ``a == b`` and
+    ``And(...)`` give ``None``. Callers use this to name a check's limit, so
+    only inequalities — where "the other side" is a real ceiling — qualify.
+    """
+    if not isinstance(expr, Relational):
+        return None
+    if expr.rel_op in ("<", "<="):
+        return expr.lhs, expr.rhs
+    if expr.rel_op in (">", ">="):
+        return expr.rhs, expr.lhs
+    return None
 
 
 def latex_to_mathml(latex: str, display: str = "block") -> str:

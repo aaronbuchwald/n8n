@@ -9,14 +9,16 @@ is HTML-escaped; every string that is markup is checked by the guard in
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from html import escape
 
-from .evaluate import CheckResult, Result, Row
+from .errors import CalcError
+from .evaluate import CheckResult, Result, Row, format_value
 from .mathml import assert_plain_mathml
 
 # Adapted from the owner-approved strawman. Light and dark are the same design
 # with a swapped ramp; values use tabular numerals so columns of digits line up.
-_CSS = """
+_LIGHT_VARS = """
 :root{
   --bg:#f6f7f9; --card:#fff; --ink:#1a2130; --muted:#6b7688; --faint:#98a1b3;
   --line:#e2e6ec; --rule:#c9d0da;
@@ -24,12 +26,18 @@ _CSS = """
   --mono:"SF Mono",ui-monospace,Menlo,Consolas,monospace;
   --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
 }
-@media (prefers-color-scheme:dark){:root{
-  --bg:#0e1117; --card:#161b24; --ink:#e7ecf3; --muted:#95a0b2; --faint:#67728a;
+"""
+
+# One source for the dark ramp, emitted either behind the media query (theme
+# "auto") or unconditionally (theme "dark") — never duplicated.
+_DARK_VARS = """  --bg:#0e1117; --card:#161b24; --ink:#e7ecf3; --muted:#95a0b2; --faint:#67728a;
   --line:#252c39; --rule:#333c4d; --pass:#4cc17f; --pass-soft:#122a1c;
   --fail:#f0776b; --fail-soft:#2a1512;
-}}
-*{box-sizing:border-box}
+"""
+_DARK_MEDIA = "@media (prefers-color-scheme:dark){:root{\n" + _DARK_VARS + "}}\n"
+_DARK_ALWAYS = ":root{\n" + _DARK_VARS + "}\n"
+
+_BASE_CSS = """*{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
      line-height:1.5;padding:28px}
 .wrap{max-width:760px;margin:0 auto}
@@ -86,6 +94,60 @@ math{font-size:1em}
 .foot b{color:var(--ink)}
 """
 
+# Appended only when a slot is actually filled, so an options-free render stays
+# byte-identical to the card this package has always emitted.
+_SLOT_CSS = """.card__banner{padding:10px 20px;border-bottom:1px solid var(--line);
+              font-family:var(--mono);font-size:11px;letter-spacing:.08em;
+              text-transform:uppercase;color:var(--faint)}
+.foot--note{background:none;border-top:1px dashed var(--line);color:var(--faint);
+            font-size:11.5px}
+"""
+
+# Same rule as the slots: only calcs that report a utilisation pay for the
+# fourth chip column. `.chk--util` follows `.chk`, so the override wins.
+_UTILISATION_CSS = """.chk--util{grid-template-columns:1fr auto auto auto}
+.chk__util{font-family:var(--mono);font-size:13.5px;font-weight:700;
+           font-variant-numeric:tabular-nums;white-space:nowrap}
+"""
+
+_THEMES = {"auto": _DARK_MEDIA, "light": "", "dark": _DARK_ALWAYS}
+
+
+@dataclass(frozen=True)
+class HtmlOptions:
+    """Knobs for :func:`render_html` — presentation only, never the numbers.
+
+    Field names (``theme``, ``header``, ``footer``) are shared by convention
+    with any future renderer's own options type; there is deliberately no
+    shared superset, so no backend has to police another's knobs. All fields
+    are scalars, so the whole thing round-trips JSON as a graph literal.
+
+    ``header`` is a banner above the card head; ``footer`` is the notes slot
+    under the verdict line — fine print such as source pins or a code edition.
+    """
+
+    theme: str = "auto"
+    header: str = ""
+    footer: str = ""
+
+    def __post_init__(self) -> None:
+        if self.theme not in _THEMES:
+            raise CalcError(
+                f"unknown theme {self.theme!r}; available themes: "
+                f"{', '.join(sorted(_THEMES))}"
+            )
+
+
+def _stylesheet(
+    options: HtmlOptions, *, with_slots: bool, with_utilisation: bool
+) -> str:
+    css = _LIGHT_VARS + _THEMES[options.theme] + _BASE_CSS
+    if with_slots:
+        css += _SLOT_CSS
+    if with_utilisation:
+        css += _UTILISATION_CSS
+    return css
+
 
 def _verdict(passed: bool) -> str:
     return "PASS" if passed else "FAIL"
@@ -126,7 +188,20 @@ def _section_html(label: str, rows: tuple[Row, ...], *, with_definition: bool) -
     )
 
 
-def _check_html(check: CheckResult) -> str:
+def _margin_text(check: CheckResult, precision: int) -> str:
+    """``0.759 ≤ 0.833`` — the margin an engineer reads instead of PASS.
+
+    ``≤`` is the utilisation relation itself ("must not exceed the limit"),
+    not the check's operator; the exact operator and numbers sit alongside in
+    the substituted string.
+    """
+    utilisation = format_value(check.utilisation, precision)
+    if check.limit is None:
+        return utilisation
+    return f"{utilisation} ≤ {format_value(check.limit, precision)}"
+
+
+def _check_html(check: CheckResult, precision: int) -> str:
     assert_plain_mathml(check.expr_mathml)
     verdict = _verdict(check.passed).lower()
     description = (
@@ -134,18 +209,26 @@ def _check_html(check: CheckResult) -> str:
         if check.description
         else ""
     )
+    margin = (
+        f'          <span class="chk__util">'
+        f"{escape(_margin_text(check, precision))}</span>\n"
+        if check.utilisation is not None
+        else ""
+    )
+    chip = "chk chk--util" if margin else "chk"
     return (
-        '        <div class="chk">\n'
+        f'        <div class="{chip}">\n'
         f'          <div><span class="chk__eq">{check.expr_mathml}</span>'
         f"{description}</div>\n"
+        f"{margin}"
         f'          <span class="chk__bool">{escape(check.substituted)}</span>\n'
         f'          <span class="badge badge--{verdict}">{_verdict(check.passed)}</span>\n'
         "        </div>"
     )
 
 
-def _checks_html(checks: tuple[CheckResult, ...]) -> str:
-    body = "\n".join(_check_html(check) for check in checks)
+def _checks_html(checks: tuple[CheckResult, ...], precision: int) -> str:
+    body = "\n".join(_check_html(check, precision) for check in checks)
     return (
         '    <div class="sec">\n'
         '      <p class="sec__label">Design checks</p>\n'
@@ -156,13 +239,38 @@ def _checks_html(checks: tuple[CheckResult, ...]) -> str:
     )
 
 
-def render_html(result: Result) -> str:
+def render_html(result: Result, options: HtmlOptions | None = None) -> str:
     """Render ``result`` as a complete, self-contained HTML document.
 
     Deterministic by construction: everything drawn here comes from the one
-    :class:`~calcsheet.evaluate.Result`, so the same calc renders byte-identical
-    output every time.
+    :class:`~calcsheet.evaluate.Result` plus the caller's ``options``, so the
+    same pair renders byte-identical output every time. Omitting ``options``
+    renders exactly the card this package has always emitted.
     """
+    options = options or HtmlOptions()
+    banner = (
+        f'    <div class="card__banner">{escape(options.header)}</div>\n'
+        if options.header
+        else ""
+    )
+    note = (
+        f'\n    <div class="foot foot--note">{escape(options.footer)}</div>'
+        if options.footer
+        else ""
+    )
+    with_utilisation = any(check.utilisation is not None for check in result.checks)
+    stylesheet = _stylesheet(
+        options, with_slots=bool(banner or note), with_utilisation=with_utilisation
+    )
+
+    governing = ""
+    if result.governing is not None:
+        expr, utilisation = result.governing
+        governing = (
+            f"\n      Governing check <b>{escape(expr)}</b> at "
+            f"<b>{escape(format_value(utilisation, result.precision))}</b>."
+        )
+
     verdict = _verdict(result.passed)
     sections = []
     if result.inputs:
@@ -172,7 +280,7 @@ def render_html(result: Result) -> str:
             _section_html("Calculation", result.formulas, with_definition=True)
         )
     if result.checks:
-        sections.append(_checks_html(result.checks))
+        sections.append(_checks_html(result.checks, result.precision))
     body = "\n\n".join(sections)
 
     return f"""<!doctype html>
@@ -181,12 +289,12 @@ def render_html(result: Result) -> str:
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{escape(result.title)} — {escape(result.as_of)}</title>
-<style>{_CSS}</style>
+<style>{stylesheet}</style>
 </head>
 <body>
 <div class="wrap">
   <div class="card">
-    <div class="card__head">
+{banner}    <div class="card__head">
       <h1 class="card__title">{escape(result.title)}</h1>
       <span class="card__asof">AS_OF {escape(result.as_of)}</span>
       <span class="status status--{verdict.lower()}">&#9679; {verdict}</span>
@@ -195,8 +303,8 @@ def render_html(result: Result) -> str:
 {body}
 
     <div class="foot">
-      Overall <b>{verdict}</b> — a calc is valid only when <b>every</b> check passes.
-    </div>
+      Overall <b>{verdict}</b> — a calc is valid only when <b>every</b> check passes.{governing}
+    </div>{note}
   </div>
 </div>
 </body>
