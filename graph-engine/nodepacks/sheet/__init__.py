@@ -53,6 +53,10 @@ _UNIT = re.compile(r"\[([^\[\]]*)\]\s*$")
 # derive endpoint) stays cheap. Mirrors sym.handcalc's own cap.
 _MAX_TEXT_LEN = 10_000
 
+# Significant digits used when `precision` is left unset (a cleared number
+# widget commits `null`, which means "not set" — never a crash).
+DEFAULT_PRECISION = 3
+
 # Static parameters of `calc_card` a derived symbol may not shadow.
 _STATIC_PARAMS = frozenset({"title", "as_of", "formulas", "checks", "precision"})
 
@@ -317,7 +321,7 @@ def calc_card(
     as_of: str = "",
     formulas: str = "",
     checks: str = "",
-    precision: int = 3,
+    precision: int | None = None,
     **values: float,
 ) -> dict:
     """Evaluate a whole calculation and render it as a self-contained HTML card.
@@ -361,7 +365,9 @@ def calc_card(
         inputs=inputs,
         formulas=[Formula(f.symbol, f.expr, ref=f.ref, unit=f.unit) for f in parsed_formulas],
         checks=[Check(c.expr, c.description) for c in parsed_checks],
-        precision=precision,
+        # An emptied number widget commits `null`, which is the UI's way of
+        # saying "not set" — that must mean the default, not a crash.
+        precision=DEFAULT_PRECISION if precision is None else precision,
     )
     try:
         result = evaluate_calc(calc)
