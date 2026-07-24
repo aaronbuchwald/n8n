@@ -30,6 +30,7 @@ showcase) is ever touched.
 
 from __future__ import annotations
 
+import ast
 import difflib
 import importlib
 import logging
@@ -139,6 +140,81 @@ def report() -> str:
 
 NODES = [source, render]
 '''
+
+# A composite already written in the ADR 0020 block form: the `text` literal is
+# parenthesized implicit concatenation inside an expanded call, so the wiring
+# statement spans FIVE physical lines. Used to prove multi-line statements
+# splice, patch, insert and delete exactly like one-liners.
+BLOCK_SOURCE = '''\
+"""A composite whose @main body carries a block-form multi-line literal."""
+
+from __future__ import annotations
+
+from engine import main, node
+
+
+@node
+def note(text: str = "", label: str = "note") -> dict:
+    """A node with a genuinely multi-line text literal."""
+    return {"text": text, "label": label}
+
+
+@node
+def render(data: dict, title: str = "Report") -> str:
+    """Render the note as a one-line HTML string."""
+    return f"<p>{title}: {data}</p>"
+
+
+@main
+def report() -> str:
+    """Build the tiny report."""
+    # --- the calc-ish literal, in ADR 0020 block form ---------------------
+    entry = note(
+        text=(
+            'r = F_max / C_min  # demand / capacity\\n'
+            'U = 100 * r [%]  # utilisation'
+        ),
+        label='entry',
+    )
+
+    # --- render: the final HTML card --------------------------------------
+    card = render(entry, title="Block form")
+    return card
+
+
+NODES = [note, render]
+'''
+
+# The same value, hand-typed in the three spellings CPython collapses to one
+# `ast.Constant` (ADR 0020 D4). Each must be a no-op on save.
+_SPELLINGS = {
+    "escaped": (
+        "    entry = note(text='r = F_max / C_min  # demand / capacity"
+        "\\nU = 100 * r [%]  # utilisation', label='entry')"
+    ),
+    "concatenated": (
+        "    entry = note(\n"
+        "        text=(\n"
+        "            'r = F_max / C_min  # demand / capacity\\n'\n"
+        "            'U = 100 * r [%]  # utilisation'\n"
+        "        ),\n"
+        "        label='entry',\n"
+        "    )"
+    ),
+    # Triple-quoted content is taken literally, so its lines start at column 0.
+    "triple_quoted": (
+        '    entry = note(text="""r = F_max / C_min  # demand / capacity\n'
+        'U = 100 * r [%]  # utilisation""", label=\'entry\')'
+    ),
+}
+
+BLOCK_STATEMENT = _SPELLINGS["concatenated"]
+
+
+def _spelled(statement: str) -> str:
+    """BLOCK_SOURCE with its `entry` statement written in another spelling."""
+    return BLOCK_SOURCE.replace(BLOCK_STATEMENT, statement)
+
 
 # A three-node chain of one self-referential type, so a save can reverse the
 # dependency direction — a reorder the in-place statement model can't express.
@@ -551,3 +627,276 @@ def test_reorder_falls_back_and_surfaces_warning_in_response(
     # The rewired graph still round-trips.
     served = sb.client.get("/api/graph").json()
     assert served["output"] == {"node": "first", "socket": "result"}
+
+
+# ----------------------------------------------------------------------
+# G. multi-line string literals (ADR 0020) — a block-form statement patches,
+#    splices, inserts and deletes exactly like a one-line one
+# ----------------------------------------------------------------------
+
+CALC_TEXT = "r = F_max / C_min  # demand / capacity\nU = 100 * r [%]  # utilisation"
+
+# Values chosen to break naive multi-line spellings: preserved byte-exactly.
+AWKWARD_VALUES = {
+    "trailing_newline": "a\nb\n",
+    "crlf": "first\r\nsecond\r\n",
+    "embedded_quotes": "he said \"hi\"\nshe said 'bye'\n",
+    "backslashes_latex": "\\nu = \\frac{a}{b}\\\\\nE = m c^2  # \\nu, not a newline",
+    "triple_quote": 'a """ b\nc """',
+    "blank_lines": "first\n\n\nlast",
+}
+
+
+def _file_literal(path: Path, node_id: str, name: str):
+    """The value of ``node_id``'s ``name=`` argument, read from the file's AST.
+
+    Asserts on the way that the emitted argument really is a single
+    ``ast.Constant`` — the block form's fragments are concatenated by the
+    parser itself, which is why the parse side needed no change (ADR 0020 D4).
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    assign = next(
+        s
+        for s in ast.walk(tree)
+        if isinstance(s, ast.Assign)
+        and isinstance(s.targets[0], ast.Name)
+        and s.targets[0].id == node_id
+    )
+    assert isinstance(assign.value, ast.Call)
+    arg = next(kw.value for kw in assign.value.keywords if kw.arg == name)
+    assert isinstance(arg, ast.Constant), f"{name} is a {type(arg).__name__}, not a literal"
+    return arg.value
+
+
+def _node_input(graph: dict, node_id: str, name: str):
+    return next(n for n in graph["nodes"] if n["id"] == node_id)["inputs"][name]
+
+
+def _set_input(graph: dict, node_id: str, name: str, value) -> None:
+    next(n for n in graph["nodes"] if n["id"] == node_id)["inputs"][name] = value
+
+
+def test_no_op_save_on_a_block_form_file_is_byte_identical(
+    make_sandbox: Callable[[str], Sandbox]
+):
+    sb = make_sandbox(BLOCK_SOURCE)
+    before = sb.file.read_text(encoding="utf-8")
+    graph = sb.client.get("/api/graph").json()
+    assert _node_input(graph, "entry", "text") == CALC_TEXT  # parsed byte-exact
+
+    res = sb.client.put("/api/graph", json={"graph": graph})
+    assert res.status_code == 200, res.text
+    assert sb.file.read_text(encoding="utf-8") == before
+    assert "writeback" not in res.json()["graph"]
+
+
+@pytest.mark.parametrize("spelling", list(_SPELLINGS), ids=list(_SPELLINGS))
+def test_every_handwritten_spelling_is_a_no_op_on_save(
+    make_sandbox: Callable[[str], Sandbox], spelling: str
+):
+    """A hand-typed variant denoting the same string is never churned (D4/D6).
+
+    Write-back compares parsed meaning, so escaped-``\\n``, implicit
+    concatenation and a column-0 triple-quoted literal all survive a save
+    byte-for-byte — the file only migrates when its meaning actually changes.
+    """
+    sb = make_sandbox(_spelled(_SPELLINGS[spelling]))
+    before = sb.file.read_text(encoding="utf-8")
+    graph = sb.client.get("/api/graph").json()
+    assert _node_input(graph, "entry", "text") == CALC_TEXT
+
+    res = sb.client.put("/api/graph", json={"graph": graph})
+    assert res.status_code == 200, res.text
+    assert sb.file.read_text(encoding="utf-8") == before
+
+
+def test_editing_a_multiline_literal_writes_the_block_form(
+    make_sandbox: Callable[[str], Sandbox]
+):
+    sb = make_sandbox(BLOCK_SOURCE)
+    before = sb.file.read_text(encoding="utf-8")
+    graph = sb.client.get("/api/graph").json()
+    edited = f"{CALC_TEXT}\nm = C_min - F_max  # margin over demand"
+    _set_input(graph, "entry", "text", edited)
+
+    res = sb.client.put("/api/graph", json={"graph": graph})
+    assert res.status_code == 200, res.text
+
+    after = sb.file.read_text(encoding="utf-8")
+    assert (
+        "    entry = note(\n"
+        "        text=(\n"
+        "            'r = F_max / C_min  # demand / capacity\\n'\n"
+        "            'U = 100 * r [%]  # utilisation\\n'\n"
+        "            'm = C_min - F_max  # margin over demand'\n"
+        "        ),\n"
+        "        label='entry',\n"
+        "    )\n"
+    ) in after
+    # The value came back byte-exact through the file.
+    assert _node_input(sb.client.get("/api/graph").json(), "entry", "text") == edited
+    # Only the one statement moved: every comment and the render line survive.
+    inserted, deleted, _replace = _touched(before, after)
+    assert "    # --- render: the final HTML card --------------------------------------" not in (
+        inserted + deleted
+    )
+    assert '    card = render(entry, title="Block form")' in after
+    assert "# --- the calc-ish literal, in ADR 0020 block form" in after
+
+
+def test_editing_a_sibling_param_reemits_the_whole_statement_in_block_form(
+    make_sandbox: Callable[[str], Sandbox]
+):
+    """Changing `label` re-emits the statement — its multi-line sibling included.
+
+    The re-emitted statement takes the canonical block shape and the untouched
+    `text` value survives byte-exactly (representation changed, value did not).
+    """
+    sb = make_sandbox(BLOCK_SOURCE)
+    graph = sb.client.get("/api/graph").json()
+    _set_input(graph, "entry", "label", "edited")
+
+    res = sb.client.put("/api/graph", json={"graph": graph})
+    assert res.status_code == 200, res.text
+
+    after = sb.file.read_text(encoding="utf-8")
+    assert "        label='edited',\n" in after
+    assert "            'r = F_max / C_min  # demand / capacity\\n'\n" in after
+    served = sb.client.get("/api/graph").json()
+    assert _node_input(served, "entry", "text") == CALC_TEXT
+    assert "# --- render: the final HTML card" in after
+
+
+def test_a_value_crossing_the_boundary_expands_and_collapses_without_thrash(
+    make_sandbox: Callable[[str], Sandbox]
+):
+    """Single ⟷ multi-line only ever rewrites the statement that changed.
+
+    `card`'s single-line `title` grows a newline (its statement expands), then
+    loses it again — and the file returns to its original bytes.
+    """
+    sb = make_sandbox(BLOCK_SOURCE)
+    before = sb.file.read_text(encoding="utf-8")
+
+    graph = sb.client.get("/api/graph").json()
+    _set_input(graph, "card", "title", "Block form\nrevision B")
+    assert sb.client.put("/api/graph", json={"graph": graph}).status_code == 200
+
+    expanded = sb.file.read_text(encoding="utf-8")
+    assert (
+        "    card = render(\n"
+        "        data=entry,\n"
+        "        title=(\n"
+        "            'Block form\\n'\n"
+        "            'revision B'\n"
+        "        ),\n"
+        "    )\n"
+    ) in expanded
+    # `entry`'s block-form statement was NOT touched by an edit to `card`: the
+    # only line that left the file is `card`'s own former one-liner.
+    assert "        label='entry',\n" in expanded
+    _inserted, deleted, _replace = _touched(before, expanded)
+    assert deleted == ['    card = render(entry, title="Block form")']
+
+    # A second, identical save changes nothing (idempotence on disk).
+    graph = sb.client.get("/api/graph").json()
+    assert sb.client.put("/api/graph", json={"graph": graph}).status_code == 200
+    assert sb.file.read_text(encoding="utf-8") == expanded
+
+    # Drop the newline again: back to a plain one-line call, no residue.
+    _set_input(graph, "card", "title", "Block form")
+    assert sb.client.put("/api/graph", json={"graph": graph}).status_code == 200
+    collapsed = sb.file.read_text(encoding="utf-8")
+    assert "    card = render(data=entry, title='Block form')\n" in collapsed
+    assert "revision B" not in collapsed
+
+
+def test_inserting_a_node_after_a_block_form_statement_touches_no_existing_line(
+    make_sandbox: Callable[[str], Sandbox]
+):
+    """The planner spans a multi-line statement via `end_lineno` (D7).
+
+    A node depending on `entry` must land after the block's CLOSING paren — not
+    inside it — and no existing line may be rewritten.
+    """
+    sb = make_sandbox(BLOCK_SOURCE)
+    before = sb.file.read_text(encoding="utf-8")
+    graph = sb.client.get("/api/graph").json()
+    graph["nodes"].append(
+        {"id": "extra", "type": f"{sb.module_name}.render",
+         "inputs": {"title": "Extra"}, "position": None}
+    )
+    graph["edges"].append(
+        {"source": "entry", "sourceOutput": "result", "target": "extra", "targetInput": "data"}
+    )
+
+    res = sb.client.put("/api/graph", json={"graph": graph})
+    assert res.status_code == 200, res.text
+
+    after = sb.file.read_text(encoding="utf-8")
+    inserted, deleted, any_replace = _touched(before, after)
+    assert deleted == [] and any_replace is False
+    assert inserted == ["    extra = render(data=entry, title='Extra')"]
+    # It lands immediately after the block statement's closing paren.
+    assert "    )\n    extra = render(data=entry, title='Extra')\n" in after
+
+
+def test_deleting_a_block_form_node_removes_exactly_its_whole_span(
+    make_sandbox: Callable[[str], Sandbox]
+):
+    sb = make_sandbox(BLOCK_SOURCE)
+    before = sb.file.read_text(encoding="utf-8")
+    graph = sb.client.get("/api/graph").json()
+    # Drop the render node (the leaf) so `entry` can go too, then drop `entry`.
+    graph["nodes"] = [n for n in graph["nodes"] if n["id"] != "entry"]
+    graph["edges"] = [e for e in graph["edges"] if e["source"] != "entry"]
+    _set_input(graph, "card", "data", {"inline": True})
+
+    res = sb.client.put("/api/graph", json={"graph": graph})
+    assert res.status_code == 200, res.text
+
+    after = sb.file.read_text(encoding="utf-8")
+    inserted, deleted, _replace = _touched(before, after)
+    # The whole SEVEN-line statement (not just its first line) plus the comment
+    # block attached above it — the span came from `end_lineno`.
+    assert deleted[:8] == [
+        "    # --- the calc-ish literal, in ADR 0020 block form ---------------------",
+        "    entry = note(",
+        "        text=(",
+        "            'r = F_max / C_min  # demand / capacity\\n'",
+        "            'U = 100 * r [%]  # utilisation'",
+        "        ),",
+        "        label='entry',",
+        "    )",
+    ]
+    # The only other rewritten line is `card`'s own statement — it lost its edge.
+    assert deleted[8:] == ['    card = render(entry, title="Block form")']
+    assert "# --- render: the final HTML card" in after
+    assert "note(" not in after[after.index("def report"):]
+
+
+@pytest.mark.parametrize("value", AWKWARD_VALUES.values(), ids=list(AWKWARD_VALUES))
+def test_awkward_multiline_values_survive_a_real_save_byte_exact(
+    make_sandbox: Callable[[str], Sandbox], value: str
+):
+    """Trailing newlines, `\\r\\n`, quotes, backslashes and `\"\"\"` round-trip.
+
+    Nothing is normalized on the way to disk or back: the served value after the
+    save is the exact bytes that were sent, and a second save is a no-op.
+    """
+    sb = make_sandbox(BLOCK_SOURCE)
+    graph = sb.client.get("/api/graph").json()
+    _set_input(graph, "entry", "text", value)
+
+    res = sb.client.put("/api/graph", json={"graph": graph})
+    assert res.status_code == 200, res.text
+    assert _node_input(sb.client.get("/api/graph").json(), "entry", "text") == value
+    # On disk the argument is still ONE `ast.Constant` holding the exact bytes
+    # (the parser concatenates the fragments) — no dedent, no normalization.
+    assert _file_literal(sb.file, "entry", "text") == value
+
+    # Saving the re-read graph changes nothing — emit(parse(emit(x))) == emit(x).
+    settled = sb.file.read_text(encoding="utf-8")
+    again = sb.client.get("/api/graph").json()
+    assert sb.client.put("/api/graph", json={"graph": again}).status_code == 200
+    assert sb.file.read_text(encoding="utf-8") == settled

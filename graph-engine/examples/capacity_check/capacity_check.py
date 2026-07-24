@@ -97,13 +97,24 @@ def capacity_check_report(
     # Straight-line form (ADR 0004 D7): each call is its own assignment — no
     # nested calls in arguments — so the composite round-trips through the
     # graph⟷source bijection and can be served + edited in the UI.
+    #
+    # The calc literals are written one string per entry (ADR 0020): adjacent
+    # literals concatenate at parse time, so the value is exactly the lines
+    # below — indentation is code, never content — and this is the shape a UI
+    # edit writes back.
     card = calc_card(
-        title="Capacity check",
-        as_of="2026-07-24",
-        formulas="r = F_max / C_min  # demand / capacity\nU = 100 * r [%]  # utilisation",
-        checks="U < 100  # capacity not exceeded\nU < 50  # utilisation target",
-        F_max=F_max.result,
-        C_min=C_min.result,
+        title='Capacity check',
+        as_of='2026-07-24',
+        formulas=(
+            'r = F_max / C_min  # demand / capacity\n'
+            'U = 100 * r [%]  # utilisation'
+        ),
+        checks=(
+            'U < 100  # capacity not exceeded\n'
+            'U < 50  # utilisation target'
+        ),
+        F_max=F_max,
+        C_min=C_min,
     )
     # The card's `result` socket (the self-contained HTML document) is the graph
     # output; its sibling `height` socket tells the UI how tall to draw it.

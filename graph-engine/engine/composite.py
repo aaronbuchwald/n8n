@@ -24,6 +24,7 @@ from typing import Optional
 from .bind import BoundGraph, BoundNode, bind
 from .errors import EngineError
 from .graph import Graph
+from .literals import INDENT, render_call, render_literal
 from .registry import DEFAULT_REGISTRY, NodeRegistry
 from .spec import DEFAULT_OUTPUT, is_multi_output
 
@@ -82,20 +83,23 @@ def _ref(source: BoundNode, socket: str) -> str:
     return source.id
 
 
-def _render_value(bound: BoundNode, param: str) -> str:
+def _render_value(bound: BoundNode, param: str, arg_indent: str) -> str:
     if param in bound.wired:
         source, socket = bound.wired[param]
         return _ref(source, socket)
-    return repr(bound.literals[param])
+    return render_literal(bound.literals[param], arg_indent)
 
 
-def _arg_exprs(bound: BoundNode) -> str:
+def _arg_exprs(bound: BoundNode, arg_indent: str) -> list[str]:
     """Render a node's call arguments, honouring parameter kinds (mirrors emit).
 
     Positional-only params are emitted positionally (a contiguous prefix, gaps
     filled with their defaults); every other provided input is emitted as
     ``name=value``. Iterates the **effective** inputs (ADR 0007) so a dynamic
     node's derived symbols emit as keyword args in deriver (appearance) order.
+
+    ``arg_indent`` is the column an argument would sit at in the expanded call
+    (ADR 0020 D3), so a multi-line literal's fragments indent one level deeper.
     """
     inputs = bound.inputs_spec
     provided = set(bound.wired) | set(bound.literals)
@@ -108,16 +112,29 @@ def _arg_exprs(bound: BoundNode) -> str:
         for k in range(last + 1):
             inp = pos_only[k]
             if inp["name"] in provided:
-                parts.append(_render_value(bound, inp["name"]))
+                parts.append(_render_value(bound, inp["name"], arg_indent))
             else:
-                parts.append(inp.get("defaultRepr") or repr(inp["default"]))
+                parts.append(
+                    inp.get("defaultRepr") or render_literal(inp["default"], arg_indent)
+                )
 
     for inp in inputs:
         if inp["kind"] == "positionalOnly":
             continue
         if inp["name"] in provided:
-            parts.append(f"{inp['name']}={_render_value(bound, inp['name'])}")
-    return ", ".join(parts)
+            parts.append(f"{inp['name']}={_render_value(bound, inp['name'], arg_indent)}")
+    return parts
+
+
+def _statement(bound: BoundNode, call: str, indent: str) -> str:
+    """One wiring statement — single-line, or expanded when a literal is a block.
+
+    May contain embedded newlines (ADR 0020 D3/D7): the write-back's splicer
+    treats a statement as one element, so a block-form statement patches exactly
+    like a one-line one.
+    """
+    args = _arg_exprs(bound, indent + INDENT)
+    return f"{indent}{bound.id} = {render_call(call, args, indent)}"
 
 
 def to_composite(
@@ -137,7 +154,7 @@ def to_composite(
     bound = graph if isinstance(graph, BoundGraph) else bind(graph, registry)
 
     alias_of, type_imports = _aliases(bound)
-    body = [f"    {n.id} = {alias_of[n.type]}({_arg_exprs(n)})" for n in bound.nodes]
+    body = [_statement(n, alias_of[n.type], INDENT) for n in bound.nodes]
 
     return_line = ""
     if bound.output is not None:
@@ -182,6 +199,10 @@ def wiring_lines(
     Because a node id is a local variable of the composite, an id equal to a
     called function name would shadow that function (Python function-scoping) —
     rejected with a rename hint rather than emitting broken code.
+
+    One element per statement, as always — but a statement holding a multi-line
+    string literal is an expanded call and therefore carries embedded newlines
+    (ADR 0020 D3). Callers splice elements, not lines.
     """
     bound = graph if isinstance(graph, BoundGraph) else bind(graph, registry)
 
@@ -212,7 +233,7 @@ def wiring_lines(
             )
         call_of[n.type] = call
 
-    lines = [f"{indent}{n.id} = {call_of[n.type]}({_arg_exprs(n)})" for n in bound.nodes]
+    lines = [_statement(n, call_of[n.type], indent) for n in bound.nodes]
     if bound.output is not None:
         onode, osocket = bound.output
         lines.append(f"{indent}return {_ref(onode, osocket)}")
