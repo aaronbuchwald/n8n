@@ -1,11 +1,11 @@
-"""The force-vs-load (capacity_check) program is serveable + runnable in the app.
+"""The capacity_check program is serveable + runnable in the app.
 
 Proves the modular serving path (``--example capacity_check``): its ``@main`` is
 straight-line so it parses through the graph⟷source bijection, it serves
 pristine (relative CSV paths), and ``/api/run`` resolves both CSVs against the
 program's own directory (``run_base_dir``) — the modular replacement for
-per-example path lists — producing the capacity card (its math block carrying
-the substituted ``check`` row, ADR 0016) with no errors.
+per-example path lists — producing the calc card (its FAIL verdict being card
+content, not a run error) with no errors.
 """
 
 from __future__ import annotations
@@ -26,16 +26,26 @@ def _capacity_client() -> TestClient:
     )
 
 
-def test_capacity_check_serves_two_read_tables_pristine() -> None:
+def test_capacity_check_serves_two_csv_reads_pristine() -> None:
     client = _capacity_client()
     graph = client.get("/api/graph").json()
-    reads = [n for n in graph["nodes"] if n["type"] == "table.read_table"]
+    reads = [n for n in graph["nodes"] if n["type"] == "sources.read_csv"]
     assert len(reads) == 2  # forces + members arcs
     # served pristine: relative filenames, no absolute machine path
     assert {n["inputs"]["path"] for n in reads} == {"forces.csv", "members.csv"}
+    # each read names the column it pulls
+    assert {n["inputs"]["column"] for n in reads} == {"force", "capacity"}
 
 
-def test_capacity_check_runs_to_a_verdict() -> None:
+def test_capacity_check_serves_the_authored_node_ids() -> None:
+    """Node id = the ``@main`` variable name (ADR 0004 D3) — five of them."""
+    client = _capacity_client()
+    graph = client.get("/api/graph").json()
+    assert [n["id"] for n in graph["nodes"]] == ["forces", "members", "F_max", "C_min", "card"]
+    assert graph["output"] == {"node": "card", "socket": "result"}
+
+
+def test_capacity_check_runs_to_a_rendered_verdict() -> None:
     client = _capacity_client()
     graph = client.get("/api/graph").json()
     result = client.post("/api/run", json={"graph": graph}).json()
@@ -43,35 +53,51 @@ def test_capacity_check_runs_to_a_verdict() -> None:
     out = graph["output"]
     html = result["outputs"][out["node"]][out["socket"]]
     assert isinstance(html, str) and "<math" in html
-    # The verdict is the calc's own `check` result — shown in the caption and,
-    # for the pass case, typeset as the second math row (ADR 0016).
-    assert "check = True" in html
-    assert "PASS" not in html and "FAIL" not in html  # no parallel re-derivation
+    # The computed values and both verdicts are on the card…
+    assert '<span class="val">0.571</span>' in html
+    assert "57.1 &lt; 100 = True" in html and "57.1 &lt; 50 = False" in html
+    assert 'badge--pass">PASS' in html and 'badge--fail">FAIL' in html
+    # …and the failing check did NOT redden the run: errors is empty above.
+    assert "Overall <b>FAIL</b>" in html
 
 
-def test_served_handcalc_results_are_clean_symbol_values() -> None:
-    """ADR 0013 D6/2.6 — results carries only the calc's symbols, no whitelist noise.
+def test_served_calc_card_publishes_its_own_height() -> None:
+    """The `height` socket travels with the run so the iframe can size itself.
 
-    The injected math whitelist (sqrt/…/pi) is filtered at the source, so the
-    served run's ``results`` has exactly {C_min, F_max, margin, check} and none
-    of the ``{"$repr","$type"}`` function-object serialisation the whitelist
-    produced. ``check`` is the assertion line's boolean (ADR 0016).
+    A `sandbox=""` frame runs no scripts and cannot measure itself, so the node
+    computes the height from its row/check counts and the renderer reads it off
+    the run result (falling back to the statically declared config height).
     """
     client = _capacity_client()
     graph = client.get("/api/graph").json()
     result = client.post("/api/run", json={"graph": graph}).json()
     assert result["errors"] == []
 
-    handcalc_id = next(n["id"] for n in graph["nodes"] if n["type"] == "sym.handcalc")
-    results = result["outputs"][handcalc_id]["results"]
-    assert set(results) == {"C_min", "F_max", "margin", "check"}
-    # No serialised function objects / repr noise anywhere in the run payload.
+    card_id = next(n["id"] for n in graph["nodes"] if n["type"] == "sheet.calc_card")
+    outputs = result["outputs"][card_id]
+    assert set(outputs) == {"result", "height"}
+    assert isinstance(outputs["height"], int) and outputs["height"] > 200
+    # Plain JSON — no {"$repr","$type"} degradation anywhere in the payload.
     assert "$repr" not in json.dumps(result["outputs"])
+
+
+def test_calc_card_derives_its_symbol_sockets_from_the_formulas() -> None:
+    """The formulas' free symbols are served as derived inputs (ADR 0007)."""
+    client = _capacity_client()
+    graph = client.get("/api/graph").json()
+    formulas = next(
+        n["inputs"]["formulas"] for n in graph["nodes"] if n["type"] == "sheet.calc_card"
+    )
+    r = client.post("/api/specs/sheet.calc_card/derive", json={"value": formulas})
+    assert r.status_code == 200
+    derived = r.json()["inputs"]
+    assert [i["name"] for i in derived] == ["F_max", "C_min"]
+    assert all(i["derived"] is True for i in derived)
 
 
 def test_capacity_check_node_source_is_reachable() -> None:
     client = _capacity_client()
-    # a node whose type is defined in the example module itself
-    r = client.get("/api/source/capacity_check.check_verdict")
+    # the pack node the graph's card is an instance of
+    r = client.get("/api/source/sheet.calc_card")
     assert r.status_code == 200
-    assert "def check_verdict" in r.json()["source"]
+    assert "def calc_card" in r.json()["source"]

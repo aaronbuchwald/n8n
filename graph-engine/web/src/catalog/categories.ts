@@ -56,7 +56,6 @@ export const CATEGORY_BY_ID: Readonly<Record<string, CategoryId>> = {
   'minimal.read_values': 'input-data',
   // Table — operating on tabular data you already have.
   'table.apply_recipe': 'table',
-  'capacity_check.select_extreme': 'table',
   // Math — compute.
   'calc.total': 'math',
   'calc.average': 'math',
@@ -75,8 +74,8 @@ export const CATEGORY_BY_ID: Readonly<Record<string, CategoryId>> = {
   'minimal.average': 'math',
   // Logic — select, branch, judge.
   'sym.pick': 'logic',
-  'capacity_check.check_verdict': 'logic',
   // Render / Output — produce a human-readable artifact.
+  'sheet.calc_card': 'render-output', // evaluates a calc, but its product is the card
   'table.table_summary': 'render-output',
   'calc.render_summary': 'render-output',
   'sym.describe': 'render-output',
@@ -95,6 +94,7 @@ export const CATEGORY_BY_MODULE: Readonly<Record<string, CategoryId>> = {
   table: 'table',
   calc: 'math',
   sym: 'math',
+  sheet: 'render-output',
 };
 
 /** The minimum shape `categoryFor` needs — a subset of `NodeSpec`. */

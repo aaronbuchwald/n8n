@@ -1,55 +1,49 @@
-"""Capacity check — two CSV arcs meeting at a "does it hold up?" verdict.
+"""Capacity check — two CSV arcs meeting at one completed calculation.
 
-* **Arc 1** — read ``forces.csv`` (``name,force``), select the row with the
-  **highest** force.
-* **Arc 2** — read ``members.csv`` (``name,capacity``), select the member with
-  the **lowest** capacity.
-* **Combine** — the highest force and lowest capacity feed a single
-  ``sym.handcalc`` node whose ``lines`` field holds **both** the equation and
-  the assertion that judges it (ADR 0016):
+Read → select → calc. Five nodes, no bespoke glue:
 
-  * ``margin = C_min - F_max`` — the equation. Its free symbols (``C_min``,
-    ``F_max``) are the node's input sockets, derived from the equation itself
-    (ADR 0007) and wired straight from the two extremes — no ``pack_values``
-    bundling node in between.
-  * ``check = margin > 0`` — the assertion, written as one more calc line.
-    handcalcs typesets the substituted comparison natively, so the card's math
-    block *is* the verdict: ``check = margin > 0 = 90.000 > 0 = True``. The
-    judgment lives once, in the user-visible calc text — nothing re-derives
-    ``force < capacity`` on the side.
+* **Arc 1** — read the ``force`` column of ``forces.csv`` into a list of
+  floats, reduce it to the **highest** value (``calc.maximum``).
+* **Arc 2** — read the ``capacity`` column of ``members.csv``, reduce it to the
+  **lowest** value (``calc.minimum``).
+* **Combine** — both extremes fan into a single ``sheet.calc_card`` node. That
+  node *is* the calculation: its ``formulas`` and ``checks`` literals declare
+  the whole sheet, :mod:`calcsheet` evaluates it **once**, and the card it
+  renders is a pure function of that one result — the HTML can never disagree
+  with the numbers it was built from.
 
-  :func:`check_verdict` then reads ``check`` back out of the calc's own
-  ``results`` dict and **raises on false** — a presentation/assertion node that
-  performs no comparison of its own. On a passing run it is a no-op; on a
-  failing run the raise reddens the node and stops the run. The caption is
-  ``calc_notes`` only: the ``check = margin > 0 = … = True`` line inside the
-  card is the visible pass/fail, so no separate PASS/FAIL text is joined on.
+``sources.read_csv`` returns bare floats, so the member/force *names* are
+deliberately dropped: what governs the check is the number, and re-introducing
+labels would mean a second place for them to drift from the CSV.
+
+The calc's mini-syntax, one entry per line — ``# text`` after an expression is
+the row's **reference** (formula) or **description** (check), and a trailing
+``[unit]`` on a formula is its display unit::
+
+    r = F_max / C_min  # demand / capacity
+    U = 100 * r [%]    # utilisation
+
+``F_max`` and ``C_min`` are read before any formula defines them, so they are
+the calc's **inputs** — and therefore the node's input sockets, derived from
+the formulas themselves (ADR 0007) exactly as ``sym.handcalc``'s are. They are
+wired from the two extremes; nothing restates them.
 
 Dataflow, edge by edge — node ids are the ``@main`` variable names (ADR 0004
 D3), ``x.y`` is output socket ``y`` of node ``x``::
 
-    forces.csv  ─> forces (read_table) ──table──> max_force (select_extreme, max "force")
-    members.csv ─> members (read_table) ─table──> min_capacity (select_extreme, min "capacity")
+    forces.csv  ─> forces (read_csv "force")     ──> F_max (calc.maximum) ──┐
+                                                                            ├─> card ─> html
+    members.csv ─> members (read_csv "capacity") ──> C_min (calc.minimum) ──┘
 
-    max_force.value ────┬─> steps (handcalc)  "margin = C_min - F_max ⏎ check = margin > 0"
-    min_capacity.value ─┘            │
-                         ┌───────────┼───────────────┐
-                   steps.latex   steps.results    steps.results
-                         │            │                │
-                      mathml        notes         verdict (check_verdict) — raises on False → red
-                         │            │
-                         └────────────┴──> report (render_math_card)   caption = notes
-
-Each extreme's ``value`` socket **fans out** to ``steps``; ``steps`` then fans
-out three ways — ``latex`` to the math block, ``results`` to the caption notes
-*and* to the verdict. ``verdict`` is a leaf side-assertion: its ``ok`` output
-feeds nothing, it exists only to redden the run when ``check`` is false. The
-math block and the notes re-join on the card, closing the diamond.
+**A failing check does not fail the run.** ``U < 50`` is false for this data
+(57.1 %), so that row renders FAIL and the card's overall verdict is FAIL —
+while the run stays green. The verdict is card content, not an execution error;
+there is no separate assertion node re-deriving it on the side.
 
 Simple, generic mock data only — no real engineering formulas, just a
-highest-vs-lowest comparison.
+highest-force-vs-lowest-capacity ratio.
 
-Run (the ``sym`` extra provides handcalcs/SymPy/latex2mathml)::
+Run (the ``sym`` extra provides calcsheet/SymPy/latex2mathml)::
 
     uv run --extra sym python examples/capacity_check/capacity_check.py
 """
@@ -58,67 +52,22 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from engine import UserError, main, node
-from sym import calc_notes, handcalc, latex_to_mathml, render_math_card
-from table import read_table
+from calc import maximum, minimum
+from engine import main
+from sheet import calc_card
+from sources import read_csv
 
 HERE = Path(__file__).resolve().parent
 FORCES_CSV = HERE / "forces.csv"
 MEMBERS_CSV = HERE / "members.csv"
 
 # What the graph needs to run — the ADR 0003 declarative descriptor. Versions
-# match the `sym` extra in pyproject.toml.
+# match the `sym` extra in pyproject.toml; calcsheet pulls sympy + latex2mathml.
 DEPENDENCIES = [
+    {"name": "calcsheet", "version": "0.1.*"},
     {"name": "sympy", "version": "1.14.*"},
-    {"name": "handcalcs", "version": "1.11.*"},
-    {"name": "forallpeople", "version": "2.7.*"},
     {"name": "latex2mathml", "version": "3.81.*"},
 ]
-
-
-# -- example-local nodes -----------------------------------------------------
-
-
-@node(outputs=["name", "value"])
-def select_extreme(table: dict, column: str, mode: str = "max") -> dict:
-    """Pick the row with the highest/lowest ``column``; return its name + value.
-
-    ``mode`` is ``"max"`` or ``"min"``. Assumes the table has a ``name``
-    column to label the selected row with.
-    """
-    if mode not in ("max", "min"):
-        raise UserError(f"mode must be 'max' or 'min', got {mode!r}")
-    columns, rows = table["columns"], table["rows"]
-    if "name" not in columns or column not in columns:
-        raise UserError(f"table must have 'name' and {column!r} columns, got {columns}")
-    if not rows:
-        raise UserError("table has no rows to select from")
-
-    name_idx, col_idx = columns.index("name"), columns.index(column)
-    picker = max if mode == "max" else min
-    best = picker(rows, key=lambda row: row[col_idx])
-    return {"name": best[name_idx], "value": best[col_idx]}
-
-
-@node(outputs=["ok"])
-def check_verdict(results: dict, check: str = "check") -> dict:
-    """Read the calc's own boolean result and fail the run if it is False.
-
-    Presentation/assertion over `handcalc`'s results — it performs NO
-    comparison of its own (the comparison lives in the calc line
-    `check = margin > 0`). A False result raises, so the run renders this
-    node red; a missing key raises too, so renaming the calc symbol without
-    updating this param fails loudly instead of yielding a stale verdict.
-    """
-    if check not in results:
-        raise UserError(
-            f"check_verdict: no {check!r} result to read; "
-            f"available results are {sorted(results)}"
-        )
-    if not results[check]:
-        raise UserError(f"Capacity check failed: {check!r} is False")
-    return {"ok": True}
-
 
 
 # -- the graph, as ordinary Python (ADR 0004 straight-line form) -------------
@@ -128,46 +77,37 @@ def check_verdict(results: dict, check: str = "check") -> dict:
 def capacity_check_report(
     forces_path: str = "forces.csv", members_path: str = "members.csv"
 ) -> str:
-    """Read both CSVs, pick the extremes, typeset the margin, and check it."""
-    # Two independent CSV arcs: each file becomes one {columns, rows} table.
-    forces = read_table(path=forces_path)
-    members = read_table(path=members_path)
+    """Read both CSVs, reduce each to its extreme, and render the calc card."""
+    # Two independent CSV arcs. `read_csv` names a column and yields a list of
+    # floats — interchangeable with `sources.mock_api`, which emits the same shape.
+    forces = read_csv(path=forces_path, column="force")
+    members = read_csv(path=members_path, column="capacity")
 
-    # Reduce each arc to its governing extreme (sockets: name, value): the
-    # highest applied force and the lowest available capacity.
-    max_force = select_extreme(forces, column="force", mode="max")
-    min_capacity = select_extreme(members, column="capacity", mode="min")
+    # Reduce each arc to the value that governs the check: the highest applied
+    # force and the lowest available capacity. Plain `calc` pack reductions —
+    # nothing example-local.
+    F_max = maximum(forces)
+    C_min = minimum(members)
 
-    # The arcs meet at ONE calc block. Each extreme's `value` fans in as a
-    # derived socket (ADR 0007). The `lines` field holds the equation AND the
-    # assertion that judges it — `check = margin > 0` is the single source of
-    # the verdict; handcalcs typesets it with the numbers substituted
-    # (check = margin > 0 = 90.000 > 0 = True), so the card itself shows pass/
-    # fail and nothing re-derives the comparison.
-    steps = handcalc(lines="margin = C_min - F_max\ncheck = margin > 0", C_min=min_capacity.value, F_max=max_force.value)
-    # steps.latex → native MathML, so the card renders with zero JS (no CDN).
-    mathml = latex_to_mathml(steps.latex)
-
-    # Side-assertion: read `check` back out of the calc's own results and raise
-    # if it is False — reddening this node (and stopping the run). A no-op on
-    # pass; it computes nothing, so the judgment stays single-sourced.
-    verdict = check_verdict(results=steps.results)   # raises on false → red; no-op on pass
-
-    # Caption concern: the value-notes come FROM the calc's own results
-    # (steps.results — handcalc's second fan-out, ADR 0013), so the symbol
-    # names are declared exactly once — in the equation — and the
-    # handcalc → calc_notes caption dependency is an explicit wire on the canvas.
+    # The arcs meet at ONE node that holds the entire calculation as data.
+    # `F_max`/`C_min` are free symbols of the formulas, so they arrive as
+    # derived input sockets (ADR 0007) and are wired straight from the extremes
+    # — the symbols are declared exactly once, in the formulas literal.
     #
     # Straight-line form (ADR 0004 D7): each call is its own assignment — no
     # nested calls in arguments — so the composite round-trips through the
     # graph⟷source bijection and can be served + edited in the UI.
-    notes = calc_notes(steps.results)
-    # One card closes the diamond — typeset math (equation + check row) on top,
-    # the results notes as the caption underneath (no PASS/FAIL fragment: the
-    # check row already is the verdict) — and its `result` socket is the graph
-    # output (the `return` below).
-    report = render_math_card(title="Capacity check", mathml=mathml, caption=notes)
-    return report
+    card = calc_card(
+        title="Capacity check",
+        as_of="2026-07-24",
+        formulas="r = F_max / C_min  # demand / capacity\nU = 100 * r [%]  # utilisation",
+        checks="U < 100  # capacity not exceeded\nU < 50  # utilisation target",
+        F_max=F_max.result,
+        C_min=C_min.result,
+    )
+    # The card's `result` socket (the self-contained HTML document) is the graph
+    # output; its sibling `height` socket tells the UI how tall to draw it.
+    return card.result
 
 
 def build_graph(forces_csv: Path | str = FORCES_CSV, members_csv: Path | str = MEMBERS_CSV):
