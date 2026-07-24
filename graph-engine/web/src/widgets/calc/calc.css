@@ -1,0 +1,123 @@
+/* Calc widget (ADR 0007 D8): equation textarea, per-line typeset preview,
+   symbol chips (added / kept / removed), and inline errors. Built on the app's
+   ge-* design tokens (styles.css :root), same discipline as math.css. */
+
+.ge-widget-calc {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-width: 220px;
+}
+
+.ge-calc-input {
+  font-family: var(--ge-mono, monospace);
+  font-size: 0.9em;
+  padding: 0.4rem 0.6rem;
+  resize: vertical;
+  line-height: 1.4;
+}
+
+.ge-calc-preview {
+  font-size: 1rem;
+  padding: 0.3rem 0.6rem;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ge-calc-preview__line--raw {
+  font-family: var(--ge-mono, monospace);
+  font-size: 0.85em;
+  color: var(--ge-muted, #8a93a6);
+  overflow-wrap: anywhere;
+}
+
+.ge-calc-error {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--ge-danger, #ef6f66);
+  border: 1px dashed var(--ge-danger, #ef6f66);
+  border-radius: 6px;
+  padding: 4px 8px;
+  overflow-wrap: anywhere;
+}
+
+.ge-calc-sockets {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.ge-calc-sockets__label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ge-muted, #8a93a6);
+  margin-right: 2px;
+}
+
+.ge-calc-sockets__none {
+  font-size: 11px;
+  font-style: italic;
+  color: var(--ge-muted, #8a93a6);
+}
+
+.ge-calc-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--ge-mono, monospace);
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--ge-node-border-strong, #3a4356);
+  color: var(--ge-text, #e8ecf3);
+  background: var(--ge-node-bg, #161b25);
+}
+
+/* A symbol the draft adds: highlighted (it will become a new socket). */
+.ge-calc-chip--added {
+  border-color: var(--ge-accent, #6d9eff);
+  color: var(--ge-accent, #6d9eff);
+}
+
+/* A symbol the draft removes: struck through; wired ones warn "will unwire". */
+.ge-calc-chip--removed {
+  border-style: dashed;
+  color: var(--ge-muted, #8a93a6);
+}
+
+.ge-calc-chip--removed .ge-calc-chip__name {
+  text-decoration: line-through;
+}
+
+.ge-calc-chip__mark {
+  font-weight: 700;
+}
+
+.ge-calc-chip__wired,
+.ge-calc-chip__note {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ge-value, #e3b262);
+}
+
+.ge-calc-chip__value {
+  width: 52px;
+  font-family: var(--ge-mono, monospace);
+  font-size: 10px;
+  padding: 1px 4px;
+  border: 1px solid var(--ge-node-border-strong, #3a4356);
+  border-radius: 4px;
+  background: var(--ge-bg, #0b0e14);
+  color: var(--ge-text, #e8ecf3);
+}
+
+.ge-calc-hint {
+  font-size: 10px;
+  color: var(--ge-muted, #8a93a6);
+}

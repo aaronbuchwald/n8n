@@ -1,0 +1,24 @@
+# Marks web/ as its OWN isolated pnpm workspace root so pnpm does not walk up
+# into the surrounding n8n monorepo. This app is intentionally NOT a member of
+# the n8n workspace — it is fully self-contained with its own package.json/lockfile.
+packages:
+  - '.'
+
+# The surrounding n8n monorepo sets `minimumReleaseAge: 4320` (a 3-day
+# supply-chain quarantine on its real dependency tree). pnpm 11 inherits that
+# from the parent workspace even though this app is a separate root, which
+# rejects freshly-published vite/browserslist transitives here. This is an
+# isolated demo with a committed lockfile, not the shipped product, so opt it
+# out explicitly — the parent policy still governs the actual n8n packages.
+minimumReleaseAge: 0
+
+# esbuild ships a prebuilt platform binary via a postinstall script; allow it.
+# pnpm renamed this setting between majors: pnpm 11 reads `allowBuilds` (a map)
+# and dropped `onlyBuiltDependencies`; pnpm 10 reads `onlyBuiltDependencies` (a
+# list). Both keys are declared so the build works on either major without a
+# `pnpm approve-builds` prompt. pnpm 11 also defaults `strictDepBuilds: true`,
+# which turns an un-allowed build script into a hard error, so this is required.
+allowBuilds:
+  esbuild: true
+onlyBuiltDependencies:
+  - esbuild

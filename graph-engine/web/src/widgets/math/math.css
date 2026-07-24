@@ -1,0 +1,36 @@
+/* Styles for the math widget's live preview / fallback (stream B). Built on
+   the app's ge-* design tokens (styles.css :root) so the "can't typeset" cue
+   matches the dark, stylesheet-driven UI instead of hardcoding light-theme
+   colors inline (review #17). `.ge-widget-math-preview` (styles.css) stays
+   the base class for back-compat; this file adds the sizing MathEditor used
+   to set inline plus the fallback treatment. */
+
+.ge-widget-math-preview {
+  font-size: 1rem;
+  padding: 0.4rem 0.6rem;
+  min-height: 1.5em;
+}
+
+.mw-fallback {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border: 1px dashed var(--ge-value, #e3b262);
+  border-radius: 6px;
+  background: var(--ge-node-bg, #161b25);
+}
+
+.mw-fallback__cue {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ge-value, #e3b262);
+}
+
+.mw-fallback__code {
+  font-family: var(--ge-mono, monospace);
+  font-size: 0.9em;
+  color: var(--ge-text, #e8ecf3);
+  overflow-wrap: anywhere;
+}

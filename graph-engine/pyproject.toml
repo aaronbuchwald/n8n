@@ -1,0 +1,65 @@
+[project]
+name = "graph-engine"
+version = "0.1.0"
+description = "Headless, UI-agnostic graph engine (Phase 0): node_spec, Graph, run, to_python"
+readme = "README.md"
+requires-python = ">=3.10"
+# The engine and the example are pure standard library — no runtime deps.
+dependencies = []
+
+[project.optional-dependencies]
+# `uv sync --extra server` — the FastAPI HTTP service.
+server = [
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+]
+# `uv sync --extra sym` — the symbolic-math node pack (nodepacks/sym).
+# These are OPTIONAL: `import sym` and spec listing work without them; the
+# node bodies lazy-import them at call time.
+sym = [
+    "sympy>=1.13,<2",
+    "handcalcs>=1.9,<2",
+    "forallpeople>=2.6,<3",
+    "latex2mathml>=3.77,<4",
+]
+# `uv run --extra demo python -m server --demo` — everything the bundled showcase
+# demo needs to actually RUN (server + the sym node deps). The default --demo
+# graph contains sym.* nodes, so serving it without these makes the app start
+# (specs list via lazy imports) but fail at run time with ModuleNotFoundError.
+# This one extra makes the demo work out of the box.
+demo = [
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+    "sympy>=1.13,<2",
+    "handcalcs>=1.9,<2",
+    "forallpeople>=2.6,<3",
+    "latex2mathml>=3.77,<4",
+]
+# `uv sync --extra dev` — run the full test suite (includes server + sym deps so
+# the e2e demo test can execute the showcase end to end).
+dev = [
+    "pytest>=8.0",
+    "httpx>=0.27",
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+    "sympy>=1.13,<2",
+    "handcalcs>=1.9,<2",
+    "forallpeople>=2.6,<3",
+    "latex2mathml>=3.77,<4",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+# Real, installable packages, so `import engine` / `import server` /
+# `import calc` / `import sources` work anywhere (examples, node packs, tests)
+# without any sys.path manipulation.
+packages = ["engine", "server", "nodepacks/calc", "nodepacks/sources", "nodepacks/sym", "nodepacks/table"]
+
+[tool.pytest.ini_options]
+# `engine` and the node packs are installed into the venv; only the example
+# modules need a path so tests can import them directly.
+pythonpath = ["examples/minimal", "examples/readings", "examples/bijection", "examples/symbolic", "examples/table", "examples/showcase", "examples/capacity_check"]
+testpaths = ["tests"]
