@@ -145,6 +145,33 @@ def test_the_spec_declares_the_dynamic_seam_and_the_renderer():
     assert [o["name"] for o in spec["outputs"]] == ["result"]
 
 
+def test_the_multi_line_literals_declare_the_calc_widget_with_the_sheet_dialect():
+    """ADR 0018 D2: `formulas`/`checks` opt into the line-oriented calc editor.
+
+    Both are inherently multi-line (one entry per line), so neither may fall
+    through to the type-derived single-line text widget. The placeholder carries
+    the mini-syntax skeleton — the syntax is taught where it is used (D4).
+    """
+    widgets = {i["name"]: i["widget"] for i in sheet.calc_card.spec["inputs"]}
+    assert widgets["formulas"] == {
+        "kind": "calc",
+        "config": {
+            "language": "calcsheet",
+            "multiline": True,
+            "placeholder": "symbol = expression [unit]  # reference",
+        },
+    }
+    assert widgets["checks"] == {
+        "kind": "calc",
+        "config": {
+            "language": "calcsheet",
+            "multiline": True,
+            "placeholder": "expression  # description",
+        },
+    }
+    # The other string param keeps the type-derived single-line text widget.
+    assert widgets["title"] == {"kind": "text"}
+
 
 # -- the node itself ----------------------------------------------------------
 

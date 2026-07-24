@@ -105,13 +105,18 @@ test('a long value block can be expanded to show more', async ({ page }) => {
   expect(expanded!.height).toBeGreaterThan(collapsed!.height);
 });
 
-test('an input value block copies its full value too', async ({ page }) => {
+test('a read-only input value block copies its full value too', async ({ page }) => {
   await gotoHandcalcDemo(page);
   await runGraph(page);
   await selectSteps(page);
 
-  // `lines` holds the calc equation — its value block shows and copies it whole.
-  const row = inputRow(page, 'lines');
+  // Re-targeted per ADR 0018 D1: an EDITABLE row is now just its editor (the
+  // `lines` calc textarea), so the value block it used to duplicate is gone.
+  // The behavior this test proves — full value + verbatim copy — lives
+  // unchanged on read-only rows, e.g. the WIRED `C_min` socket, whose value
+  // exists nowhere else in the row.
+  const row = inputRow(page, 'C_min');
+  await expect(row.locator('.ge-inspector__tag--wired')).toBeVisible();
   const value = row.getByTestId('inspector-value');
   await expect(value).toBeVisible();
   const full = (await value.textContent()) ?? '';
@@ -120,6 +125,11 @@ test('an input value block copies its full value too', async ({ page }) => {
   await value.hover();
   await row.getByTestId('inspector-value-copy').click();
   expect(await readClipboard(page)).toBe(full);
+
+  // …and the editable row it moved off really has no second, uneditable copy.
+  const linesRow = inputRow(page, 'lines');
+  await expect(linesRow.getByTestId('widget-editor-calc-input')).toBeVisible();
+  await expect(linesRow.getByTestId('inspector-value')).toHaveCount(0);
 });
 
 test('the call-site source block shows and copies the full statement', async ({ page }) => {

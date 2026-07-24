@@ -1240,6 +1240,11 @@ export const PANELS: Panel[] = [
       'calc-derive-error',
       'calc-commit-error',
       'calc-toast',
+      'calc-preview',
+      'calc-preview-row',
+      'calc-preview-unit',
+      'calc-preview-ref',
+      'calc-format-hint',
     ],
     actions: [
       {
@@ -1351,6 +1356,61 @@ export const PANELS: Panel[] = [
           },
         ],
         checks: [{ kind: 'custom', note: 'calc-toast shows the unwire message; the pruned edge is absent server-side.' }],
+      },
+      {
+        id: 'calcsheet-dialect-anatomy',
+        description:
+          "The calcsheet dialect (ADR 0018) renders each formulas entry as its anatomy: typeset expression, unit chip, reference gutter — `#`/`[unit]` are structure, not raw text.",
+        trigger:
+          'On ?graph=capacity_check click the card node-title; read the formulas preview rows.',
+        expect:
+          'calc-preview-row carries data-fallback="false"; calc-preview-unit reads "%" and calc-preview-ref reads "utilisation" on line 2.',
+        url: '/?graph=capacity_check',
+        steps: [
+          { kind: 'click', target: nodeHeader('card') },
+          { kind: 'waitVisible', target: { testid: 'calc-preview', nth: 0 }, timeoutMs: 15000 },
+        ],
+        checks: [
+          {
+            kind: 'attr',
+            target: { selector: '[data-testid="calc-preview-row"][data-line="2"]', nth: 0 },
+            name: 'data-fallback',
+            value: 'false',
+          },
+          {
+            kind: 'containsText',
+            target: {
+              selector: '[data-testid="calc-preview-row"][data-line="2"] [data-testid="calc-preview-unit"]',
+              nth: 0,
+            },
+            text: '%',
+          },
+          {
+            kind: 'containsText',
+            target: {
+              selector: '[data-testid="calc-preview-row"][data-line="1"] [data-testid="calc-preview-ref"]',
+              nth: 0,
+            },
+            text: 'demand / capacity',
+          },
+          { kind: 'externalRequestsZero' },
+        ],
+      },
+      {
+        id: 'calcsheet-format-hint',
+        description: 'A persistent hint line teaches the mini-syntax and the apply keys (ADR 0018 D4).',
+        trigger: 'On ?graph=capacity_check select the card node; read [data-testid="calc-format-hint"].',
+        expect: 'calc-format-hint contains "one entry per line" and "# text = reference".',
+        url: '/?graph=capacity_check',
+        steps: [
+          { kind: 'click', target: nodeHeader('card') },
+          { kind: 'waitVisible', target: { testid: 'calc-format-hint', nth: 0 }, timeoutMs: 15000 },
+        ],
+        checks: [
+          { kind: 'containsText', target: { testid: 'calc-format-hint', nth: 0 }, text: 'one entry per line' },
+          { kind: 'containsText', target: { testid: 'calc-format-hint', nth: 0 }, text: '# text = reference' },
+          { kind: 'externalRequestsZero' },
+        ],
       },
     ],
   },

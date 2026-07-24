@@ -108,7 +108,14 @@ test('clicking a node reveals its inputs and outputs, live after a run', async (
   const inputs = inspector.getByTestId('inspector-inputs');
   await expect(inputs).toContainText('table');
   await expect(inputs).toContainText('sales.result'); // wired source
-  await expect(inputs).toContainText('Sales by region'); // title literal
+  // The `title` literal shows in its EDITOR, not in a second read-only block
+  // beside it (ADR 0018 D1) — the value is still fully visible, and editable.
+  await expect(
+    inputs
+      .locator('[data-testid="inspector-input"]')
+      .filter({ has: page.locator('.ge-inspector__socket', { hasText: /^title$/ }) })
+      .getByTestId('widget-editor-text'),
+  ).toHaveValue('Sales by region');
   await expect(inspector.getByTestId('inspector-outputs')).toContainText('result');
 
   // Run the graph; the open inspector picks up the resolved values.
@@ -125,7 +132,13 @@ test('clicking a node reveals its inputs and outputs, live after a run', async (
   // the header: a click on a widget chip is editing, not inspecting (#8).
   await page.locator('.react-flow__node[data-id="raw"] .ge-node__header').click();
   await expect(page.getByTestId('inspector-title')).toHaveText('raw · read_table');
-  await expect(page.getByTestId('inspector-inputs')).toContainText('showcase.csv');
+  await expect(
+    page
+      .getByTestId('inspector-inputs')
+      .locator('[data-testid="inspector-input"]')
+      .filter({ has: page.locator('.ge-inspector__socket', { hasText: /^path$/ }) })
+      .getByTestId('widget-editor-text'),
+  ).toHaveValue('showcase.csv');
 
   // Clicking the empty pane closes the inspector.
   await page.locator('.react-flow__pane').click({ position: { x: 40, y: 40 } });

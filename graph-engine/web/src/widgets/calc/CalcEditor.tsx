@@ -186,6 +186,13 @@ export function CalcEditor({ value, config, input, onCommit, nodeId }: WidgetEdi
   const placeholder =
     typeof config.placeholder === 'string' ? config.placeholder : 'name = expression';
   const deriving = specId !== null && !draftFresh;
+  // The value language of this literal (ADR 0018 D2). It selects the preview
+  // dialect and the format hint; an undeclared language is `python-calc`.
+  const language = typeof config.language === 'string' ? config.language : undefined;
+  const formatHint =
+    language === 'calcsheet'
+      ? 'one entry per line · # text = reference · trailing [unit] = display unit · ⌘/Ctrl+Enter or click away to apply'
+      : '⌘/Ctrl+Enter or click away to apply — sockets update on apply';
 
   return (
     <div
@@ -217,7 +224,7 @@ export function CalcEditor({ value, config, input, onCommit, nodeId }: WidgetEdi
         onChange={(event) => setDraft(event.target.value)}
       />
 
-      <CalcPreview text={draft} />
+      <CalcPreview text={draft} language={language} />
 
 
       {deriveErrors.length > 0 && (
@@ -282,7 +289,9 @@ export function CalcEditor({ value, config, input, onCommit, nodeId }: WidgetEdi
         </div>
       )}
 
-      <div className="ge-calc-hint">⌘/Ctrl+Enter or click away to apply — sockets update on apply</div>
+      <div className="ge-calc-hint" data-testid="calc-format-hint">
+        {formatHint}
+      </div>
     </div>
   );
 }

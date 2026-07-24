@@ -30,6 +30,7 @@ export default defineConfig({
         /server-mount\.spec\.ts/,
         /canvas-editing\.spec\.ts/,
         /calc-widget\.spec\.ts/,
+        /formula-editing\.spec\.ts/,
         // Real showcase-workspace mutators — serialized into the chain below so
         // they never race the parallel pack (or each other) on showcase.py.
         /new-node-authoring\.spec\.ts/,
@@ -57,13 +58,24 @@ export default defineConfig({
       dependencies: ['editing'],
     },
     {
+      // Formula editing (ADR 0018) commits `sheet.calc_card` literals against
+      // capacity_check, REALLY rewriting its module and restoring it afterwards
+      // — same exclusive-workspace rule as `calc`, on a different example, so
+      // it gets its own link in the chain. Run alone with:
+      // --project=formula --no-deps
+      name: 'formula',
+      use: { ...devices['Desktop Chrome'] },
+      testMatch: /formula-editing\.spec\.ts/,
+      dependencies: ['calc'],
+    },
+    {
       // New-node authoring REALLY writes new @node functions into showcase.py
       // and restores them; its create/collision tests must not race each other
       // or any other showcase mutator. Serial, sequenced after the pack.
       name: 'new-node',
       use: { ...devices['Desktop Chrome'] },
       testMatch: /new-node-authoring\.spec\.ts/,
-      dependencies: ['calc'],
+      dependencies: ['formula'],
     },
     {
       // The node catalog's destructive tests (click-insert, multi-add, drag)

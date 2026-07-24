@@ -28,7 +28,7 @@ import builtins
 import re
 from dataclasses import dataclass
 
-from engine import DerivedInputs, Renderer, UserError, node
+from engine import DerivedInputs, Renderer, UserError, Widget, node
 
 # -- the mini-syntax ---------------------------------------------------------
 #
@@ -278,7 +278,28 @@ DEFAULT_CARD_HEIGHT = 320
 # -- the node ----------------------------------------------------------------
 
 
+# `formulas`/`checks` are inherently MULTI-LINE literals — one entry per line is
+# the whole mini-syntax — so they declare the line-oriented calc editor instead
+# of falling through to the type-derived single-line text box (ADR 0018 D2).
+# `formulas` is also the deriving param, so the same declaration buys live
+# line-numbered `parse_formulas` errors and socket chips; `checks` takes the
+# plain multi-line branch. `language` selects the frontend's `calcsheet`
+# preview dialect (`# reference` and `[unit]` are structure, not math).
 @node(
+    widgets={
+        "formulas": Widget(
+            "calc",
+            language="calcsheet",
+            multiline=True,
+            placeholder="symbol = expression [unit]  # reference",
+        ),
+        "checks": Widget(
+            "calc",
+            language="calcsheet",
+            multiline=True,
+            placeholder="expression  # description",
+        ),
+    },
     dynamic=DerivedInputs(param="formulas", derive=formula_free_symbols),
     renderer=Renderer("html-card", socket="result", height=DEFAULT_CARD_HEIGHT),
 )
