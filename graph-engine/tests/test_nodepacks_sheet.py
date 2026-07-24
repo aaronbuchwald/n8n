@@ -1,10 +1,12 @@
-"""Tests for the ``sheet`` node pack (calcsheet as one node).
+"""Tests for the ``sheet`` node pack (calcsheet as one node, or as two).
 
-Covers the three things the pack owns on top of :mod:`calcsheet`: the
-formulas/checks **mini-syntax** (including every way it can be malformed), the
-**derived symbol sockets** (ADR 0007), and the **card height** the frontend
-sizes its sandboxed iframe from. The evaluation and rendering themselves belong
-to calcsheet and are tested there.
+Covers the things the pack owns on top of :mod:`calcsheet`: the formulas/checks
+**mini-syntax** (including every way it can be malformed), the **derived symbol
+sockets** (ADR 0007), the **card height** the frontend sizes its sandboxed
+iframe from, and the **split pair** ``sheet.calc`` + ``sheet.render_html``
+(ADR 0021) — whose whole contract is that it produces the same numbers and the
+same bytes as ``sheet.calc_card``. The evaluation and rendering themselves
+belong to calcsheet and are tested there.
 
 Run with:  uv run --extra dev --extra sym python -m pytest -q
 """
@@ -227,3 +229,104 @@ def test_a_check_that_is_a_quantity_not_a_verdict_raises():
 def test_a_non_numeric_socket_value_raises_naming_the_input():
     with pytest.raises(UserError, match="input 'x' must be a number"):
         sheet.calc_card(formulas="U = x", x="not a number")
+
+
+# -- the split pair (ADR 0021) ------------------------------------------------
+
+# The one calculation both forms are asked to perform.
+CALC = {
+    "title": "Capacity check",
+    "as_of": "2026-07-24",
+    "formulas": "r = F_max / C_min  # demand / capacity\nU = 100 * r [%]  # utilisation",
+    "checks": "U < 100  # capacity not exceeded\nU < 50  # utilisation target",
+    "F_max": 120.0,
+    "C_min": 210.0,
+}
+
+
+def test_calc_declares_the_same_authoring_surface_as_calc_card():
+    """Same signature, same widgets, same derived seam — only the product differs."""
+    card, calc = sheet.calc_card.spec, sheet.calc.spec
+    assert calc["id"] == "sheet.calc"
+    assert calc["dynamicInputs"] == {"param": "formulas"}
+    assert [i["name"] for i in calc["inputs"]] == [i["name"] for i in card["inputs"]]
+    assert [i["widget"] for i in calc["inputs"]] == [i["widget"] for i in card["inputs"]]
+    # The product is the Result itself, and rendering is somebody else's job:
+    # a node that emits data declares no renderer.
+    assert calc["outputs"] == [{"name": "result", "type": "Result"}]
+    assert "renderer" not in calc
+
+
+def test_render_html_consumes_a_result_and_declares_the_card_renderer():
+    """The renderer declaration belongs to the node that produces HTML."""
+    spec = sheet.render_html.spec
+    assert spec["id"] == "sheet.render_html"
+    assert spec["inputs"][0] == {
+        "name": "result",
+        "type": "Result",
+        "kind": "positionalOrKeyword",
+        "required": True,
+        "default": None,
+        # A Result is not a scalar, so it has no widget: it must be wired.
+        "widget": None,
+    }
+    assert spec["outputs"] == [{"name": "result", "type": "str"}]
+    assert spec["renderer"] == {
+        "kind": "html-card",
+        "config": {"socket": "result", "height": sheet.DEFAULT_CARD_HEIGHT},
+    }
+
+
+def test_the_html_options_are_flattened_to_scalar_node_params():
+    """ADR 0021 D3: each knob is a literal with a type-derived widget."""
+    options = {i["name"]: i for i in sheet.render_html.spec["inputs"] if i["name"] != "result"}
+    assert [i["default"] for i in options.values()] == ["", "", "auto"]
+    assert all(i["widget"] == {"kind": "text"} for i in options.values())
+    assert set(options) == {"header", "footer", "theme"}
+
+
+@needs_sym_extra
+def test_the_split_renders_byte_identically_to_the_single_node():
+    """The load-bearing guarantee: same inputs, same bytes — not merely alike."""
+    result = sheet.calc(**CALC)
+    assert type(result).__name__ == "Result"
+    assert sheet.render_html(result) == sheet.calc_card(**CALC)
+
+
+@needs_sym_extra
+def test_the_result_carries_the_numbers_the_card_shows():
+    """The socket value is the calculation, not a document about it."""
+    result = sheet.calc(**CALC)
+    assert result.values["r"] == pytest.approx(120.0 / 210.0)
+    assert result.values["U"] == pytest.approx(100 * 120.0 / 210.0)
+    # A false check is part of the result, not an execution error.
+    assert result.passed is False
+    assert [c.passed for c in result.checks] == [True, False]
+
+
+@needs_sym_extra
+def test_one_result_feeds_many_renderings_without_re_evaluating():
+    """The point of the split: two documents, one evaluation."""
+    result = sheet.calc(**CALC)
+    plain = sheet.render_html(result)
+    branded = sheet.render_html(result, header="Acme Corp", footer="rev A")
+    assert "Acme Corp" in branded and "rev A" in branded
+    assert "Acme Corp" not in plain
+    # Only presentation moved: both cards report the same numbers and verdict.
+    assert '<span class="val">0.571</span>' in plain and '<span class="val">0.571</span>' in branded
+    assert "Overall <b>FAIL</b>" in plain and "Overall <b>FAIL</b>" in branded
+
+
+@needs_sym_extra
+def test_a_theme_is_honoured_and_an_unknown_one_is_a_user_error():
+    dark = sheet.render_html(sheet.calc(**CALC), theme="dark")
+    assert "prefers-color-scheme" not in dark  # the dark ramp, unconditionally
+    with pytest.raises(UserError, match="unknown theme"):
+        sheet.render_html(sheet.calc(**CALC), theme="neon")
+
+
+@needs_sym_extra
+def test_rendering_something_that_is_not_a_result_names_the_input():
+    """A mis-wired canvas edge fails as the user's error, not an AttributeError."""
+    with pytest.raises(UserError, match="'result' input must be a calcsheet Result"):
+        sheet.render_html("<p>not a result</p>")

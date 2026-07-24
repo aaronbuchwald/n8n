@@ -10,7 +10,7 @@
 //
 //  * `python-calc` (the default, `sym.handcalc`) — a line containing `#` or a
 //    quote is NOT math and falls back to raw text, unchanged;
-//  * `calcsheet` (`sheet.calc_card`) — `#` and a trailing `[unit]` are
+//  * `calcsheet` (`sheet.calc_card` / `sheet.calc`) — `#` and a trailing `[unit]` are
 //    STRUCTURE, not math: a pre-pass splits each entry into
 //    (expression, unit, reference) with the same textual rules as the Python
 //    `_entries`/`_UNIT`, and only the expression is typeset. The unit and the

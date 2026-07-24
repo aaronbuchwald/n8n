@@ -1,15 +1,26 @@
-"""``sheet`` — the calcsheet node pack: a whole calculation as ONE node.
+"""``sheet`` — the calcsheet node pack: a whole calculation, welded or split.
 
-One node, :func:`calc_card`: it declares a calculation as data (inputs,
-formulas, checks), evaluates it **once** through :mod:`calcsheet`, and renders
-that single result as a self-contained "C4 four-slot" HTML card with a binary
-pass/fail verdict. Nothing downstream re-derives anything — rows, values and
-verdicts are all pure functions of the one ``Result``.
+A calculation is declared as data (inputs, formulas, checks), evaluated
+**once** through :mod:`calcsheet`, and rendered as a self-contained "C4
+four-slot" HTML card with a binary pass/fail verdict. Nothing downstream
+re-derives anything — rows, values and verdicts are all pure functions of the
+one ``Result``.
+
+Three nodes, two ways to say the same thing (ADR 0021):
+
+* :func:`calc_card` — the one-node convenience form: evaluate **and** render.
+* :func:`calc` + :func:`render_html` — the split pair. ``calc`` puts the
+  ``Result`` itself on a socket, so a graph can hang a second rendering off the
+  same wire (or swap the rendering) without evaluating twice.
+
+Both paths run the *same* two free functions (:func:`_evaluate`,
+:func:`_render`), so the split can never drift from the welded form: for equal
+inputs the HTML is byte-identical.
 
 **Why the pack is called ``sheet``, not ``calcsheet``.** ``nodepacks/`` is
 importable as top-level packages, so a pack directory named ``calcsheet``
 would shadow the real library. The pack is ``sheet``; node ids are
-``sheet.calc_card``.
+``sheet.calc_card`` / ``sheet.calc`` / ``sheet.render_html``.
 
 **Lazy import, by contract.** ``calcsheet`` (and its ``sympy`` /
 ``latex2mathml`` deps) is imported *inside* the node body, never at module top
@@ -27,8 +38,12 @@ import ast
 import builtins
 import re
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from engine import DerivedInputs, Renderer, UserError, Widget, node
+
+if TYPE_CHECKING:  # names for annotations only — never imported at run time
+    from calcsheet import Result
 
 # -- the mini-syntax ---------------------------------------------------------
 #
@@ -56,7 +71,8 @@ _MAX_TEXT_LEN = 10_000
 # widget commits `null`, which means "not set" — never a crash).
 DEFAULT_PRECISION = 3
 
-# Static parameters of `calc_card` a derived symbol may not shadow.
+# Static parameters of the evaluating nodes (`calc_card`, `calc`) a derived
+# symbol may not shadow. Both share one signature, so one set covers both.
 _STATIC_PARAMS = frozenset({"title", "as_of", "formulas", "checks", "precision"})
 
 # Math names sympy resolves on its own, so they must NOT become sockets — they
@@ -98,11 +114,9 @@ def _entries(text: str, *, what: str) -> list[tuple[int, str, str]]:
     precedes it.
     """
     if not isinstance(text, str):
-        raise UserError(f"calc_card {what!r} must be a string, got {type(text).__name__}")
+        raise UserError(f"{what} must be a string, got {type(text).__name__}")
     if len(text) > _MAX_TEXT_LEN:
-        raise UserError(
-            f"calc_card {what!r} is too long ({len(text)} chars; limit {_MAX_TEXT_LEN})"
-        )
+        raise UserError(f"{what} is too long ({len(text)} chars; limit {_MAX_TEXT_LEN})")
 
     out: list[tuple[int, str, str]] = []
     for lineno, raw in enumerate(text.splitlines(), start=1):
@@ -219,9 +233,10 @@ def _derived_socket(name: str) -> dict:
 def formula_free_symbols(formulas: str) -> list[dict]:
     """Free symbols of ``formulas``, in first-appearance order, as input entries.
 
-    The deriver for :func:`calc_card` (ADR 0007 D3) — the same contract
-    ``sym.handcalc`` uses, so ``F_max``/``C_min`` render as real wired sockets
-    on the canvas. A name *read* before any formula defines it is an input; a
+    The deriver for :func:`calc_card` **and** :func:`calc` (ADR 0007 D3) — the
+    same contract ``sym.handcalc`` uses, so ``F_max``/``C_min`` render as real
+    wired sockets on the canvas; the seam moves with the deriving param, so the
+    split pair keeps it. A name *read* before any formula defines it is an input; a
     name a previous formula assigned is a computed result, not a socket.
     Builtins are excluded, and a symbol colliding with a static parameter
     raises rather than shadowing it.
@@ -245,7 +260,7 @@ def formula_free_symbols(formulas: str) -> list[dict]:
             if name in _STATIC_PARAMS:
                 raise UserError(
                     f"rename the symbol {name!r}: it collides with the reserved "
-                    f"parameter {name!r} of calc_card"
+                    f"parameter {name!r} of the calc node"
                 )
             if name not in seen:
                 seen.add(name)
@@ -255,27 +270,86 @@ def formula_free_symbols(formulas: str) -> list[dict]:
     return [_derived_socket(name) for name in order]
 
 
-# -- card height: the surface scales with the content ------------------------
+# -- card height -------------------------------------------------------------
 #
 # A `sandbox=""` iframe runs no scripts, so the card cannot measure and report
-# its own height. The row/check counts are known here, though, and the card's
-# CSS is fixed — so the height is computed at render time and published on the
-# `height` socket. The frontend `html-card` renderer prefers that per-instance
-# value and falls back to the statically declared `config.height`.
-#
-# The constants below were measured in a browser against calcsheet's stylesheet
-# (render.py) and are deliberately rounded UP: a card that is a few px too tall
-# shows a sliver of whitespace, while one that is too short scrolls.
-
-
-# The statically declared fallback — what the renderer shows before the first
-# run, and for any consumer that ignores the per-instance socket.
+# its own height. The declared height is what the frontend `html-card` renderer
+# sizes its frame to; it was measured in a browser against calcsheet's
+# stylesheet (render.py) and is deliberately rounded UP — a card a few px too
+# tall shows a sliver of whitespace, one too short scrolls.
 DEFAULT_CARD_HEIGHT = 320
 
 
+# -- the shared pipeline -----------------------------------------------------
+#
+# ONE evaluation path and ONE rendering path, called by both the welded
+# `calc_card` and the split `calc` + `render_html` pair (ADR 0021 D2). Keeping
+# them here is what makes "the split renders exactly what the single node
+# renders" true by construction rather than by test.
 
 
-# -- the node ----------------------------------------------------------------
+def _evaluate(
+    title: str,
+    as_of: str,
+    formulas: str,
+    checks: str,
+    precision: int | None,
+    values: dict[str, float],
+) -> Result:
+    """Parse the mini-syntax, build the ``Calc`` and evaluate it once."""
+    from calcsheet import Calc, CalcError, Check, Formula, Input, evaluate_calc
+
+    parsed_formulas = parse_formulas(formulas)
+    parsed_checks = parse_checks(checks)
+
+    inputs = {}
+    for name, value in values.items():
+        try:
+            inputs[name] = Input(float(value))
+        except (TypeError, ValueError):
+            raise UserError(
+                f"input {name!r} must be a number, got {value!r} "
+                f"({type(value).__name__})"
+            ) from None
+
+    calc = Calc(
+        title=title,
+        as_of=as_of,
+        inputs=inputs,
+        formulas=[Formula(f.symbol, f.expr, ref=f.ref, unit=f.unit) for f in parsed_formulas],
+        checks=[Check(c.expr, c.description) for c in parsed_checks],
+        # An emptied number widget commits `null`, which is the UI's way of
+        # saying "not set" — that must mean the default, not a crash.
+        precision=DEFAULT_PRECISION if precision is None else precision,
+    )
+    try:
+        return evaluate_calc(calc)
+    except CalcError as error:
+        # calcsheet's messages already name the offending symbol/expression and
+        # list what IS available — surface them as the user's own error.
+        raise UserError(str(error)) from None
+
+
+def _render(result: Result, *, header: str, footer: str, theme: str) -> str:
+    """Render ``result`` as the self-contained HTML card."""
+    from calcsheet import CalcError, HtmlOptions, Result
+    from calcsheet import render_html as render_html_card
+
+    if not isinstance(result, Result):
+        raise UserError(
+            f"the 'result' input must be a calcsheet Result (wire it from a "
+            f"calc node), got {type(result).__name__}"
+        )
+    try:
+        options = HtmlOptions(theme=theme, header=header, footer=footer)
+    except CalcError as error:
+        # The only rejectable option is an unknown theme, and its message
+        # already lists the available ones.
+        raise UserError(str(error)) from None
+    return render_html_card(result, options)
+
+
+# -- the nodes ---------------------------------------------------------------
 
 
 # `formulas`/`checks` are inherently MULTI-LINE literals — one entry per line is
@@ -285,21 +359,27 @@ DEFAULT_CARD_HEIGHT = 320
 # line-numbered `parse_formulas` errors and socket chips; `checks` takes the
 # plain multi-line branch. `language` selects the frontend's `calcsheet`
 # preview dialect (`# reference` and `[unit]` are structure, not math).
+#
+# One declaration, shared by the two evaluating nodes: their signatures are the
+# same, so their widgets must be too.
+_CALC_WIDGETS = {
+    "formulas": Widget(
+        "calc",
+        language="calcsheet",
+        multiline=True,
+        placeholder="symbol = expression [unit]  # reference",
+    ),
+    "checks": Widget(
+        "calc",
+        language="calcsheet",
+        multiline=True,
+        placeholder="expression  # description",
+    ),
+}
+
+
 @node(
-    widgets={
-        "formulas": Widget(
-            "calc",
-            language="calcsheet",
-            multiline=True,
-            placeholder="symbol = expression [unit]  # reference",
-        ),
-        "checks": Widget(
-            "calc",
-            language="calcsheet",
-            multiline=True,
-            placeholder="expression  # description",
-        ),
-    },
+    widgets=_CALC_WIDGETS,
     dynamic=DerivedInputs(param="formulas", derive=formula_free_symbols),
     renderer=Renderer("html-card", socket="result", height=DEFAULT_CARD_HEIGHT),
 )
@@ -328,54 +408,78 @@ def calc_card(
     (unknown symbol, unparseable expression, a check that is not a verdict)
     raises.
 
-    Outputs: ``result`` (the HTML document) and ``height`` (the px height the
-    card needs, so the sandboxed iframe can size to its content).
+    The one-node convenience form: :func:`calc` + :func:`render_html` do the
+    same two steps with the ``Result`` on a wire between them. Its single
+    ``result`` output is the HTML document.
     """
-    from calcsheet import Calc, CalcError, Check, Formula, Input, evaluate_calc, render_html
+    result = _evaluate(title, as_of, formulas, checks, precision, values)
+    return _render(result, header="", footer="", theme="auto")
 
-    parsed_formulas = parse_formulas(formulas)
-    parsed_checks = parse_checks(checks)
 
-    inputs = {}
-    for name, value in values.items():
-        try:
-            inputs[name] = Input(float(value))
-        except (TypeError, ValueError):
-            raise UserError(
-                f"input {name!r} must be a number, got {value!r} "
-                f"({type(value).__name__})"
-            ) from None
+@node(
+    widgets=_CALC_WIDGETS,
+    dynamic=DerivedInputs(param="formulas", derive=formula_free_symbols),
+)
+def calc(
+    title: str = "Calculation",
+    as_of: str = "",
+    formulas: str = "",
+    checks: str = "",
+    precision: int | None = None,
+    **values: float,
+) -> Result:
+    """Evaluate a whole calculation and emit the ``Result`` — no rendering here.
 
-    calc = Calc(
-        title=title,
-        as_of=as_of,
-        inputs=inputs,
-        formulas=[Formula(f.symbol, f.expr, ref=f.ref, unit=f.unit) for f in parsed_formulas],
-        checks=[Check(c.expr, c.description) for c in parsed_checks],
-        # An emptied number widget commits `null`, which is the UI's way of
-        # saying "not set" — that must mean the default, not a crash.
-        precision=DEFAULT_PRECISION if precision is None else precision,
-    )
-    try:
-        result = evaluate_calc(calc)
-    except CalcError as error:
-        # calcsheet's messages already name the offending symbol/expression and
-        # list what IS available — surface them as the user's own error.
-        raise UserError(str(error)) from None
+    Same authoring surface as :func:`calc_card` (the mini-syntax of
+    :func:`parse_formulas` / :func:`parse_checks`, the derived symbol sockets of
+    ADR 0007, the never-from-the-clock ``as_of``); what differs is the product.
+    The ``result`` socket carries the completed calculation itself — rows,
+    values, verdicts and pre-minted markup — so any number of renderings can
+    hang off the one evaluation.
 
-    return render_html(result)
+    A failing check is part of that result (``passed`` is False), not an
+    execution error. Only a malformed calc raises.
+    """
+    return _evaluate(title, as_of, formulas, checks, precision, values)
+
+
+# The renderer declaration belongs to the node that actually produces HTML —
+# here, not on `calc`, whose `Result` socket is data (ADR 0010 D1 / 0021 D3).
+@node(renderer=Renderer("html-card", socket="result", height=DEFAULT_CARD_HEIGHT))
+def render_html(
+    result: Result,
+    header: str = "",
+    footer: str = "",
+    theme: str = "auto",
+) -> str:
+    """Render a :func:`calc` ``Result`` as a self-contained HTML card.
+
+    The options are this node's own literals (ADR 0021 D3): flat scalars, so
+    each gets a widget for free and the whole set round-trips the graph⟷source
+    bijection. ``header`` is a banner above the card, ``footer`` the fine-print
+    slot under the verdict, ``theme`` one of ``auto`` / ``light`` / ``dark``.
+    They are presentation only and live here alone — the calculation upstream
+    knows nothing about them.
+
+    Deterministic: the same ``Result`` and options render byte-identical HTML,
+    and with every option left at its default that HTML is exactly what
+    :func:`calc_card` emits.
+    """
+    return _render(result, header=header, footer=footer, theme=theme)
 
 
 # All node types this pack defines (handy for registries / snapshots).
-NODES = [calc_card]
+NODES = [calc_card, calc, render_html]
 
 __all__ = [
     "CheckLine",
     "DEFAULT_CARD_HEIGHT",
     "FormulaLine",
     "NODES",
+    "calc",
     "calc_card",
     "formula_free_symbols",
     "parse_checks",
     "parse_formulas",
+    "render_html",
 ]
