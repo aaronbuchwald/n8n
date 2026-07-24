@@ -142,6 +142,13 @@ def evaluate_calc(calc: Calc) -> Result:
     checks then run against that final scope. Any false check makes the whole
     calc fail — the severity is binary by design.
     """
+    # Type first, then range: comparing a non-number to an int raises a raw
+    # TypeError whose message says nothing about which field is wrong.
+    if isinstance(calc.precision, bool) or not isinstance(calc.precision, int):
+        raise CalcError(
+            f"precision must be a whole number, got {calc.precision!r}"
+            f" ({type(calc.precision).__name__})"
+        )
     if calc.precision < 1:
         raise CalcError(f"precision must be at least 1, got {calc.precision}")
 
