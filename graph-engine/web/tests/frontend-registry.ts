@@ -333,16 +333,17 @@ export const PANELS: Panel[] = [
     ],
   },
 
-  // ── 2b. Node catalog (ADR 0017 W1–W2) ──────────────────────────────────────
+  // ── 2b. Node catalog (ADR 0017 W1–W3) ──────────────────────────────────────
   // A PURE ADDITION alongside the palette for this stream; W4 replaces the
-  // palette panel above with this one. Covers D8 assertions 1, 2, 3, 4, 5, 6
+  // palette panel above with this one. Covers D8 assertions 1, 2, 3, 4, 5, 6, 7
   // (W1: 1/2/4 — surface, sections, search; W2: 3/5/6 — collapse persistence,
-  // the keyboard model, and Alt+Enter multi-add).
+  // the keyboard model, and Alt+Enter multi-add; W3: 7 — drag out of the
+  // catalog via the D6 ghost state).
   {
     id: 'node-catalog',
     name: 'Node catalog',
     description:
-      'The on-demand, capability-grouped "Add node" command palette (ADR 0017): a top-bar button (or Ctrl/Cmd+K) opens an anchored popover with an autofocused search and collapsible capability sections (Input/Data · Table · Math · Logic · Render/Output, + Other), plus a "Create new node…" footer. Full keyboard model: a virtual aria-activedescendant highlight roved with ↑/↓/Home/End across sections, ←/→ collapse/expand, Enter inserts + closes, Alt+Enter inserts + stays open (multi-add), two-stage Escape. Section collapse persists under ge:catalog:v1 and is cleared by Reset layout.',
+      'The on-demand, capability-grouped "Add node" command palette (ADR 0017): a top-bar button (or Ctrl/Cmd+K) opens an anchored popover with an autofocused search and collapsible capability sections (Input/Data · Table · Math · Logic · Render/Output, + Other), plus a "Create new node…" footer. Full keyboard model: a virtual aria-activedescendant highlight roved with ↑/↓/Home/End across sections, ←/→ collapse/expand, Enter inserts + closes, Alt+Enter inserts + stays open (multi-add), two-stage Escape. Section collapse persists under ge:catalog:v1 and is cleared by Reset layout. Rows are draggable: a dragstart ghosts the popover (data-dragging="true" → dimmed + pointer-events:none) and sets the same PALETTE_SPEC_MIME payload the old palette used, so a drop on the canvas creates the node at the drop point through GraphView\'s existing handler; a drop closes the catalog, a cancelled drag restores it.',
     testids: [
       'add-node-button',
       'node-catalog',
@@ -568,6 +569,28 @@ export const PANELS: Panel[] = [
           {
             kind: 'custom',
             note: 'node-catalog stays visible across both inserts; two distinct minted spec-nodes are on the canvas.',
+          },
+        ],
+      },
+      {
+        id: 'drag-out-of-catalog',
+        description:
+          'Dragging an entry row ghosts the popover (data-dragging="true" → dimmed + pointer-events:none) and drops onto the canvas via the reused PALETTE_SPEC_MIME contract; a drop closes the catalog and mints a node at the drop point, a cancelled drag restores it. DESTRUCTIVE — mints + persists a node. Same un-encodable HTML5-DnD flow as the canvas palette-drop, so review:true.',
+        trigger:
+          'Open the catalog, narrow to sym.latex_to_mathml, dispatch dragstart on the entry, then a drop of the same DataTransfer onto [data-testid="flow-canvas"].',
+        expect:
+          'On dragstart [data-testid="node-catalog"] gains data-dragging="true"; a cancelling dragend (dropEffect "none") clears it and keeps the catalog open; a canvas drop mints a node at the drop point and the dragend (dropEffect "copy") hides the catalog. Mutates showcase.py (restore in finally).',
+        review: true,
+        steps: [
+          {
+            kind: 'custom',
+            note: 'See node-catalog.spec.ts "dragging an entry ghosts the popover…": open → fill "latex_to_mathml" → dispatch dragstart on the entry (the component sets PALETTE_SPEC_MIME on the shared DataTransfer) → assert data-dragging → dragend (dropEffect none) restores → dragstart again → drop the DataTransfer on flow-canvas → await mint + PUT → set dropEffect "copy" → dragend closes; then restore the pristine graph.',
+          },
+        ],
+        checks: [
+          {
+            kind: 'custom',
+            note: 'node-catalog has data-dragging="true" during the drag and is hidden after the drop; a spec-node filtered by the minted node-id sits within 2px of the drop point.',
           },
         ],
       },

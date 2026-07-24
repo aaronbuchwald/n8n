@@ -12,8 +12,12 @@ import { test, expect, type Page } from '@playwright/test';
 // (keyboard insert: Ctrl+K / arrows / Enter → a node exists + inspector opens),
 // and 6 (Alt+Enter multi-add keeps the catalog open). The insert tests mutate
 // the real demo module and restore the pristine graph in a `finally`, exactly
-// like palette.spec.ts. Drag lands in W3. This is a PURE ADDITION: the left
-// Palette (palette.spec.ts) still passes alongside it.
+// like palette.spec.ts.
+//
+// Stream 17-W3 adds the D6 drag-out-of-catalog assertion 7 (the ghost state on
+// dragstart, cancel-restores vs drop-closes, and a canvas node minted at the
+// drop point through the reused PALETTE_SPEC_MIME contract). This is a PURE
+// ADDITION: the left Palette (palette.spec.ts) still passes alongside it.
 
 /** Collect requests leaving localhost; the offline posture requires none. */
 function trackExternalRequests(page: Page): string[] {
@@ -328,6 +332,85 @@ test('Alt+Enter inserts without closing so several nodes can be added in one vis
           .filter({ has: page.locator('[data-testid="node-id"]', { hasText: id }) }),
       ).toBeVisible();
     }
+  } finally {
+    const restore = await page.request.put('/api/graph', { data: { graph: original } });
+    expect(restore.ok()).toBe(true);
+  }
+
+  expect(external, 'EXTERNAL_REQUESTS must be 0').toHaveLength(0);
+});
+
+// ── D8 assertion 7 — drag out of the catalog: ghost state + drop-to-create ────
+// The entry's own dragstart writes the drag payload (via the component, not the
+// test), so the drop reading it back proves the payload matches GraphView's
+// existing PALETTE_SPEC_MIME contract byte-for-byte. A cancelled drag restores
+// the catalog; a real drop closes it and mints a node at the drop point.
+test('dragging an entry ghosts the popover, and a canvas drop creates a node at the drop point and closes it', async ({
+  page,
+}) => {
+  const external = trackExternalRequests(page);
+  await openApp(page);
+
+  const original = await (await page.request.get('/api/graph')).json();
+  let mintedId: string | null = null;
+  try {
+    await openCatalog(page);
+    const search = page.getByTestId('node-catalog-search');
+    await search.fill('latex_to_mathml');
+    const row = entry(page, 'sym.latex_to_mathml');
+    await expect(row).toBeVisible();
+
+    const catalog = page.getByTestId('node-catalog');
+    const canvas = page.getByTestId('flow-canvas');
+    const canvasBox = await canvas.boundingBox();
+    expect(canvasBox).not.toBeNull();
+    if (!canvasBox) return;
+    const dropX = Math.round(canvasBox.x + canvasBox.width * 0.44);
+    const dropY = Math.round(canvasBox.y + canvasBox.height * 0.82);
+
+    // A fresh DataTransfer flows through the real dragstart handler (which sets
+    // the MIME payload) into the canvas drop — the same object the browser
+    // would carry across a genuine drag.
+    const dataTransfer = await page.evaluateHandle(() => new DataTransfer());
+
+    // ── cancel branch: dragstart ghosts the popover; a dragend with no drop
+    //    (dropEffect "none") restores it, still open, still on the same query.
+    await row.dispatchEvent('dragstart', { dataTransfer });
+    await expect(catalog).toHaveAttribute('data-dragging', 'true');
+    await row.dispatchEvent('dragend', { dataTransfer });
+    await expect(catalog).not.toHaveAttribute('data-dragging', 'true');
+    await expect(catalog).toBeVisible();
+
+    // ── drop branch: dragstart ghosts again, the canvas drop mints the node at
+    //    the drop point, and the dragend (a real drop ⇒ dropEffect "copy")
+    //    closes the catalog.
+    await row.dispatchEvent('dragstart', { dataTransfer });
+    await expect(catalog).toHaveAttribute('data-dragging', 'true');
+
+    const mint = nextMint(page);
+    const put = page.waitForResponse(
+      (r) => r.url().endsWith('/api/graph') && r.request().method() === 'PUT' && r.status() === 200,
+    );
+    await canvas.dispatchEvent('drop', { dataTransfer, clientX: dropX, clientY: dropY });
+    mintedId = ((await (await mint).json()) as { id: string }).id;
+    await put;
+
+    await page.evaluate((dt) => ((dt as DataTransfer).dropEffect = 'copy'), dataTransfer);
+    await row.dispatchEvent('dragend', { dataTransfer });
+
+    // The drop closed the catalog (D6).
+    await expect(catalog).toBeHidden();
+
+    // A canvas node of the dropped type exists, born at the drop point.
+    const card = page
+      .locator('[data-testid="spec-node"]')
+      .filter({ has: page.locator('[data-testid="node-id"]', { hasText: mintedId }) });
+    await expect(card).toBeVisible();
+    const cardBox = await card.boundingBox();
+    expect(cardBox).not.toBeNull();
+    if (!cardBox) return;
+    expect(Math.abs(cardBox.x - dropX)).toBeLessThanOrEqual(2);
+    expect(Math.abs(cardBox.y - dropY)).toBeLessThanOrEqual(2);
   } finally {
     const restore = await page.request.put('/api/graph', { data: { graph: original } });
     expect(restore.ok()).toBe(true);
