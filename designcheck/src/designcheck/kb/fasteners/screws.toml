@@ -1,0 +1,14 @@
+# Screw products. A screw is a product, not geometry a project authors, so the
+# entry carries the geometry AND the steel it is made of — they arrive together
+# or the pairing is a guess.
+#
+# `f_uk` is the ultimate tensile strength of the fastener steel; `steel_source`
+# lets it cite a different document from the geometry when a DoP splits them.
+
+["csk-6.0x120"]
+source = "manufacturer DoP (demo fixture)"
+steel_source = "manufacturer DoP (demo fixture) — carbon steel"
+description = "Countersunk partially threaded wood screw, 6.0 x 120"
+"d[mm]" = 6.0
+"L[mm]" = 120.0
+"f_uk[MPa]" = 600.0

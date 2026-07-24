@@ -1,0 +1,149 @@
+# Eurocode 5 — a DELIBERATELY REDUCED subset, sufficient for one worked proof.
+#
+# ILLUSTRATIVE, NOT CERTIFIED ENGINEERING. One Johansen failure mode, beta = 1,
+# rope effect and spacing/edge-distance rules neglected. Each neglect is named
+# in the clause's `notes` and renders as fine print on the proof. The numbers
+# are coherent and dimensionally sound; the demo proves the *pipeline*, not a
+# building. Completing a code (all failure modes, national annexes) is content
+# work on this file, not design work.
+#
+# Identity is the edition: "2004-A2-2014" is a different code object from a
+# 2023 edition, and both may sit in this KB at once.
+
+name = "EN 1995-1-1:2004+A2:2014 (Eurocode 5)"
+edition = "2004-A2-2014"
+source = "EN 1995-1-1:2004+A2:2014"
+
+# Partial factors for material properties. EN 1995-1-1 Table 2.3.
+[gamma_M]
+solid_timber = 1.3
+glued_laminated_timber = 1.25
+connections = 1.3
+
+# Modification factor for duration of load and moisture content, solid timber.
+# EN 1995-1-1 Table 3.1. Key is "<service class>/<load duration>".
+[k_mod]
+"1/permanent" = 0.60
+"1/long" = 0.70
+"1/medium" = 0.80
+"1/short" = 0.90
+"1/instantaneous" = 1.10
+"2/permanent" = 0.60
+"2/long" = 0.70
+"2/medium" = 0.80
+"2/short" = 0.90
+"2/instantaneous" = 1.10
+"3/permanent" = 0.50
+"3/long" = 0.55
+"3/medium" = 0.65
+"3/short" = 0.70
+"3/instantaneous" = 0.90
+
+# ---------------------------------------------------------------------------
+# The symbol dictionary: what each leaf symbol means and where the resolver may
+# fetch it. `bind` is drawn from a closed vocabulary the resolver implements —
+# this file is reviewable data and never executes. `unit` is the dimension
+# tripwire at binding time and the display unit on the emitted GIVEN row.
+#
+# Declaration order here is the order the GIVEN rows appear in the proof, so a
+# reviewer reads material, then product, then code factors, then the demand.
+# ---------------------------------------------------------------------------
+
+[symbols.rho_k]
+bind = "material.rho_k"
+unit = "kg/m³"
+
+[symbols.d]
+bind = "fastener.d"
+unit = "mm"
+
+[symbols.f_uk]
+bind = "fastener.steel.f_uk"
+unit = "MPa"
+
+[symbols.k_mod]
+bind = "code.k_mod"
+citation = "EC5 Table 3.1"
+
+[symbols.gamma_M]
+# v1 reads `gamma_M` as the connections partial factor; a member self-check
+# would name a different symbol bound to `code.gamma_M.solid_timber`.
+bind = "code.gamma_M.connections"
+citation = "EC5 Table 2.3"
+
+[symbols.n]
+bind = "connection.n"
+
+[symbols.V_Ed]
+bind = "demand.value"
+unit = "kN"
+
+[symbols.eta_max]
+bind = "config.target_utilisation"
+
+# ---------------------------------------------------------------------------
+# Clauses. Declaration order is the reading order of the proof; the resolver
+# only reorders where `requires` forces it.
+# ---------------------------------------------------------------------------
+
+[[clauses]]
+id = "ec5-8.15"
+citation = "EC5 §8.3.1.1 Eq (8.15) via §8.7.1(3)"
+title = "Embedment strength, timber, non-predrilled"
+kind = "formula"
+defines = "f_hk"
+formula = "0.082 * rho_k * d**-0.3"
+unit = "MPa"
+requires = ["rho_k", "d"]
+applies = ["connection.kind == 'screw'", "fastener.d <= 6.0", "members.all_timber"]
+notes = "Screws with d ≤ 6 mm are checked by the rules for nails, per §8.7.1(3); holes not predrilled."
+
+[[clauses]]
+id = "ec5-8.14"
+citation = "EC5 §8.3.1.1 Eq (8.14)"
+title = "Characteristic yield moment of the fastener"
+kind = "formula"
+defines = "M_yRk"
+formula = "0.3 * f_uk * d**2.6"
+unit = "N·mm"
+requires = ["f_uk", "d"]
+applies = ["connection.kind == 'screw'", "fastener.d <= 6.0", "members.all_timber"]
+notes = "Round wire nail / smooth-shank form of Eq (8.14), applied to the screw per §8.7.1(3)."
+
+[[clauses]]
+id = "ec5-8.6f"
+citation = "EC5 §8.2.2 Eq (8.6f)"
+title = "Fastener yielding with embedment, single shear, mode (f)"
+kind = "formula"
+defines = "F_vRk"
+formula = "1.15 * sqrt(2 * M_yRk * f_hk * d)"
+unit = "N"
+requires = ["M_yRk", "f_hk", "d"]
+applies = [
+    "connection.kind == 'screw'",
+    "fastener.d <= 6.0",
+    "members.all_timber",
+    "connection.shear_planes == 1",
+]
+notes = "Mode (f) only — the remaining Johansen modes are not in this subset. β = 1 (equal embedment strengths); the rope effect F_ax,Rk/4 is neglected."
+
+[[clauses]]
+id = "ec5-2.17"
+citation = "EC5 §2.4.3 Eq (2.17)"
+title = "Design value from the characteristic value"
+kind = "formula"
+defines = "F_vRd"
+formula = "k_mod * F_vRk / gamma_M"
+unit = "N"
+requires = ["k_mod", "F_vRk", "gamma_M"]
+notes = "The one place characteristic values become design values, and it is a visible row."
+
+[[clauses]]
+id = "ec5-8.1.1"
+citation = "EC5 §8.1.1"
+title = "Connection design resistance not exceeded"
+kind = "check"
+check = "eta <= 1.0"
+utilisation = "eta"
+requires = ["eta"]
+notes = "Spacing, edge and end distance rules (§8.7.2) are outside this clause subset and are not checked here."

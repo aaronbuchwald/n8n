@@ -1,0 +1,17 @@
+# Solid softwood strength classes — characteristic values only.
+#
+# Every number here is a *characteristic* value: k_mod and gamma_M never appear
+# in a material entry, because the characteristic-to-design conversion happens
+# exactly once, as visible rows of the sheet.
+#
+# Numeric keys carry their unit in brackets so the loader can check the
+# dimension; text keys carry provenance.
+
+["C24"]
+source = "EN 338:2016 Table 1"
+grade = "C24"
+description = "Solid softwood, strength class C24"
+"rho_k[kg/m^3]" = 350.0
+"f_mk[MPa]" = 24.0
+"f_c0k[MPa]" = 21.0
+"E_mean[MPa]" = 11000.0

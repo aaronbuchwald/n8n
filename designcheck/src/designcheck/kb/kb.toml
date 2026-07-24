@@ -1,0 +1,8 @@
+# The shipped knowledge-base snapshot.
+#
+# `version` is the pin every loaded value carries and the report footer prints.
+# It is a snapshot of THIS directory, not the edition of anything inside it: a
+# building code entry carries its own edition alongside. Corrections are a new
+# snapshot version, never an in-place edit of an entry.
+version = "2024.1"
+name = "designcheck builtin knowledge base"
