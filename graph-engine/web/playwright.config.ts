@@ -6,8 +6,10 @@ import { existsSync } from 'node:fs';
 const PREINSTALLED_CHROMIUM = '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
 const executablePath = existsSync(PREINSTALLED_CHROMIUM) ? PREINSTALLED_CHROMIUM : undefined;
 
-const WEB_PORT = 4173;
-const API_PORT = 8000;
+// Overridable so two checkouts (or two agents) on one box don't fight over the
+// same two ports. Defaults are unchanged.
+const WEB_PORT = Number(process.env.GE_WEB_PORT ?? 4173);
+const API_PORT = Number(process.env.GE_API_PORT ?? 8000);
 
 export default defineConfig({
   testDir: './tests',
@@ -103,7 +105,10 @@ export default defineConfig({
       timeout: 120_000,
     },
     {
-      command: 'pnpm build && pnpm preview',
+      command: `pnpm build && pnpm exec vite preview --port ${WEB_PORT} --strictPort`,
+      // The bundle is served same-origin with /api via vite's preview proxy;
+      // point that proxy at whichever API port this run booted.
+      env: { GE_API_TARGET: `http://127.0.0.1:${API_PORT}` },
       url: `http://127.0.0.1:${WEB_PORT}`,
       reuseExistingServer: !process.env.CI,
       timeout: 120_000,

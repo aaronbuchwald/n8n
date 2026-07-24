@@ -66,6 +66,13 @@ export type Assertion =
   | { kind: 'containsText'; target: Target; text: string; timeoutMs?: number }
   | { kind: 'attr'; target: Target; name: string; value: string | null }
   | { kind: 'externalRequestsZero' }
+  /**
+   * The CONTENT-REACHABILITY invariant over the whole rendered page: no element
+   * may overflow an axis unless it or an ancestor is a scrollport on that axis.
+   * `toBeVisible()` cannot see this — it is true for clipped content. The rule,
+   * its exemption and the report live in `tests/reachability.ts`.
+   */
+  | { kind: 'contentReachable'; state: string }
   | { kind: 'custom'; note: string };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -80,6 +87,11 @@ export interface PanelAction {
   expect: string;
   /** Entry URL to boot before the steps run. Defaults to '/'. */
   url?: string;
+  /**
+   * Viewport to apply BEFORE booting. Layout bugs (clipping in particular) only
+   * appear once boxes get small, so a few actions pin a narrow window.
+   */
+  viewport?: { width: number; height: number };
   /** Machine steps the harness drives (the app is already booted + layout-ready). */
   steps: Interaction[];
   /** Machine assertions proving `expect`. */
@@ -1687,6 +1699,93 @@ export const PANELS: Panel[] = [
           { kind: 'waitVisible', target: { testid: 'run-results' }, timeoutMs: 20000 },
         ],
         checks: [{ kind: 'externalRequestsZero' }],
+      },
+    ],
+  },
+
+  // ── 18. Content reachability ───────────────────────────────────────────────
+  {
+    id: 'content-reachability',
+    name: 'Content reachability (nothing clipped without a scrollport)',
+    description:
+      'Every rendered element that overflows an axis must have itself or an ancestor scrolling on that axis, so the content can be brought into view. `toBeVisible()` is blind to this — it is true for content an `overflow:hidden` box has clipped away for good. Deliberate truncation is exempt ONLY when the full value stays recoverable (computed `text-overflow: ellipsis` + a non-empty `title` on x, `-webkit-line-clamp` + a non-empty `title` on y, or an explicit `data-truncates="ok"`). The rule, the exemption and the failure report live in `tests/reachability.ts`; the calc card — sandboxed into an opaque-origin iframe on the canvas, so unreachable to page.evaluate — is covered by rendering it directly with setContent in `tests/content-reachability.spec.ts`.',
+    testids: ['workbench', 'run-results', 'node-inspector', 'node-catalog'],
+    actions: [
+      {
+        id: 'reachable-boot-narrow',
+        description: 'A booted canvas clips nothing unreachably in a narrow window.',
+        trigger: 'Boot at 900×700 and walk every element for unscrollable overflow.',
+        expect: 'Zero elements overflow an axis with no scrolling ancestor on that axis.',
+        viewport: { width: 900, height: 700 },
+        steps: [],
+        checks: [
+          { kind: 'contentReachable', state: 'boot showcase @ 900×700' },
+          { kind: 'externalRequestsZero' },
+        ],
+      },
+      {
+        id: 'reachable-tall-card-narrow',
+        description:
+          'The output panel holding a self-sized card taller than itself stays scrollable (the shipped `.ge-results__render` clipping bug).',
+        trigger: 'Boot ?graph=capacity_check at 900×700, Run, then walk every element.',
+        expect: 'The results render column scrolls to the rest of the card instead of clipping it.',
+        url: '/?graph=capacity_check',
+        viewport: { width: 900, height: 700 },
+        steps: [
+          { kind: 'click', target: { testid: 'run-button' } },
+          { kind: 'waitVisible', target: { testid: 'run-results' }, timeoutMs: 20000 },
+        ],
+        checks: [
+          { kind: 'contentReachable', state: 'capacity_check after run @ 900×700' },
+          { kind: 'externalRequestsZero' },
+        ],
+      },
+      {
+        id: 'reachable-inspector-narrow',
+        description: 'The inspector on a node with long values clips nothing unreachably.',
+        trigger: 'Boot at 900×700, Run, select `expr`, then walk every element.',
+        expect: 'Long values are scrollable, wrapped, or ellipsised WITH a title.',
+        viewport: { width: 900, height: 700 },
+        steps: [
+          { kind: 'click', target: { testid: 'run-button' } },
+          { kind: 'waitVisible', target: { testid: 'run-results' }, timeoutMs: 20000 },
+          { kind: 'click', target: nodeHeader('expr') },
+          { kind: 'waitVisible', target: { testid: 'node-inspector' } },
+        ],
+        checks: [
+          { kind: 'contentReachable', state: 'inspector on expr, after run @ 900×700' },
+          { kind: 'externalRequestsZero' },
+        ],
+      },
+      {
+        id: 'reachable-catalog-narrow',
+        description: 'The open node-catalog popover clips nothing unreachably.',
+        trigger: 'Boot at 900×700, open the catalog, then walk every element.',
+        expect: 'The catalog body scrolls; nothing in it is cut off unreachably.',
+        viewport: { width: 900, height: 700 },
+        steps: [
+          { kind: 'click', target: { testid: 'add-node-button' } },
+          { kind: 'waitVisible', target: { testid: 'node-catalog' } },
+        ],
+        checks: [
+          { kind: 'contentReachable', state: 'node catalog open @ 900×700' },
+          { kind: 'externalRequestsZero' },
+        ],
+      },
+      {
+        id: 'reachable-after-run-wide',
+        description: 'The same walk in a wide window, where boxes are roomy.',
+        trigger: 'Boot at 1500×900, Run, then walk every element.',
+        expect: 'Zero elements overflow an axis with no scrolling ancestor on that axis.',
+        viewport: { width: 1500, height: 900 },
+        steps: [
+          { kind: 'click', target: { testid: 'run-button' } },
+          { kind: 'waitVisible', target: { testid: 'run-results' }, timeoutMs: 20000 },
+        ],
+        checks: [
+          { kind: 'contentReachable', state: 'showcase after run @ 1500×900' },
+          { kind: 'externalRequestsZero' },
+        ],
       },
     ],
   },

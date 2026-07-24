@@ -371,7 +371,8 @@ export default function App() {
     <div className="ge-app">
       <header className="ge-topbar">
         <h1 className="ge-topbar__title">graph-engine</h1>
-        <span className="ge-topbar__sub">
+        {/* Ellipsised at narrow widths — the title keeps the full value readable. */}
+        <span className="ge-topbar__sub" title={`live graph${version ? ` · contract v${version}` : ''}`}>
           live graph{version ? ` · contract v${version}` : ''}
         </span>
         <GraphPicker selectedId={graphId} onSelect={onPickGraph} />
@@ -420,7 +421,12 @@ export default function App() {
           </button>
         </div>
 
-        <span className="ge-topbar__out" data-testid="graph-output-label">
+        {/* Ellipsised at narrow widths — the title keeps the full value readable. */}
+        <span
+          className="ge-topbar__out"
+          data-testid="graph-output-label"
+          title={`output → ${graph?.output ? `${graph.output.node}.${graph.output.socket}` : 'none'}`}
+        >
           output → {graph?.output ? `${graph.output.node}.${graph.output.socket}` : 'none'}
         </span>
       </header>
