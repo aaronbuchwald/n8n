@@ -72,10 +72,12 @@ export const CATEGORY_BY_ID: Readonly<Record<string, CategoryId>> = {
   'sym.handcalc': 'math',
   'minimal.total': 'math',
   'minimal.average': 'math',
+  'sheet.calc': 'math', // the split pair's producer: its product is the numbers
   // Logic — select, branch, judge.
   'sym.pick': 'logic',
   // Render / Output — produce a human-readable artifact.
   'sheet.calc_card': 'render-output', // evaluates a calc, but its product is the card
+  'sheet.render_html': 'render-output',
   'table.table_summary': 'render-output',
   'calc.render_summary': 'render-output',
   'sym.describe': 'render-output',
