@@ -223,15 +223,16 @@ export const PANELS: Panel[] = [
   // ── 2. Node catalog (ADR 0017) ─────────────────────────────────────────────
   // The sole node-entry surface now that ADR 0017 W4 retired the old left
   // Palette (11-W5). Covers D8 assertions 1, 2, 3, 4, 5, 6, 7, 8
-  // (W1: 1/2/4 — surface, sections, search; W2: 3/5/6 — collapse persistence,
-  // the keyboard model, and Alt+Enter multi-add; W3: 7 — drag out of the
-  // catalog via the D6 ghost state; W4: 8 — the "Create new node…" handoff to
-  // the New-node dock tab, now the only trigger for authoring).
+  // (W1: 1/2/4 — surface, sections, search; W2: 3/5/6 — collapsed-by-default
+  // sections (ephemeral, search still reveals), the keyboard model, and
+  // Alt+Enter multi-add; W3: 7 — drag out of the catalog via the D6 ghost
+  // state; W4: 8 — the "Create new node…" handoff to the New-node dock tab, now
+  // the only trigger for authoring).
   {
     id: 'node-catalog',
     name: 'Node catalog',
     description:
-      'The on-demand, capability-grouped "Add node" command palette (ADR 0017): a top-bar button (or Ctrl/Cmd+K) opens an anchored popover with an autofocused search and collapsible capability sections (Input/Data · Table · Math · Logic · Render/Output, + Other), plus a "Create new node…" footer. Full keyboard model: a virtual aria-activedescendant highlight roved with ↑/↓/Home/End across sections, ←/→ collapse/expand, Enter inserts + closes, Alt+Enter inserts + stays open (multi-add), two-stage Escape. Section collapse persists under ge:catalog:v1 and is cleared by Reset layout. Rows are draggable: a dragstart ghosts the popover (data-dragging="true" → dimmed + pointer-events:none) and sets the same PALETTE_SPEC_MIME payload the old palette used, so a drop on the canvas creates the node at the drop point through GraphView\'s existing handler; a drop closes the catalog, a cancelled drag restores it.',
+      'The on-demand, capability-grouped "Add node" command palette (ADR 0017): a top-bar button (or Ctrl/Cmd+K) opens an anchored popover with an autofocused search and collapsible capability sections (Input/Data · Table · Math · Logic · Render/Output, + Other), plus a "Create new node…" footer. Full keyboard model: a virtual aria-activedescendant highlight roved with ↑/↓/Home/End across sections, ←/→ collapse/expand, Enter inserts + closes, Alt+Enter inserts + stays open (multi-add), two-stage Escape. Sections open COLLAPSED on every open (headers + counts only); clicking a header expands it and the expand state is ephemeral — reset on close, never persisted — so a fresh open is always collapsed. A non-empty search still auto-reveals matching entries with sections otherwise collapsed. Rows are draggable: a dragstart ghosts the popover (data-dragging="true" → dimmed + pointer-events:none) and sets the same PALETTE_SPEC_MIME payload the old palette used, so a drop on the canvas creates the node at the drop point through GraphView\'s existing handler; a drop closes the catalog, a cancelled drag restores it.',
     testids: [
       'add-node-button',
       'node-catalog',
@@ -262,11 +263,21 @@ export const PANELS: Panel[] = [
       {
         id: 'capability-sections',
         description:
-          'Nodes group into the five capability sections; the exact-id map beats the module default (table.read_table is Input/Data).',
-        trigger: 'Open the catalog; read the sections and the read_table entry.',
+          'Nodes group into the five capability sections; the exact-id map beats the module default (table.read_table is Input/Data). Sections open collapsed, so Input/Data is expanded to read its entries.',
+        trigger:
+          'Open the catalog; read the section headers, expand Input/Data, then read the read_table entry.',
         expect:
-          'Sections input-data, table, math, logic and render-output are each visible; the table.read_table entry carries data-category="input-data".',
-        steps: [{ kind: 'click', target: { testid: 'add-node-button' } }],
+          'Sections input-data, table, math, logic and render-output are each visible; once Input/Data is expanded the table.read_table entry carries data-category="input-data".',
+        steps: [
+          { kind: 'click', target: { testid: 'add-node-button' } },
+          {
+            kind: 'click',
+            target: {
+              selector:
+                '[data-testid="node-catalog-section"][data-category="input-data"] [data-testid="node-catalog-section-toggle"]',
+            },
+          },
+        ],
         checks: [
           { kind: 'visible', target: { selector: '[data-testid="node-catalog-section"][data-category="input-data"]' } },
           { kind: 'visible', target: { selector: '[data-testid="node-catalog-section"][data-category="table"]' } },
@@ -346,14 +357,21 @@ export const PANELS: Panel[] = [
       {
         id: 'keyboard-virtual-highlight',
         description:
-          'A single virtual highlight (aria-activedescendant) sits on the first row on open and moves with ↓, skipping headers and flowing across sections.',
+          'With a section expanded, a single virtual highlight (aria-activedescendant) sits on the first row and moves with ↓, skipping headers and flowing across sections. (Sections open collapsed, so one is expanded first to have rows to rove.)',
         trigger:
-          'Open the catalog; press ArrowDown on [data-testid="node-catalog-search"].',
+          'Open the catalog; expand Input/Data; press ArrowDown on [data-testid="node-catalog-search"].',
         expect:
           'Exactly one [data-testid="node-catalog-entry"][aria-selected="true"] exists (the roved row).',
         steps: [
           { kind: 'click', target: { testid: 'add-node-button' } },
           { kind: 'waitVisible', target: { testid: 'node-catalog' } },
+          {
+            kind: 'click',
+            target: {
+              selector:
+                '[data-testid="node-catalog-section"][data-category="input-data"] [data-testid="node-catalog-section-toggle"]',
+            },
+          },
           { kind: 'press', target: { testid: 'node-catalog-search' }, key: 'ArrowDown' },
         ],
         checks: [
@@ -366,13 +384,13 @@ export const PANELS: Panel[] = [
         ],
       },
       {
-        id: 'collapse-persists-across-reload',
+        id: 'sections-collapsed-by-default',
         description:
-          'A folded section stays folded across a reload — collapse is persisted under ge:catalog:v1, not component-local (D5).',
+          'Sections open COLLAPSED on every open; expanding one then closing and reopening the catalog shows it collapsed again — the expand state is ephemeral, never persisted (D5).',
         trigger:
-          'Open the catalog, click the Math [data-testid="node-catalog-section-toggle"], reload, reopen.',
+          'Open the catalog, expand Math via [data-testid="node-catalog-section-toggle"], press Escape, reopen.',
         expect:
-          'After reload the Math section toggle reads aria-expanded="false".',
+          'On the reopen the Math section toggle reads aria-expanded="false" and its entries are hidden.',
         steps: [
           { kind: 'click', target: { testid: 'add-node-button' } },
           { kind: 'waitVisible', target: { testid: 'node-catalog' } },
@@ -383,8 +401,7 @@ export const PANELS: Panel[] = [
                 '[data-testid="node-catalog-section"][data-category="math"] [data-testid="node-catalog-section-toggle"]',
             },
           },
-          { kind: 'reload' },
-          { kind: 'waitReady' },
+          { kind: 'pressKey', key: 'Escape' },
           { kind: 'click', target: { testid: 'add-node-button' } },
           { kind: 'waitVisible', target: { testid: 'node-catalog' } },
         ],
@@ -398,41 +415,24 @@ export const PANELS: Panel[] = [
             name: 'aria-expanded',
             value: 'false',
           },
+          { kind: 'hidden', target: { selector: '[data-testid="node-catalog-entry"][data-spec-id="sym.evaluate_numeric"]' } },
           { kind: 'externalRequestsZero' },
         ],
       },
       {
-        id: 'reset-layout-clears-collapse',
+        id: 'search-reveals-collapsed-section',
         description:
-          'Reset layout clears the persisted catalog collapse (ge:catalog:v1) alongside the workbench layout — one escape hatch for all persisted UI state (D5).',
+          'Search still auto-reveals matches even though sections are collapsed by default — a Math-only match surfaces without expanding anything (D5).',
         trigger:
-          'Open the catalog, fold Math, press Escape, click [data-testid="reset-layout"], reopen.',
-        expect: 'The Math section toggle reads aria-expanded="true" again.',
+          'Open the catalog, fill the search with "evaluate_numeric" without expanding any section.',
+        expect: 'The sym.evaluate_numeric entry is visible despite Math being collapsed by default.',
         steps: [
           { kind: 'click', target: { testid: 'add-node-button' } },
           { kind: 'waitVisible', target: { testid: 'node-catalog' } },
-          {
-            kind: 'click',
-            target: {
-              selector:
-                '[data-testid="node-catalog-section"][data-category="math"] [data-testid="node-catalog-section-toggle"]',
-            },
-          },
-          { kind: 'pressKey', key: 'Escape' },
-          { kind: 'click', target: { testid: 'reset-layout' } },
-          { kind: 'click', target: { testid: 'add-node-button' } },
-          { kind: 'waitVisible', target: { testid: 'node-catalog' } },
+          { kind: 'fill', target: { testid: 'node-catalog-search' }, value: 'evaluate_numeric' },
         ],
         checks: [
-          {
-            kind: 'attr',
-            target: {
-              selector:
-                '[data-testid="node-catalog-section"][data-category="math"] [data-testid="node-catalog-section-toggle"]',
-            },
-            name: 'aria-expanded',
-            value: 'true',
-          },
+          { kind: 'visible', target: { selector: '[data-testid="node-catalog-entry"][data-spec-id="sym.evaluate_numeric"]' } },
           { kind: 'externalRequestsZero' },
         ],
       },

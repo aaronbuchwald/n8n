@@ -9,7 +9,7 @@
 //
 // Stream 17-W1 delivered the surface (button, popover, search, click-collapse,
 // click-insert, footer). Stream 17-W2 (this file) adds the full D5 keyboard
-// model + ARIA and moves collapse persistence into `store/catalog.ts`:
+// model + ARIA:
 //   - Ctrl/Cmd+K opens (guarded from Monaco/editable targets), again closes.
 //   - A virtual highlight (`aria-activedescendant`) roves the visible rows with
 //     ↑/↓/Home/End, flowing across section boundaries and skipping headers.
@@ -17,8 +17,15 @@
 //   - Enter inserts + closes; Alt+Enter (and Alt+click) inserts + stays open
 //     (multi-add). Escape is two-stage and consumed so App's cascade never
 //     double-fires.
-//   - Section collapse persists across reloads via `ge:catalog:v1`, cleared by
-//     "Reset layout". Highlight and query stay ephemeral (reset each open).
+//   - Section collapse is EPHEMERAL: every open starts with ALL sections
+//     collapsed (headers + counts only, no entries). Which sections the user
+//     has expanded lives in local component state for the open session and is
+//     reset — alongside the query and highlight — each time the catalog closes,
+//     so a fresh open is always collapsed-by-default. A non-empty query still
+//     overrides collapse so a match is never hidden in a fold; clearing the
+//     query returns to the collapsed view. With everything collapsed and no
+//     query there are simply no navigable rows until the user expands a section
+//     or types to filter.
 //
 // Stream 17-W3 (this file) adds drag-out-of-catalog via the D6 ghost-state
 // model: rows are now `draggable` and set the SAME `PALETTE_SPEC_MIME` payload
@@ -38,9 +45,7 @@ import { CATEGORY_SECTIONS, categoryFor, type CategoryId } from '../catalog/cate
 // The catalog reuses the W5→W4 drag contract byte-for-byte; the constant now
 // lives in a neutral module (W4 retired the Palette it used to live in).
 import { PALETTE_SPEC_MIME } from '../catalog/dnd';
-import { setCatalogSectionCollapsed, toggleCatalogSection } from '../store/catalog';
 import { createNode } from '../store/sync';
-import { useCatalogSelector } from '../store/useCatalog';
 import { useSyncSelector } from '../store/useSyncSelector';
 import type { NodeSpec } from '../types';
 
@@ -109,8 +114,10 @@ export function NodeCatalog({
 }: NodeCatalogProps) {
   const specs = useSyncSelector((s) => s.specs);
   const nodesById = useSyncSelector((s) => s.effective.nodesById);
-  // Durable collapse state (D5): the persisted `ge:catalog:v1` slice.
-  const collapsedList = useCatalogSelector((s) => s.collapsed);
+  // Ephemeral collapse state: every open starts collapsed, so we track the set
+  // of sections the user has EXPANDED this session (default empty = all folded).
+  // Reset on close alongside query/highlight so a fresh open is collapsed again.
+  const [expandedSet, setExpandedSet] = useState<ReadonlySet<CategoryId>>(() => new Set());
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   // Ephemeral virtual highlight (D5): the spec id of the roving `role="option"`.
@@ -129,8 +136,6 @@ export function NodeCatalog({
   // trusted (and synthetic events can't set it at all). See the drag effect.
   const droppedRef = useRef(false);
 
-  const collapsedSet = useMemo(() => new Set(collapsedList), [collapsedList]);
-
   // Close if the app leaves the ready state while the catalog is open.
   useEffect(() => {
     if (disabled && open) setOpen(false);
@@ -148,13 +153,14 @@ export function NodeCatalog({
     return () => document.removeEventListener('drop', onDrop, true);
   }, [dragging]);
 
-  // Autofocus the search on open; reset the ephemeral query + highlight each
-  // visit (collapse state is durable and deliberately NOT reset here).
+  // Autofocus the search on open; reset the ephemeral query, highlight AND
+  // section-expansion each visit, so every open is collapsed-by-default.
   useEffect(() => {
     if (open) searchRef.current?.focus();
     else {
       setQuery('');
       setHighlightedId(null);
+      setExpandedSet(new Set()); // collapse every section for the next open
       setDragging(false); // never leave the ghost state pinned across a close
     }
   }, [open]);
@@ -248,19 +254,19 @@ export function NodeCatalog({
   const totalMatches = sections.reduce((count, group) => count + group.entries.length, 0);
   // A query in progress overrides collapse so a match is never hidden in a fold.
   const searching = query.trim() !== '';
-  const isExpanded = (id: CategoryId) => searching || !collapsedSet.has(id);
+  const isExpanded = (id: CategoryId) => searching || expandedSet.has(id);
 
   // The flat list of navigable rows, in render order, only inside expanded
   // sections — the roving highlight flows across this list (headers skipped).
   const visibleEntries = useMemo<VisibleEntry[]>(() => {
     const list: VisibleEntry[] = [];
     for (const { section, entries } of sections) {
-      if (searching || !collapsedSet.has(section.id)) {
+      if (searching || expandedSet.has(section.id)) {
         for (const { spec, category } of entries) list.push({ specId: spec.id, category });
       }
     }
     return list;
-  }, [sections, searching, collapsedSet]);
+  }, [sections, searching, expandedSet]);
 
   // Resolve the effective highlight: the stored id if still visible, else the
   // first visible row. `-1` when nothing matches (the empty state).
@@ -309,20 +315,31 @@ export function NodeCatalog({
     }
   };
 
+  // The section-header toggle: fold an expanded section shut or unfold a
+  // collapsed one, in this session's ephemeral state.
+  const toggleSection = (id: CategoryId) => {
+    setExpandedSet((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
   // ← collapses the highlighted row's section; the highlight clamps into the
   // shrunken list so it never lands on nothing (D5).
   const collapseActiveSection = () => {
     if (!activeEntry || searching) return; // collapse has no visible effect mid-search
-    if (collapsedSet.has(activeEntry.category)) return;
-    const nextCollapsed = new Set(collapsedSet);
-    nextCollapsed.add(activeEntry.category);
+    if (!expandedSet.has(activeEntry.category)) return;
+    const nextExpanded = new Set(expandedSet);
+    nextExpanded.delete(activeEntry.category);
     const nextVisible: VisibleEntry[] = [];
     for (const { section, entries } of sections) {
-      if (!nextCollapsed.has(section.id)) {
+      if (nextExpanded.has(section.id)) {
         for (const { spec, category } of entries) nextVisible.push({ specId: spec.id, category });
       }
     }
-    setCatalogSectionCollapsed(activeEntry.category, true);
+    setExpandedSet(nextExpanded);
     if (nextVisible.length > 0) {
       const clamped = Math.min(activeIndex, nextVisible.length - 1);
       setHighlightedId(nextVisible[clamped].specId);
@@ -333,8 +350,8 @@ export function NodeCatalog({
   // the highlight stays on the same row, which remains visible (D5).
   const expandActiveSection = () => {
     if (!activeEntry || searching) return;
-    if (!collapsedSet.has(activeEntry.category)) return;
-    setCatalogSectionCollapsed(activeEntry.category, false);
+    if (expandedSet.has(activeEntry.category)) return;
+    setExpandedSet((prev) => new Set(prev).add(activeEntry.category));
   };
 
   const moveHighlight = (delta: 1 | -1) => {
@@ -456,7 +473,7 @@ export function NodeCatalog({
                         className="ge-catalog__section-toggle"
                         data-testid="node-catalog-section-toggle"
                         aria-expanded={expanded}
-                        onClick={() => toggleCatalogSection(section.id)}
+                        onClick={() => toggleSection(section.id)}
                       >
                         <span className="ge-catalog__chevron" aria-hidden="true">
                           {expanded ? '▾' : '▸'}
