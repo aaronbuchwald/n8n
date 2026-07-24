@@ -1,4 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+  type Ref,
+} from 'react';
 import {
   Background,
   BackgroundVariant,
@@ -136,6 +145,14 @@ export interface FocusRequest {
   token: number;
 }
 
+// The imperative seam the node catalog (ADR 0017 D4) reads to insert a node at
+// the visible canvas centre — the `FocusRequest` seam precedent, but a pull
+// (return a value) rather than a push. Returns null when the canvas ref isn't
+// mounted, so callers fall back to a blind stagger.
+export interface GraphViewHandle {
+  getInsertPosition: () => { x: number; y: number } | null;
+}
+
 // The canvas reads the graph, specs and run from the store via selectors (8-S1);
 // it takes only the UI-interaction wiring the shell owns as props, so the App
 // stays a thin, selector-driven shell (and rebases over 9-S2c / 11-W4 cheaply).
@@ -151,7 +168,12 @@ interface GraphViewProps {
 // mount → nodes measured → final layout applied → graph framed → visible.
 type LayoutPhase = 'measuring' | 'framing' | 'ready';
 
-function GraphCanvas({ selectedNodeId, onSelectNode, focusRequest }: GraphViewProps) {
+function GraphCanvas({
+  selectedNodeId,
+  onSelectNode,
+  focusRequest,
+  handleRef,
+}: GraphViewProps & { handleRef: Ref<GraphViewHandle> }) {
   // The single source of truth (8-S1). `effective.graph` is authoritative ⊕ the
   // optimistic overlay, so an in-flight literal edit is on the canvas instantly;
   // each of these selectors returns a stored reference or a primitive, so the
@@ -488,6 +510,17 @@ function GraphCanvas({ selectedNodeId, onSelectNode, focusRequest }: GraphViewPr
     [screenToFlowPosition],
   );
 
+  // The node catalog's click-to-insert default position (ADR 0017 D4): the
+  // centre of the visible canvas in graph coordinates. Null when the canvas
+  // isn't mounted, so the catalog falls back to a blind stagger.
+  const getInsertPosition = useCallback((): { x: number; y: number } | null => {
+    const el = canvasRef.current;
+    if (!el) return null;
+    const rect = el.getBoundingClientRect();
+    return screenToFlowPosition({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
+  }, [screenToFlowPosition]);
+  useImperativeHandle(handleRef, () => ({ getInsertPosition }), [getInsertPosition]);
+
   // "Tidy layout" (HD3): the full auto-layout over EVERYTHING, persisted — a
   // tidy you can lose on reload isn't tidy (open confirmation 5).
   const onTidyLayout = useCallback(() => {
@@ -582,10 +615,10 @@ function GraphCanvas({ selectedNodeId, onSelectNode, focusRequest }: GraphViewPr
  * ReactFlow's stateful hooks only mount once live data has loaded (App renders
  * loading/error states before this ever appears).
  */
-export function GraphView(props: GraphViewProps) {
+export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function GraphView(props, ref) {
   return (
     <ReactFlowProvider>
-      <GraphCanvas {...props} />
+      <GraphCanvas {...props} handleRef={ref} />
     </ReactFlowProvider>
   );
-}
+});
