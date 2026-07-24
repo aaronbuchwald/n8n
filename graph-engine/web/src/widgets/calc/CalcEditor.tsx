@@ -27,6 +27,7 @@ import type { WidgetEditorProps } from '../registry';
 import { cachedDerive, deriveInputs, type DeriveOutcome } from './derive';
 import { CalcPreview } from './preview';
 import './calc.css';
+import { CopyButton } from '../../components/InspectorValue';
 
 function asString(value: unknown): string {
   if (value === undefined || value === null) return '';
@@ -214,15 +215,21 @@ export function CalcEditor({ value, config, input, onCommit, nodeId }: WidgetEdi
         }
       }}
     >
-      <textarea
-        className="ge-widget-input ge-calc-input"
-        data-testid="widget-editor-calc-input"
-        rows={Math.max(2, draft.split('\n').length)}
-        value={draft}
-        placeholder={placeholder}
-        spellCheck={false}
-        onChange={(event) => setDraft(event.target.value)}
-      />
+      {/* The editor IS the copy surface — a value you can edit still needs to be
+          copyable, and minting a second read-only box for that was the thing
+          this editor replaced. The button reveals on hover/focus of the box. */}
+      <div className="ge-calc-input-wrap">
+        <textarea
+          className="ge-widget-input ge-calc-input"
+          data-testid="widget-editor-calc-input"
+          rows={Math.max(2, draft.split('\n').length)}
+          value={draft}
+          placeholder={placeholder}
+          spellCheck={false}
+          onChange={(event) => setDraft(event.target.value)}
+        />
+        <CopyButton value={draft} className="ge-widget-copy" />
+      </div>
 
       <CalcPreview text={draft} language={language} />
 

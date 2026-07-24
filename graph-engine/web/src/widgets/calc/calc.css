@@ -165,3 +165,50 @@
   font-size: 10px;
   color: var(--ge-muted, #8a93a6);
 }
+
+/* Copy-on-hover for the editor itself (ADR 0018 amendment): an editable value
+   still needs to be copyable, and a second read-only box for that is exactly
+   what this editor replaced. Mirrors the inspector value block's affordance. */
+.ge-calc-input-wrap {
+  position: relative;
+}
+
+.ge-widget-copy {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  padding: 2px 7px;
+  font-family: var(--ge-mono);
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--ge-muted);
+  background: var(--ge-panel);
+  border: 1px solid var(--ge-node-border);
+  border-radius: 5px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+
+.ge-calc-input-wrap:hover .ge-widget-copy,
+.ge-calc-input-wrap:focus-within .ge-widget-copy {
+  opacity: 1;
+}
+
+.ge-widget-copy:hover,
+.ge-widget-copy:focus-visible {
+  color: var(--ge-text);
+  border-color: var(--ge-accent);
+}
+
+.ge-widget-copy[data-copied='true'] {
+  opacity: 1;
+  color: var(--ge-output);
+  border-color: var(--ge-output);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ge-widget-copy {
+    transition: none;
+  }
+}

@@ -381,3 +381,33 @@ test('D7-8: a plain str param whose value holds a newline is edited in a textare
     );
   });
 });
+
+// The editor IS the copy surface. Removing the duplicate read-only box (D7-3)
+// must not cost the copy affordance — and it must copy what is IN the box,
+// including uncommitted edits, not the last committed literal.
+test('the formulas editor carries copy-on-hover and copies its live content', async ({ page }) => {
+  const inspector = await openCard(page);
+  const row = inputRow(page, inspector, 'formulas');
+  const editor = row.getByTestId('widget-editor-calc-input');
+  await expect(editor).toBeVisible();
+
+  // No second box was reintroduced to carry the button.
+  await expect(row.getByTestId('inspector-value')).toHaveCount(0);
+
+  const copy = row.getByTestId('inspector-value-copy');
+  await expect(copy).toHaveCount(1);
+  // Hidden at rest, revealed on hover — an affordance, not permanent chrome.
+  await expect(copy).toHaveCSS('opacity', '0');
+  await row.getByTestId('widget-editor-calc-input').hover();
+  await expect(copy).toHaveCSS('opacity', '1');
+
+  // It copies the LIVE draft: type without committing, then copy.
+  const drafted = 'r = F_max / C_min  # demand / capacity\nU = 100 * r [%]  # utilisation\nm = C_min - F_max  # margin';
+  await editor.fill(drafted);
+  await copy.click();
+  await expect(copy).toHaveAttribute('data-copied', 'true');
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(drafted);
+
+  // Nothing was committed by copying — the editor still holds the draft.
+  await expect(editor).toHaveValue(drafted);
+});
