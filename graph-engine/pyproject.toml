@@ -13,14 +13,16 @@ server = [
     "fastapi>=0.110",
     "uvicorn>=0.29",
 ]
-# `uv sync --extra sym` — the symbolic-math node pack (nodepacks/sym).
-# These are OPTIONAL: `import sym` and spec listing work without them; the
-# node bodies lazy-import them at call time.
+# `uv sync --extra sym` — the symbolic-math node pack (nodepacks/sym) and the
+# calcsheet-backed sheet pack (nodepacks/sheet). These are OPTIONAL: `import
+# sym` / `import sheet` and spec listing work without them; the node bodies
+# lazy-import them at call time.
 sym = [
     "sympy>=1.13,<2",
     "handcalcs>=1.9,<2",
     "forallpeople>=2.6,<3",
     "latex2mathml>=3.77,<4",
+    "calcsheet",
 ]
 # `uv run --extra demo python -m server --demo` — everything the bundled showcase
 # demo needs to actually RUN (server + the sym node deps). The default --demo
@@ -34,6 +36,7 @@ demo = [
     "handcalcs>=1.9,<2",
     "forallpeople>=2.6,<3",
     "latex2mathml>=3.77,<4",
+    "calcsheet",
 ]
 # `uv sync --extra dev` — run the full test suite (includes server + sym deps so
 # the e2e demo test can execute the showcase end to end).
@@ -46,7 +49,13 @@ dev = [
     "handcalcs>=1.9,<2",
     "forallpeople>=2.6,<3",
     "latex2mathml>=3.77,<4",
+    "calcsheet",
 ]
+
+# `calcsheet` is the sibling library in this repo, not a PyPI release — resolve
+# it from the checkout so `nodepacks/sheet` can import it.
+[tool.uv.sources]
+calcsheet = { path = "../calcsheet" }
 
 [build-system]
 requires = ["hatchling"]
@@ -56,10 +65,10 @@ build-backend = "hatchling.build"
 # Real, installable packages, so `import engine` / `import server` /
 # `import calc` / `import sources` work anywhere (examples, node packs, tests)
 # without any sys.path manipulation.
-packages = ["engine", "server", "nodepacks/calc", "nodepacks/sources", "nodepacks/sym", "nodepacks/table"]
+packages = ["engine", "server", "nodepacks/calc", "nodepacks/sheet", "nodepacks/sources", "nodepacks/sym", "nodepacks/table"]
 
 [tool.pytest.ini_options]
 # `engine` and the node packs are installed into the venv; only the example
 # modules need a path so tests can import them directly.
-pythonpath = ["examples/minimal", "examples/readings", "examples/bijection", "examples/symbolic", "examples/table", "examples/showcase", "examples/capacity_check"]
+pythonpath = ["examples/minimal", "examples/readings", "examples/bijection", "examples/symbolic", "examples/table", "examples/showcase", "examples/capacity_check", "examples/handcalc_demo"]
 testpaths = ["tests"]
