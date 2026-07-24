@@ -145,23 +145,19 @@ test('sizes and collapsed state persist across reload', async ({ page }) => {
 
   // ── Size persistence: widen the dock (a sash SIZE change the library persists
   // under its autoSaveId key), reload, and confirm the width comes back. ──────
+  const LIB_KEY = 'react-resizable-panels:ge-workbench-main';
+  // Snapshot the pre-drag stored layout (the library saves on mount, so the key
+  // is already present — waiting only for "not null" would race the widen).
+  const beforeDrag = await page.evaluate((k) => window.localStorage.getItem(k), LIB_KEY);
+
   await dragHandle(page, 'sash-right', -120, 0);
 
-  // The library's autoSave is debounced (~100ms); wait until it has flushed the
-  // widened dock so the reload sees the persisted sizes.
+  // The library's autoSave is debounced (~100ms); wait until the WIDENED layout
+  // has actually flushed — i.e. the stored value CHANGED from the pre-drag one —
+  // so the reload sees the new sizes rather than the mount-time defaults.
   await expect
-    .poll(async () =>
-      page.evaluate(() =>
-        window.localStorage.getItem('react-resizable-panels:ge-workbench-main'),
-      ),
-    )
-    .not.toBeNull();
-
-  // The library's autoSaveId key named in ADR 0014 D5 exists.
-  const libKey = await page.evaluate(() =>
-    window.localStorage.getItem('react-resizable-panels:ge-workbench-main'),
-  );
-  expect(libKey, 'library autoSaveId key exists').not.toBeNull();
+    .poll(async () => page.evaluate((k) => window.localStorage.getItem(k), LIB_KEY))
+    .not.toBe(beforeDrag);
 
   const widened = await width(dock);
 

@@ -123,6 +123,11 @@ export function NodeCatalog({
 
   const rootRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  // Did the in-flight drag actually land a drop? A document-level `drop`
+  // listener (added while dragging) is the reliable signal — `dragEnd`'s
+  // `dropEffect` is only spec-settable during `dragover`, so it can't be
+  // trusted (and synthetic events can't set it at all). See the drag effect.
+  const droppedRef = useRef(false);
 
   const collapsedSet = useMemo(() => new Set(collapsedList), [collapsedList]);
 
@@ -130,6 +135,18 @@ export function NodeCatalog({
   useEffect(() => {
     if (disabled && open) setOpen(false);
   }, [disabled, open]);
+
+  // While an entry is being dragged out, watch for a real `drop` anywhere in the
+  // document (capture phase, so it fires even if the canvas handler stops the
+  // event). That flag — not `dragEnd.dropEffect` — decides drop-vs-cancel.
+  useEffect(() => {
+    if (!dragging) return;
+    const onDrop = () => {
+      droppedRef.current = true;
+    };
+    document.addEventListener('drop', onDrop, true);
+    return () => document.removeEventListener('drop', onDrop, true);
+  }, [dragging]);
 
   // Autofocus the search on open; reset the ephemeral query + highlight each
   // visit (collapse state is durable and deliberately NOT reset here).
@@ -480,13 +497,15 @@ export function NodeCatalog({
                                     // does not affect the cursor ghost.
                                     event.dataTransfer.setData(PALETTE_SPEC_MIME, spec.id);
                                     event.dataTransfer.effectAllowed = 'copy';
+                                    droppedRef.current = false;
                                     setDragging(true);
                                   }}
                                   onDragEnd={(event) => {
-                                    // dropEffect 'none' ⇒ cancelled (Esc / invalid
-                                    // target) → restore; anything else ⇒ a real drop
-                                    // on the canvas → close (D6).
-                                    const dropped = event.dataTransfer.dropEffect !== 'none';
+                                    // A real drop (seen by the document listener, or
+                                    // reported via dropEffect) closes the catalog (D6);
+                                    // a cancel (Esc / invalid target — no drop) restores it.
+                                    const dropped =
+                                      droppedRef.current || event.dataTransfer.dropEffect !== 'none';
                                     setDragging(false);
                                     if (dropped) setOpen(false);
                                   }}
