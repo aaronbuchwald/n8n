@@ -15,6 +15,7 @@ import { inspectNode } from './inspect';
 import {
   clearRun,
   commitLiteral,
+  deleteElements,
   hydrate,
   selectRunIsStale,
   setPruneNotice,
@@ -335,6 +336,12 @@ export default function App() {
             sharedNodeCount={sharedNodeCount}
             editingSource={editingSource}
             onEditSource={setEditingSource}
+            onDelete={() => {
+              // Remove the instance (the store cascades its edges, D4) and
+              // close the inspector — the node it described is gone.
+              deleteElements([inspected.id], []);
+              selectNode(null);
+            }}
           />
         ),
       });

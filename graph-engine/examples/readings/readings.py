@@ -34,9 +34,6 @@ CSV_PATH = HERE / "readings.csv"
 
 TITLE = "Readings summary"
 
-# Node types both composites define (for registries / snapshots).
-NODES = [read_csv, mock_api, average, median, render_summary]
-
 
 # -- the graph, as ordinary Python -----------------------------------------
 

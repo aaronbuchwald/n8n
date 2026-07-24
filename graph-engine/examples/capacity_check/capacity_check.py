@@ -120,9 +120,6 @@ def check_verdict(results: dict, check: str = "check") -> dict:
     return {"ok": True}
 
 
-# All node types this example defines (for schema snapshots / registries).
-NODES = [select_extreme, check_verdict]
-
 
 # -- the graph, as ordinary Python (ADR 0004 straight-line form) -------------
 

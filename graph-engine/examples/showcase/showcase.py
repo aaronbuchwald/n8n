@@ -120,9 +120,6 @@ def showcase_report() -> str:
     return report
 
 
-# Node types this example defines / uses (for registries / snapshots).
-NODES = [read_table, apply_recipe, table_summary, dashboard]
-
 
 def build_graph(csv_path: Path | str = CSV_PATH):
     """Trace the composite into a Graph, with an absolute CSV path so it runs

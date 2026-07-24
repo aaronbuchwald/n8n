@@ -740,26 +740,24 @@ body,
   white-space: nowrap;
 }
 
-.ge-inspector__close {
+.ge-inspector__delete {
   flex: none;
   font: inherit;
-  font-size: 16px;
+  font-size: 12px;
+  font-weight: 600;
   line-height: 1;
-  width: 24px;
-  height: 24px;
-  display: grid;
-  place-items: center;
-  padding: 0;
-  border: none;
+  padding: 4px 10px;
+  border: 1px solid transparent;
   border-radius: 6px;
   background: transparent;
   color: var(--ge-muted);
   cursor: pointer;
 }
 
-.ge-inspector__close:hover {
-  background: rgba(255, 255, 255, 0.08);
-  color: var(--ge-text);
+.ge-inspector__delete:hover {
+  background: var(--ge-danger-soft);
+  border-color: var(--ge-danger);
+  color: var(--ge-danger);
 }
 
 /* ADR 0015 D2: the read-only call-site row — THIS node's real @main statement,

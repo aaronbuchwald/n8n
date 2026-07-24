@@ -225,6 +225,59 @@ test('palette drop lands pinned at the drop point; connect persists; delete spli
   expect(external, 'EXTERNAL_REQUESTS must be 0').toHaveLength(0);
 });
 
+test('the node inspector deletes the instance via its Delete button', async ({ page }) => {
+  const external = trackExternalRequests(page);
+  await openApp(page);
+  const original = await (await page.request.get('/api/graph')).json();
+
+  let mintedId: string | null = null;
+  try {
+    // Mint a node by dropping a sym.pick, so we delete a fresh instance and
+    // never touch the pristine graph's wiring.
+    const canvas = page.getByTestId('flow-canvas');
+    const box = await canvas.boundingBox();
+    expect(box).not.toBeNull();
+    if (!box) return;
+    const mint = page.waitForResponse(
+      (r) => r.url().includes('/api/graph/mint-id') && r.status() === 200,
+    );
+    const dt = await page.evaluateHandle((mime) => {
+      const d = new DataTransfer();
+      d.setData(mime, 'sym.pick');
+      return d;
+    }, PALETTE_SPEC_MIME);
+    await canvas.dispatchEvent('drop', {
+      dataTransfer: dt,
+      clientX: Math.round(box.x + box.width * 0.4),
+      clientY: Math.round(box.y + box.height * 0.4),
+    });
+    mintedId = ((await (await mint).json()) as { id: string }).id;
+    const card = flowNode(page, mintedId);
+    await expect(card).toBeVisible();
+
+    // Open the INSTANCE inspector (a header click inspects, never edits).
+    await card.locator('.ge-node__header').click();
+    const inspector = page.getByTestId('node-inspector');
+    await expect(inspector).toBeVisible();
+    await expect(inspector.getByTestId('inspector-title')).toContainText(mintedId);
+
+    // Delete it via the inspector's Delete button: the store mutation persists
+    // (one PUT), the inspector closes (node deselected), and the card is gone.
+    const del = waitForGraphPut(page);
+    await inspector.getByTestId('inspector-delete').click();
+    await del;
+    await expect(page.getByTestId('node-inspector')).toHaveCount(0);
+    await expect(card).toHaveCount(0);
+    const served = (await (await page.request.get('/api/graph')).json()) as {
+      nodes: Array<{ id: string }>;
+    };
+    expect(served.nodes.some((n) => n.id === mintedId)).toBe(false);
+  } finally {
+    await restore(page, original);
+  }
+  expect(external, 'EXTERNAL_REQUESTS must be 0').toHaveLength(0);
+});
+
 test('"Tidy layout" re-lays-out every node and persists the whole arrangement', async ({
   page,
 }) => {

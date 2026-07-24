@@ -45,9 +45,6 @@ RECIPE = {
     ],
 }
 
-# Node types this example defines (for registries / snapshots).
-NODES = [read_table, apply_recipe, table_summary]
-
 
 @main
 def sales_report(path: str = "sales.csv") -> str:

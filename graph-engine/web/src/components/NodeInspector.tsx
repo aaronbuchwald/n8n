@@ -14,6 +14,8 @@ interface NodeInspectorProps {
   /** True while the inspector is expanded into the node's definition editor. */
   editingSource: boolean;
   onEditSource: (open: boolean) => void;
+  /** Delete this node instance (cascades its edges) and close the inspector. */
+  onDelete: () => void;
 }
 
 function sourceLabel(source: InputSource): string {
@@ -171,6 +173,7 @@ export function NodeInspector({
   sharedNodeCount,
   editingSource,
   onEditSource,
+  onDelete,
 }: NodeInspectorProps) {
   const editing = editingSource && !node.missingSpec;
   // The calc / table-recipe editors are physically large (multi-line, grids):
@@ -217,7 +220,23 @@ export function NodeInspector({
         </div>
         {node.isOutput && <span className="ge-node__badge">output</span>}
         {/* The inspector is closed via its dock tab's × (ADR 0014 D3) — the
-            workbench-native close — so no redundant in-panel close button. */}
+            workbench-native close — so no redundant in-panel close button.
+            A delete affordance lives here for the INSTANCE, mirroring the
+            canvas Delete key (it removes the node and cascades its edges). It
+            is hidden while editing the shared definition — you delete a node,
+            never its type. */}
+        {!editing && (
+          <button
+            type="button"
+            className="ge-inspector__delete"
+            data-testid="inspector-delete"
+            aria-label={`Delete node ${node.id}`}
+            title="Delete this node"
+            onClick={onDelete}
+          >
+            Delete
+          </button>
+        )}
       </div>
 
       {editing ? (
