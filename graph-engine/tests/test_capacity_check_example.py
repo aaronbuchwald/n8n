@@ -181,22 +181,7 @@ def test_a_failing_check_does_not_fail_the_run():
 
 
 @needs_sym_extra
-def test_card_height_scales_with_the_content():
-    """The `height` socket sizes the sandboxed iframe from outside it."""
-    from sheet import card_height
 
-    from capacity_check import build_graph
-
-    height = run(build_graph()).value("calc_card", "height")
-    # 2 inputs + 2 formulas + 2 described checks — the same arithmetic the
-    # renderer trusts, asserted against the pack's own function.
-    assert height == card_height(2, 2, ["capacity not exceeded", "utilisation target"])
-    # A bigger sheet needs a taller surface; an empty one still has a floor.
-    assert card_height(4, 4, ["a", "b", "c"]) > height
-    assert card_height(0, 0, []) >= 160
-
-
-@needs_sym_extra
 def test_graph_declares_environment_dependencies():
     from capacity_check import DEPENDENCIES, build_graph
 
@@ -216,7 +201,7 @@ def test_graph_exports_python():
     namespace: dict = {}
     exec(compile(script, "<exported>", "exec"), namespace)  # noqa: S102 - trusted, generated
     graph = build_graph()
-    assert namespace["_calc_card"]["result"] == run(graph).value(
+    assert namespace["_calc_card"] == run(graph).value(
         graph.output["node"], graph.output["socket"]
     )
 
@@ -241,7 +226,7 @@ def test_one_edit_to_the_formulas_moves_the_values_and_the_verdict():
             checks="U < 50  # utilisation target",
             F_max=120.0,
             C_min=210.0,
-        )["result"]
+        )
 
     fails = _card("r = F_max / C_min\nU = 100 * r [%]")
     assert "57.1 &lt; 50 = False" in fails and "Overall <b>FAIL</b>" in fails

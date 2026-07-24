@@ -61,25 +61,6 @@ def test_capacity_check_runs_to_a_rendered_verdict() -> None:
     assert "Overall <b>FAIL</b>" in html
 
 
-def test_served_calc_card_publishes_its_own_height() -> None:
-    """The `height` socket travels with the run so the iframe can size itself.
-
-    A `sandbox=""` frame runs no scripts and cannot measure itself, so the node
-    computes the height from its row/check counts and the renderer reads it off
-    the run result (falling back to the statically declared config height).
-    """
-    client = _capacity_client()
-    graph = client.get("/api/graph").json()
-    result = client.post("/api/run", json={"graph": graph}).json()
-    assert result["errors"] == []
-
-    card_id = next(n["id"] for n in graph["nodes"] if n["type"] == "sheet.calc_card")
-    outputs = result["outputs"][card_id]
-    assert set(outputs) == {"result", "height"}
-    assert isinstance(outputs["height"], int) and outputs["height"] > 200
-    # Plain JSON — no {"$repr","$type"} degradation anywhere in the payload.
-    assert "$repr" not in json.dumps(result["outputs"])
-
 
 def test_calc_card_derives_its_symbol_sockets_from_the_formulas() -> None:
     """The formulas' free symbols are served as derived inputs (ADR 0007)."""

@@ -107,7 +107,7 @@ def capacity_check_report(
     )
     # The card's `result` socket (the self-contained HTML document) is the graph
     # output; its sibling `height` socket tells the UI how tall to draw it.
-    return card.result
+    return card
 
 
 def build_graph(forces_csv: Path | str = FORCES_CSV, members_csv: Path | str = MEMBERS_CSV):

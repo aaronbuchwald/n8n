@@ -26,7 +26,6 @@ from __future__ import annotations
 import ast
 import builtins
 import re
-from collections.abc import Sequence
 from dataclasses import dataclass
 
 from engine import DerivedInputs, Renderer, UserError, node
@@ -268,53 +267,20 @@ def formula_free_symbols(formulas: str) -> list[dict]:
 # (render.py) and are deliberately rounded UP: a card that is a few px too tall
 # shows a sliver of whitespace, while one that is too short scrolls.
 
-_CHROME = 157  # body padding (28+28) + .card__head (58) + .foot (43)
-_SECTION = 54  # one .sec: 14+14 padding + .sec__label line + border
-_INPUT_ROW = 21  # an input row: symbol = value (no typeset definition)
-_FORMULA_ROW = 24  # a formula row, allowing for a fraction in the definition
-_ROW_GAP = 12  # .rows{row-gap:12px}
-_CHECK_ROW = 44  # one .chk: border + 9+9 padding + the expression line
-_CHECK_DESCRIPTION = 20  # .chk__what — the second line, when a check has one
-_CHECK_GAP = 8  # .checks{gap:8px}
-_MIN_HEIGHT = 160
 
 # The statically declared fallback — what the renderer shows before the first
 # run, and for any consumer that ignores the per-instance socket.
 DEFAULT_CARD_HEIGHT = 320
 
 
-def card_height(inputs: int, formulas: int, checks: Sequence[str]) -> int:
-    """Pixel height a rendered card needs, from its row and check counts.
-
-    ``checks`` carries each check's description text (a described check renders
-    a second line, an undescribed one does not). An empty section is not
-    rendered at all, so it costs nothing.
-    """
-    height = _CHROME
-    if inputs:
-        height += _SECTION + _INPUT_ROW * inputs + _ROW_GAP * (inputs - 1)
-    if formulas:
-        height += _SECTION + _FORMULA_ROW * formulas + _ROW_GAP * (formulas - 1)
-    if checks:
-        height += _SECTION + _CHECK_GAP * (len(checks) - 1)
-        height += sum(
-            _CHECK_ROW + (_CHECK_DESCRIPTION if description else 0) for description in checks
-        )
-    return max(height, _MIN_HEIGHT)
 
 
 # -- the node ----------------------------------------------------------------
 
 
 @node(
-    outputs=["result", "height"],
     dynamic=DerivedInputs(param="formulas", derive=formula_free_symbols),
-    renderer=Renderer(
-        "html-card",
-        socket="result",
-        height=DEFAULT_CARD_HEIGHT,
-        heightSocket="height",
-    ),
+    renderer=Renderer("html-card", socket="result", height=DEFAULT_CARD_HEIGHT),
 )
 def calc_card(
     title: str = "Calculation",
@@ -323,7 +289,7 @@ def calc_card(
     checks: str = "",
     precision: int | None = None,
     **values: float,
-) -> dict:
+) -> str:
     """Evaluate a whole calculation and render it as a self-contained HTML card.
 
     ``formulas`` and ``checks`` are the mini-syntax documented on
@@ -376,14 +342,7 @@ def calc_card(
         # list what IS available — surface them as the user's own error.
         raise UserError(str(error)) from None
 
-    return {
-        "result": render_html(result),
-        "height": card_height(
-            len(result.inputs),
-            len(result.formulas),
-            [check.description for check in result.checks],
-        ),
-    }
+    return render_html(result)
 
 
 # All node types this pack defines (handy for registries / snapshots).
@@ -395,7 +354,6 @@ __all__ = [
     "FormulaLine",
     "NODES",
     "calc_card",
-    "card_height",
     "formula_free_symbols",
     "parse_checks",
     "parse_formulas",

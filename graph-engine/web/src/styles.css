@@ -26,35 +26,6 @@
   box-sizing: border-box;
 }
 
-/* Visible, always-present scrollbars on every scrollable surface. The platform
-   default is an overlay bar that fades out, so an overflowing panel reads as
-   "clipped, nothing more to see" rather than "scroll me". */
-* {
-  scrollbar-width: thin;
-  scrollbar-color: var(--ge-node-border-strong) transparent;
-}
-
-*::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
-}
-
-*::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-*::-webkit-scrollbar-thumb {
-  background: var(--ge-node-border-strong);
-  border: 2px solid transparent;
-  background-clip: content-box;
-  border-radius: 999px;
-}
-
-*::-webkit-scrollbar-thumb:hover {
-  background: var(--ge-faint);
-  background-clip: content-box;
-}
-
 html,
 body,
 #root {
@@ -1211,19 +1182,6 @@ body,
   flex-direction: column;
   gap: 6px;
   overflow: hidden;
-}
-
-/* The output render is frequently TALLER than the panel — a calc card sizes
-   itself to its content — so this column scrolls instead of clipping the card
-   somewhere in the middle with no way to reach the rest. */
-.ge-results__render {
-  overflow: auto;
-}
-
-/* ...and a self-sized card keeps its declared height rather than being squashed
-   by the flex column; the column scrolls to reveal it. */
-.ge-results__render .ge-html-card {
-  flex: 0 0 auto;
 }
 
 /* The drag handle between the two regions — a slim hit area with a centered

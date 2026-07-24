@@ -138,34 +138,19 @@ def test_the_spec_declares_the_dynamic_seam_and_the_renderer():
         "config": {
             "socket": "result",
             "height": sheet.DEFAULT_CARD_HEIGHT,
-            "heightSocket": "height",
         },
     }
-    assert [o["name"] for o in spec["outputs"]] == ["result", "height"]
+    # ONE output: the card. A frame's pixel height is presentation, not
+    # dataflow, so it is never published as a socket.
+    assert [o["name"] for o in spec["outputs"]] == ["result"]
 
-
-# -- card height --------------------------------------------------------------
-
-
-def test_card_height_grows_with_rows_and_checks():
-    base = sheet.card_height(2, 2, ["a", "b"])
-    assert sheet.card_height(3, 2, ["a", "b"]) > base
-    assert sheet.card_height(2, 3, ["a", "b"]) > base
-    assert sheet.card_height(2, 2, ["a", "b", "c"]) > base
-    # A described check renders a second line, so it is taller.
-    assert sheet.card_height(2, 2, ["a", "b"]) > sheet.card_height(2, 2, ["", ""])
-
-
-def test_an_empty_section_costs_nothing_and_a_floor_applies():
-    assert sheet.card_height(0, 0, []) == 160
-    assert sheet.card_height(1, 0, []) == sheet.card_height(1, 0, [])
 
 
 # -- the node itself ----------------------------------------------------------
 
 
 @needs_sym_extra
-def test_calc_card_renders_a_self_contained_card_and_its_height():
+def test_calc_card_renders_a_self_contained_card():
     out = sheet.calc_card(
         title="Capacity check",
         as_of="2026-07-24",
@@ -174,7 +159,7 @@ def test_calc_card_renders_a_self_contained_card_and_its_height():
         F_max=120.0,
         C_min=210.0,
     )
-    html = out["result"]
+    html = out
     assert html.startswith("<!doctype html>")
     assert '<span class="val">0.571</span>' in html
     assert '57.1&nbsp;<span class="unit">%</span>' in html
@@ -182,19 +167,18 @@ def test_calc_card_renders_a_self_contained_card_and_its_height():
     assert "Overall <b>FAIL</b>" in html
     # Self-contained: no script, no stylesheet link, no network reference.
     assert "http" not in html and "<script" not in html and "<link" not in html
-    assert out["height"] == sheet.card_height(2, 2, ["capacity not exceeded", "utilisation target"])
 
 
 @needs_sym_extra
 def test_a_whitelisted_math_name_evaluates_instead_of_needing_a_socket():
     out = sheet.calc_card(formulas="h = sqrt(x**2 + y**2)", checks="h > 0", x=3.0, y=4.0)
-    assert '<span class="val">5</span>' in out["result"]
+    assert '<span class="val">5</span>' in out
 
 
 @needs_sym_extra
 def test_a_false_check_returns_a_card_instead_of_raising():
     out = sheet.calc_card(formulas="U = 100 * x", checks="U < 50", x=1.0)
-    assert "Overall <b>FAIL</b>" in out["result"]
+    assert "Overall <b>FAIL</b>" in out
 
 
 @needs_sym_extra

@@ -5,16 +5,12 @@
 //  * `sandbox=""` — no scripts, no same-origin, no forms, no top-navigation.
 //    The value is untrusted node output; it can never touch the host page.
 //    Never `dangerouslySetInnerHTML`, here or in any kind, ever.
-//  * A scriptless iframe cannot report its content height, so the surface is
-//    sized from OUTSIDE it: a node that knows how tall its card is publishes
-//    that on an output socket (`heightSocket`) and the run result supplies a
-//    per-instance height; otherwise the statically declared `height` config
-//    (px, default 180) applies. Content scrolls within — no resize shim, no
-//    `allow-scripts`, sandbox stays `""`.
+//  * A scriptless iframe cannot report its content height, so the frame is a
+//    declared size and the card scrolls inside it when its content is taller.
 //  * The iframe mounts only once a run produced a value (placeholder text
 //    before) and is `loading="lazy"` — the D5 canvas-cost ladder.
 //
-// Config: `{ socket?: string, height?: number, heightSocket?: string }`.
+// Config: `{ socket?: string, height?: number }`.
 // `socket` defaults to the node's single output (the engine validates the
 // declaration against the node's outputs at import time). Non-string values,
 // `{"$repr","$type"}` previews and missing sockets degrade to the informative
@@ -26,10 +22,6 @@ import type { NodeSpec } from '../../types';
 
 const DEFAULT_HEIGHT = 180;
 
-// Bounds on a per-instance height so a nonsense (or hostile) node output can
-// never blow up the canvas — outside them the declared config height wins.
-const MIN_RESULT_HEIGHT = 40;
-const MAX_RESULT_HEIGHT = 4000;
 
 /** The output socket this card reads: `config.socket`, else the sole output. */
 function socketName(config: Record<string, unknown>, spec: NodeSpec): string {
@@ -48,30 +40,6 @@ function declaredHeight(config: Record<string, unknown>): number {
     : DEFAULT_HEIGHT;
 }
 
-/**
- * The height this instance's surface gets: the run's own `heightSocket` value
- * when the node published a sane one, else the statically declared height. A
- * node whose card grows with its content (rows, checks) can size itself this
- * way without any script inside the sandboxed frame.
- */
-function surfaceHeight(
-  config: Record<string, unknown>,
-  result: Record<string, unknown> | null,
-): number {
-  const socket = config.heightSocket;
-  if (result !== null && typeof socket === 'string') {
-    const measured = result[socket];
-    if (
-      typeof measured === 'number' &&
-      Number.isFinite(measured) &&
-      measured >= MIN_RESULT_HEIGHT &&
-      measured <= MAX_RESULT_HEIGHT
-    ) {
-      return Math.round(measured);
-    }
-  }
-  return declaredHeight(config);
-}
 
 export default function HtmlCardRenderer({
   spec,
@@ -116,7 +84,7 @@ export default function HtmlCardRenderer({
         sandbox=""
         loading="lazy"
         srcDoc={value}
-        style={{ height: surfaceHeight(config, result) }}
+        style={{ height: declaredHeight(config) }}
       />
     </div>
   );
