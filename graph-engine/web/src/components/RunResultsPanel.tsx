@@ -121,7 +121,20 @@ export function RunResultsPanel({
         direction="horizontal"
         autoSaveId="ge-results-split"
       >
-        <Panel id="render" order={1} defaultSize={64} minSize={30} className="ge-results__render">
+        <Panel
+          id="render"
+          order={1}
+          defaultSize={64}
+          minSize={30}
+          className="ge-results__render"
+          // The output render is frequently TALLER than the panel — a calc card
+          // sizes itself to its content — so this column must scroll instead of
+          // clipping the card mid-way with no way to reach the rest.
+          // It has to be the `style` PROP: react-resizable-panels writes
+          // `overflow: hidden` as an INLINE style on every Panel, which no
+          // stylesheet rule can outrank. The prop is merged after that default.
+          style={{ overflow: 'auto' }}
+        >
           <div className="ge-results__label">output render</div>
           {OutputRenderer && outputNode ? (
             <Suspense fallback={<div className="ge-results__empty">…</div>}>

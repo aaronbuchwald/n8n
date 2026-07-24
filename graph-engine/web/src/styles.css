@@ -1213,15 +1213,13 @@ body,
   overflow: hidden;
 }
 
-/* The output render is frequently TALLER than the panel — a calc card sizes
-   itself to its content — so this column scrolls instead of clipping the card
-   somewhere in the middle with no way to reach the rest. */
-.ge-results__render {
-  overflow: auto;
-}
-
-/* ...and a self-sized card keeps its declared height rather than being squashed
-   by the flex column; the column scrolls to reveal it. */
+/* The output render column scrolls instead of clipping a self-sized card. That
+   `overflow` CANNOT be set here: react-resizable-panels writes `overflow:hidden`
+   as an inline style on every Panel, which outranks any stylesheet rule — so it
+   lives on the Panel's `style` prop in RunResultsPanel.tsx. Only the part a
+   stylesheet can actually win stays here: a self-sized card keeps its declared
+   height rather than being squashed by the flex column; the column scrolls to
+   reveal it. */
 .ge-results__render .ge-html-card {
   flex: 0 0 auto;
 }
