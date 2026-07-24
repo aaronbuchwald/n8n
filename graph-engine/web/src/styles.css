@@ -2084,6 +2084,13 @@ body,
   overflow: hidden;
 }
 
+/* D6 ghost state: while an entry is dragged out, the popover dims and stops
+   catching pointer events so the drop lands on the canvas beneath it. */
+.ge-catalog__panel[data-dragging='true'] {
+  opacity: 0.25;
+  pointer-events: none;
+}
+
 .ge-catalog__search-row {
   padding: 8px;
   border-bottom: 1px solid var(--ge-node-border);

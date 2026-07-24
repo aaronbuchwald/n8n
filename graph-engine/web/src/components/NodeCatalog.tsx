@@ -20,13 +20,24 @@
 //   - Section collapse persists across reloads via `ge:catalog:v1`, cleared by
 //     "Reset layout". Highlight and query stay ephemeral (reset each open).
 //
-// Drag-out-of-catalog is stream 17-W3 — rows are deliberately NOT `draggable`
-// yet. Reads specs from the store exactly as the palette does (no new fetch);
-// every insert funnels through the existing `createNode`.
+// Stream 17-W3 (this file) adds drag-out-of-catalog via the D6 ghost-state
+// model: rows are now `draggable` and set the SAME `PALETTE_SPEC_MIME` payload
+// the old Palette set, so `GraphView`'s existing drop handler creates the node
+// at the drop point with zero canvas changes. On `dragstart` the popover stays
+// mounted/open but enters a ghost state (`data-dragging="true"` → dimmed to
+// opacity 0.25 + `pointer-events: none`) so the drop lands on the canvas
+// beneath, not the popover; light-dismiss is suspended for the drag's duration.
+// On `dragend` the `dataTransfer.dropEffect` decides: a real drop ('copy')
+// closes the catalog; a cancelled drag ('none') restores it fully, query and
+// highlight intact. Reads specs from the store exactly as the palette does (no
+// new fetch); every insert funnels through the existing `createNode`.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { CATEGORY_SECTIONS, categoryFor, type CategoryId } from '../catalog/categories';
+// The catalog reuses the W5→W4 drag contract byte-for-byte; W4 relocates this
+// constant out of Palette, so for now it is imported, not moved.
+import { PALETTE_SPEC_MIME } from './Palette';
 import { setCatalogSectionCollapsed, toggleCatalogSection } from '../store/catalog';
 import { createNode } from '../store/sync';
 import { useCatalogSelector } from '../store/useCatalog';
@@ -106,6 +117,9 @@ export function NodeCatalog({
   // null falls back to the first visible entry (resolved below).
   const [highlightedId, setHighlightedId] = useState<string | null>(null);
   const [inserting, setInserting] = useState(false);
+  // Transient D6 ghost state: true only while an entry is being dragged out.
+  // Dims + pass-through the popover so the drop lands on the canvas beneath.
+  const [dragging, setDragging] = useState(false);
 
   const rootRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -124,6 +138,7 @@ export function NodeCatalog({
     else {
       setQuery('');
       setHighlightedId(null);
+      setDragging(false); // never leave the ghost state pinned across a close
     }
   }, [open]);
 
@@ -160,6 +175,8 @@ export function NodeCatalog({
   useEffect(() => {
     if (!open) return;
     const onPointerDown = (event: MouseEvent) => {
+      // Suspended mid-drag (D6): a drop on the canvas is not an "outside click".
+      if (dragging) return;
       if (rootRef.current && event.target instanceof Node && !rootRef.current.contains(event.target)) {
         setOpen(false);
       }
@@ -179,7 +196,7 @@ export function NodeCatalog({
       document.removeEventListener('mousedown', onPointerDown);
       window.removeEventListener('keydown', onKeyDown, true);
     };
-  }, [open]);
+  }, [open, dragging]);
 
   // Group matching specs into the D2 sections, in pipeline order, dropping empty
   // sections. Match scope (D5): case-insensitive substring over name, the
@@ -378,6 +395,7 @@ export function NodeCatalog({
         <div
           className="ge-catalog__panel"
           data-testid="node-catalog"
+          data-dragging={dragging ? 'true' : undefined}
           role="dialog"
           aria-label="Add node"
         >
@@ -453,6 +471,25 @@ export function NodeCatalog({
                                   disabled={inserting}
                                   title={summary || `add a ${spec.id} node`}
                                   onClick={(event) => void insert(spec.id, event.altKey)}
+                                  draggable
+                                  onDragStart={(event) => {
+                                    // Drag-to-place (D6): the SAME payload the old
+                                    // Palette set, so GraphView's onDrop is byte-for-byte
+                                    // compatible and the canvas needs no change. The drag
+                                    // image is captured now, so dimming the panel next
+                                    // does not affect the cursor ghost.
+                                    event.dataTransfer.setData(PALETTE_SPEC_MIME, spec.id);
+                                    event.dataTransfer.effectAllowed = 'copy';
+                                    setDragging(true);
+                                  }}
+                                  onDragEnd={(event) => {
+                                    // dropEffect 'none' ⇒ cancelled (Esc / invalid
+                                    // target) → restore; anything else ⇒ a real drop
+                                    // on the canvas → close (D6).
+                                    const dropped = event.dataTransfer.dropEffect !== 'none';
+                                    setDragging(false);
+                                    if (dropped) setOpen(false);
+                                  }}
                                 >
                                   <span className="ge-catalog__entry-main">
                                     <span className="ge-catalog__entry-name">{spec.name}</span>
