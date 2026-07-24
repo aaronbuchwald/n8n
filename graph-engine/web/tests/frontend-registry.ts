@@ -713,7 +713,7 @@ export const PANELS: Panel[] = [
         description: 'Selecting another entry swaps the canvas and writes ?graph=<id> to the URL.',
         trigger: 'Open the menu, click [data-testid="graph-picker-option-capacity_check"].',
         expect:
-          'The URL gains ?graph=capacity_check, capacity_check nodes (check_verdict) render, and the button reads "Capacity check".',
+          'The URL gains ?graph=capacity_check, capacity_check nodes (calc_card) render, and the button reads "Capacity check".',
         steps: [
           { kind: 'click', target: { testid: 'graph-picker-button' } },
           { kind: 'waitVisible', target: { testid: 'graph-picker-menu' } },
@@ -726,7 +726,7 @@ export const PANELS: Panel[] = [
         ],
         checks: [
           { kind: 'containsText', target: { testid: 'graph-picker-button' }, text: 'Capacity check' },
-          { kind: 'visible', target: { selector: '[data-testid="spec-node"]', hasText: 'check_verdict' } },
+          { kind: 'visible', target: { selector: '[data-testid="spec-node"]', hasText: 'calc_card' } },
           { kind: 'externalRequestsZero' },
         ],
       },
@@ -1111,9 +1111,9 @@ export const PANELS: Panel[] = [
         id: 'derived-sockets-inspectable',
         description:
           "A dynamic node's derived, wired sockets (C_min/F_max) are listed read-only with their wired tag.",
-        trigger: 'On ?graph=capacity_check select the steps node; read the derived input rows.',
+        trigger: 'On ?graph=handcalc_demo select the steps node; read the derived input rows.',
         expect: 'A derived inspector-input row shows a .ge-inspector__tag--wired tag and no editor slot.',
-        url: '/?graph=capacity_check',
+        url: '/?graph=handcalc_demo',
         steps: [{ kind: 'click', target: nodeHeader('steps') }],
         checks: [
           { kind: 'visible', target: { testid: 'node-inspector' } },
@@ -1231,7 +1231,7 @@ export const PANELS: Panel[] = [
     id: 'calc-widget',
     name: 'Calc widget (dynamic handcalc)',
     description:
-      "The dynamic equation editor (ADR 0007) on capacity_check's handcalc node (id steps): live derived symbol chips, invalid-equation refusal, commit reshapes sockets, and symbol-removal prune-with-toast.",
+      "The dynamic equation editor (ADR 0007) on handcalc_demo's handcalc node (id steps): live derived symbol chips, invalid-equation refusal, commit reshapes sockets, and symbol-removal prune-with-toast.",
     testids: [
       'widget-editor-calc-input',
       'calc-sockets',
@@ -1245,9 +1245,9 @@ export const PANELS: Panel[] = [
       {
         id: 'derived-sockets-render',
         description: "The node's derived sockets (C_min, F_max, lines) render on the canvas from the store.",
-        trigger: 'Boot ?graph=capacity_check; read the steps node sockets.',
+        trigger: 'Boot ?graph=handcalc_demo; read the steps node sockets.',
         expect: 'Socket name C_min is visible on the steps card.',
-        url: '/?graph=capacity_check',
+        url: '/?graph=handcalc_demo',
         steps: [],
         checks: [
           {
@@ -1261,9 +1261,9 @@ export const PANELS: Panel[] = [
       {
         id: 'open-calc-editor',
         description: 'Selecting the steps node shows the calc editor in the inspector with the committed equation.',
-        trigger: 'On ?graph=capacity_check click the steps node-title; read [data-testid="widget-editor-calc-input"].',
+        trigger: 'On ?graph=handcalc_demo click the steps node-title; read [data-testid="widget-editor-calc-input"].',
         expect: 'widget-editor-calc-input is visible.',
-        url: '/?graph=capacity_check',
+        url: '/?graph=handcalc_demo',
         steps: [
           { kind: 'click', target: { selector: '.react-flow__node[data-id="steps"] [data-testid="node-title"]' } },
           { kind: 'waitVisible', target: { testid: 'node-inspector' } },
@@ -1281,7 +1281,7 @@ export const PANELS: Panel[] = [
           'Open the calc editor, fill it with the equation + " + extra"; observe the "extra" chip go data-state="added".',
         expect:
           'The [data-testid="calc-symbol-chip"][data-symbol="extra"] gains data-state="added" and no PUT fires.',
-        url: '/?graph=capacity_check',
+        url: '/?graph=handcalc_demo',
         steps: [
           { kind: 'click', target: { selector: '.react-flow__node[data-id="steps"] [data-testid="node-title"]' } },
           { kind: 'waitVisible', target: { testid: 'widget-editor-calc-input' } },
@@ -1310,7 +1310,7 @@ export const PANELS: Panel[] = [
         // browser logs a "Failed to load resource … 422" console error which is
         // expected here, so the probe ignores it for this action only.
         expectsServerRejection: true,
-        url: '/?graph=capacity_check',
+        url: '/?graph=handcalc_demo',
         steps: [
           { kind: 'click', target: { selector: '.react-flow__node[data-id="steps"] [data-testid="node-title"]' } },
           { kind: 'waitVisible', target: { testid: 'widget-editor-calc-input' } },
@@ -1325,9 +1325,9 @@ export const PANELS: Panel[] = [
         id: 'commit-reshapes-sockets',
         description: 'A valid commit reshapes the node sockets on the canvas (folded from the store).',
         trigger:
-          'Add a new symbol, give it an inline value, Ctrl+Enter to apply (PUT /api/graphs/capacity_check/graph).',
+          'Add a new symbol, give it an inline value, Ctrl+Enter to apply (PUT /api/graphs/handcalc_demo/graph).',
         expect:
-          'The new socket appears on the steps card. DESTRUCTIVE — rewrites capacity_check.py (restore in finally).',
+          'The new socket appears on the steps card. DESTRUCTIVE — rewrites handcalc_demo.py (restore in finally).',
         review: true,
         steps: [
           {
@@ -1471,9 +1471,9 @@ export const PANELS: Panel[] = [
       {
         id: 'latex-renderer',
         description: "handcalc's latex renderer typesets its LaTeX socket with KaTeX in the host DOM.",
-        trigger: 'On ?graph=capacity_check run the graph; read the latex-renderer.',
+        trigger: 'On ?graph=handcalc_demo run the graph; read the latex-renderer.',
         expect: '[data-testid="latex-renderer"] renders KaTeX markup (not a raw string).',
-        url: '/?graph=capacity_check',
+        url: '/?graph=handcalc_demo',
         steps: [
           { kind: 'click', target: { testid: 'run-button' } },
           { kind: 'waitVisible', target: { testid: 'run-results' }, timeoutMs: 20000 },

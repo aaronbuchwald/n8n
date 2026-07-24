@@ -48,7 +48,7 @@ export default defineConfig({
       dependencies: ['chromium'],
     },
     {
-      // The calc widget (ADR 0007 W) commits equations against capacity_check,
+      // The calc widget (ADR 0007 W) commits equations against handcalc_demo,
       // REALLY rewriting its module and restoring it afterwards — it must own
       // the workspace alone too. Run alone with: --project=calc --no-deps
       name: 'calc',

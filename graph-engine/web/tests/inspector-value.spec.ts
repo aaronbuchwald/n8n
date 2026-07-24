@@ -10,8 +10,8 @@ import { test, expect, type Page } from '@playwright/test';
 // Chromium, so navigator.clipboard works once granted.
 test.use({ permissions: ['clipboard-read', 'clipboard-write'] });
 
-async function gotoCapacityCheck(page: Page) {
-  await page.goto('/?graph=capacity_check');
+async function gotoHandcalcDemo(page: Page) {
+  await page.goto('/?graph=handcalc_demo');
   await expect(page.locator('[data-testid="flow-canvas"][data-layout-ready="true"]')).toBeVisible({
     timeout: 15_000,
   });
@@ -58,7 +58,7 @@ async function readClipboard(page: Page): Promise<string> {
 test('the inspector shows the full latex output, not a truncated preview, and copies it verbatim', async ({
   page,
 }) => {
-  await gotoCapacityCheck(page);
+  await gotoHandcalcDemo(page);
   await runGraph(page);
   await selectSteps(page);
 
@@ -83,7 +83,7 @@ test('the inspector shows the full latex output, not a truncated preview, and co
 });
 
 test('a long value block can be expanded to show more', async ({ page }) => {
-  await gotoCapacityCheck(page);
+  await gotoHandcalcDemo(page);
   await runGraph(page);
   await selectSteps(page);
 
@@ -106,7 +106,7 @@ test('a long value block can be expanded to show more', async ({ page }) => {
 });
 
 test('an input value block copies its full value too', async ({ page }) => {
-  await gotoCapacityCheck(page);
+  await gotoHandcalcDemo(page);
   await runGraph(page);
   await selectSteps(page);
 
@@ -123,7 +123,7 @@ test('an input value block copies its full value too', async ({ page }) => {
 });
 
 test('the call-site source block shows and copies the full statement', async ({ page }) => {
-  await gotoCapacityCheck(page);
+  await gotoHandcalcDemo(page);
   await selectSteps(page);
 
   const callsite = page.getByTestId('inspector-callsite');
