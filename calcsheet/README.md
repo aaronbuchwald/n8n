@@ -33,7 +33,7 @@ Two runtime dependencies, both pure Python: `sympy` and `latex2mathml`.
 ```python
 Input(value, ref="", unit="")            # a given quantity
 Formula(symbol, expr, ref="", unit="")   # expr: string over prior symbols
-Check(expr, description="")              # boolean expression over the scope
+Check(expr, description="", utilisation="")  # boolean expr; utilisation names a symbol
 Calc(title, as_of, inputs, formulas, checks, precision=3)
 
 calc.evaluate() -> Result
@@ -81,6 +81,13 @@ html = render_html(result)
 - **Checks see the final scope** and produce real Python booleans.
 - **Binary severity.** Any false check ⇒ overall `passed is False`. There is no
   warn level.
+- **Utilisation augments the verdict; it never replaces it.** A check may name
+  the symbol that *is* its utilisation (`Check("eta <= 0.833", "target",
+  utilisation="eta")`); the result then carries `CheckResult.utilisation`, the
+  `limit` it is measured against, and `Result.governing` — the worst check and
+  its utilisation, tie-broken toward the tighter limit. `passed` is computed
+  exactly as before, so geometry checks (`spacing >= 4 * d`) stay naturally
+  boolean and a calc that declares no utilisation is unchanged in every field.
 - **`as_of` is caller-provided**, never `datetime.now()`.
 - **Errors are early and named.** Unknown symbol, duplicate symbol, unparseable
   expression and a non-boolean check all raise `CalcError` naming the offending
@@ -108,8 +115,11 @@ a slot is only emitted when the slot is filled.
 The substituted middle step is deliberately dropped — that is the C4 model, and
 it is why `handcalcs` is not used here. Design checks render as one row each:
 check expression as math, its description, the substituted boolean
-(`57.1 < 50 = False`) and a PASS/FAIL badge. Light and dark themes ship via
-`prefers-color-scheme`.
+(`57.1 < 50 = False`) and a PASS/FAIL badge. A check that reports a utilisation
+gains a fourth column with the margin itself — `0.759 ≤ 0.833`, which is what an
+engineer actually reads — and the governing check is named in the card foot.
+Light and dark themes ship via `prefers-color-scheme`, or are pinned with
+`HtmlOptions(theme="light"|"dark")`.
 
 ### One result, many renderings
 
@@ -143,7 +153,7 @@ From a clean checkout, in this directory (`calcsheet/`). `uv` creates and syncs
 the environment on the first run — no separate install step:
 
 ```bash
-# tests (61 of them)
+# tests (79 of them)
 uv run --extra dev python -m pytest -q
 
 # the example: writes out/capacity-check.html and opens it in a browser

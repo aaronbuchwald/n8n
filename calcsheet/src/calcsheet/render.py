@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from html import escape
 
 from .errors import CalcError
-from .evaluate import CheckResult, Result, Row
+from .evaluate import CheckResult, Result, Row, format_value
 from .mathml import assert_plain_mathml
 
 # Adapted from the owner-approved strawman. Light and dark are the same design
@@ -103,6 +103,13 @@ _SLOT_CSS = """.card__banner{padding:10px 20px;border-bottom:1px solid var(--lin
             font-size:11.5px}
 """
 
+# Same rule as the slots: only calcs that report a utilisation pay for the
+# fourth chip column. `.chk--util` follows `.chk`, so the override wins.
+_UTILISATION_CSS = """.chk--util{grid-template-columns:1fr auto auto auto}
+.chk__util{font-family:var(--mono);font-size:13.5px;font-weight:700;
+           font-variant-numeric:tabular-nums;white-space:nowrap}
+"""
+
 _THEMES = {"auto": _DARK_MEDIA, "light": "", "dark": _DARK_ALWAYS}
 
 
@@ -131,9 +138,15 @@ class HtmlOptions:
             )
 
 
-def _stylesheet(options: HtmlOptions, *, with_slots: bool) -> str:
+def _stylesheet(
+    options: HtmlOptions, *, with_slots: bool, with_utilisation: bool
+) -> str:
     css = _LIGHT_VARS + _THEMES[options.theme] + _BASE_CSS
-    return css + _SLOT_CSS if with_slots else css
+    if with_slots:
+        css += _SLOT_CSS
+    if with_utilisation:
+        css += _UTILISATION_CSS
+    return css
 
 
 def _verdict(passed: bool) -> str:
@@ -175,7 +188,20 @@ def _section_html(label: str, rows: tuple[Row, ...], *, with_definition: bool) -
     )
 
 
-def _check_html(check: CheckResult) -> str:
+def _margin_text(check: CheckResult, precision: int) -> str:
+    """``0.759 ≤ 0.833`` — the margin an engineer reads instead of PASS.
+
+    ``≤`` is the utilisation relation itself ("must not exceed the limit"),
+    not the check's operator; the exact operator and numbers sit alongside in
+    the substituted string.
+    """
+    utilisation = format_value(check.utilisation, precision)
+    if check.limit is None:
+        return utilisation
+    return f"{utilisation} ≤ {format_value(check.limit, precision)}"
+
+
+def _check_html(check: CheckResult, precision: int) -> str:
     assert_plain_mathml(check.expr_mathml)
     verdict = _verdict(check.passed).lower()
     description = (
@@ -183,18 +209,26 @@ def _check_html(check: CheckResult) -> str:
         if check.description
         else ""
     )
+    margin = (
+        f'          <span class="chk__util">'
+        f"{escape(_margin_text(check, precision))}</span>\n"
+        if check.utilisation is not None
+        else ""
+    )
+    chip = "chk chk--util" if margin else "chk"
     return (
-        '        <div class="chk">\n'
+        f'        <div class="{chip}">\n'
         f'          <div><span class="chk__eq">{check.expr_mathml}</span>'
         f"{description}</div>\n"
+        f"{margin}"
         f'          <span class="chk__bool">{escape(check.substituted)}</span>\n'
         f'          <span class="badge badge--{verdict}">{_verdict(check.passed)}</span>\n'
         "        </div>"
     )
 
 
-def _checks_html(checks: tuple[CheckResult, ...]) -> str:
-    body = "\n".join(_check_html(check) for check in checks)
+def _checks_html(checks: tuple[CheckResult, ...], precision: int) -> str:
+    body = "\n".join(_check_html(check, precision) for check in checks)
     return (
         '    <div class="sec">\n'
         '      <p class="sec__label">Design checks</p>\n'
@@ -224,7 +258,18 @@ def render_html(result: Result, options: HtmlOptions | None = None) -> str:
         if options.footer
         else ""
     )
-    stylesheet = _stylesheet(options, with_slots=bool(banner or note))
+    with_utilisation = any(check.utilisation is not None for check in result.checks)
+    stylesheet = _stylesheet(
+        options, with_slots=bool(banner or note), with_utilisation=with_utilisation
+    )
+
+    governing = ""
+    if result.governing is not None:
+        expr, utilisation = result.governing
+        governing = (
+            f"\n      Governing check <b>{escape(expr)}</b> at "
+            f"<b>{escape(format_value(utilisation, result.precision))}</b>."
+        )
 
     verdict = _verdict(result.passed)
     sections = []
@@ -235,7 +280,7 @@ def render_html(result: Result, options: HtmlOptions | None = None) -> str:
             _section_html("Calculation", result.formulas, with_definition=True)
         )
     if result.checks:
-        sections.append(_checks_html(result.checks))
+        sections.append(_checks_html(result.checks, result.precision))
     body = "\n\n".join(sections)
 
     return f"""<!doctype html>
@@ -258,7 +303,7 @@ def render_html(result: Result, options: HtmlOptions | None = None) -> str:
 {body}
 
     <div class="foot">
-      Overall <b>{verdict}</b> — a calc is valid only when <b>every</b> check passes.
+      Overall <b>{verdict}</b> — a calc is valid only when <b>every</b> check passes.{governing}
     </div>{note}
   </div>
 </div>

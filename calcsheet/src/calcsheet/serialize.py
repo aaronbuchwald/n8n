@@ -52,6 +52,10 @@ def _flag(value: object, *, what: str) -> bool:
     return value
 
 
+def _optional_number(value: object, *, what: str) -> float | None:
+    return None if value is None else _number(value, what=what)
+
+
 def _mapping(value: object, *, what: str) -> Mapping[str, object]:
     if not isinstance(value, Mapping):
         raise CalcError(f"{what} must be an object, got {value!r}")
@@ -115,6 +119,8 @@ def _check_to_dict(check: CheckResult) -> dict[str, object]:
         "description": check.description,
         "substituted": check.substituted,
         "passed": check.passed,
+        "utilisation": check.utilisation,
+        "limit": check.limit,
     }
 
 
@@ -134,6 +140,10 @@ def _check_from_dict(data: object, *, what: str) -> CheckResult:
             _field(check, "substituted", what=what), what=f"{what} substituted"
         ),
         passed=_flag(_field(check, "passed", what=what), what=f"{what} passed"),
+        utilisation=_optional_number(
+            _field(check, "utilisation", what=what), what=f"{what} utilisation"
+        ),
+        limit=_optional_number(_field(check, "limit", what=what), what=f"{what} limit"),
     )
 
 
@@ -149,6 +159,8 @@ def result_to_dict(result: Result) -> dict[str, object]:
         "checks": [_check_to_dict(check) for check in result.checks],
         "values": dict(result.values),
         "passed": result.passed,
+        # A JSON array, not a tuple; from_dict puts the pair back.
+        "governing": None if result.governing is None else list(result.governing),
     }
 
 
@@ -163,6 +175,20 @@ def result_from_dict(data: Mapping[str, object]) -> Result:
         raise CalcError(
             f"{what} has schema version {version!r}; this calcsheet reads "
             f"version {RESULT_SCHEMA_VERSION}"
+        )
+
+    governing_data = _field(payload, "governing", what=what)
+    governing: tuple[str, float] | None = None
+    if governing_data is not None:
+        pair = _sequence(governing_data, what=f"{what} governing")
+        if len(pair) != 2:
+            raise CalcError(
+                f"{what} governing must be [check, utilisation], "
+                f"got {governing_data!r}"
+            )
+        governing = (
+            _text(pair[0], what=f"{what} governing check"),
+            _number(pair[1], what=f"{what} governing utilisation"),
         )
 
     values = _mapping(_field(payload, "values", what=what), what=f"{what} values")
@@ -189,4 +215,5 @@ def result_from_dict(data: Mapping[str, object]) -> Result:
             for name, value in values.items()
         },
         passed=_flag(_field(payload, "passed", what=what), what=f"{what} passed"),
+        governing=governing,
     )

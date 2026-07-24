@@ -8,21 +8,23 @@ disagree with the numbers it was built from.
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
 from .errors import CalcError
 from .mathml import (
     assert_plain_mathml,
+    bound_sides,
     evaluate_numeric,
     expression_mathml,
     free_names,
     is_boolean,
+    is_symbol_named,
     parse_expression,
     substitute,
     symbol_mathml,
 )
-from .model import Calc
+from .model import Calc, Check
 
 # Identifiers in the author's own expression text, replaced one pass at a time
 # so a substituted number can never be re-substituted.
@@ -49,18 +51,32 @@ class Row:
 
 @dataclass(frozen=True)
 class CheckResult:
-    """One design check and its verdict."""
+    """One design check and its verdict.
+
+    ``passed`` is the verdict and is authoritative. ``utilisation`` and
+    ``limit`` are the same fact as a margin an engineer can read and tooling
+    can rank — present only when the check declared a utilisation symbol and
+    (for ``limit``) the check is an inequality bounding it.
+    """
 
     expr: str
     expr_mathml: str
     description: str
     substituted: str  # e.g. "57.1 < 50 = False"
     passed: bool
+    utilisation: float | None = None
+    limit: float | None = None
 
 
 @dataclass(frozen=True)
 class Result:
-    """Everything a renderer needs — and nothing it has to recompute."""
+    """Everything a renderer needs — and nothing it has to recompute.
+
+    ``governing`` is ``(check expression, utilisation)`` for the worst check
+    that reported one — the critical case a reviewer looks for first. It is
+    ``None`` when no check declared a utilisation; ``passed`` does not depend
+    on it.
+    """
 
     title: str
     as_of: str
@@ -70,6 +86,7 @@ class Result:
     checks: tuple[CheckResult, ...]
     values: Mapping[str, float] = field(default_factory=dict)
     passed: bool = True
+    governing: tuple[str, float] | None = None
 
     def to_dict(self) -> dict[str, object]:
         """This result as a versioned, ``json.dumps``-able dict."""
@@ -148,6 +165,63 @@ def _row(
     )
 
 
+def _margin(
+    check: Check, expr, scope: Mapping[str, float], *, what: str
+) -> tuple[float | None, float | None]:
+    """A check's utilisation and the limit it is measured against.
+
+    Both are ``None`` for a check that declared no utilisation symbol — the
+    binary verdict is unaffected either way. ``limit`` additionally needs the
+    check to be an inequality bounding that very symbol (``eta <= 1.0``), so
+    the two numbers are genuinely comparable; anything else reports the
+    utilisation alone rather than a misleading pairing.
+    """
+    if not check.utilisation:
+        return None, None
+    if check.utilisation not in scope:
+        raise CalcError(
+            f"{what}: utilisation symbol {check.utilisation!r} is not defined; "
+            f"available names: {_known(scope)}"
+        )
+    utilisation = scope[check.utilisation]
+
+    sides = bound_sides(expr)
+    if sides is None:
+        return utilisation, None
+    bounded, bound = sides
+    if not is_symbol_named(bounded, check.utilisation):
+        return utilisation, None
+    if check.utilisation in free_names(bound):
+        return utilisation, None
+    return utilisation, evaluate_numeric(bound, scope, what=what)
+
+
+def _governing(checks: Sequence[CheckResult]) -> tuple[str, float] | None:
+    """The worst reported utilisation and the check it came from.
+
+    Two checks can share one utilisation symbol against different limits
+    (``eta <= 1.0`` and ``eta <= 0.833``); the tighter limit is the one that
+    actually binds, so it wins the tie. Anything still tied goes to the
+    earlier check, keeping the answer deterministic.
+    """
+    worst: CheckResult | None = None
+    for check in checks:
+        if check.utilisation is None:
+            continue
+        if worst is None or check.utilisation > worst.utilisation:
+            worst = check
+        elif check.utilisation == worst.utilisation and _tighter(check, worst):
+            worst = check
+    return None if worst is None else (worst.expr, worst.utilisation)
+
+
+def _tighter(check: CheckResult, than: CheckResult) -> bool:
+    """True when ``check`` binds harder — a stated limit beats none."""
+    if check.limit is None:
+        return False
+    return than.limit is None or check.limit < than.limit
+
+
 def evaluate_calc(calc: Calc) -> Result:
     """Evaluate ``calc`` once: inputs seed the scope, formulas thread through it.
 
@@ -220,6 +294,7 @@ def evaluate_calc(calc: Calc) -> Result:
             ) from error
         markup = expression_mathml(expr)
         assert_plain_mathml(markup)
+        utilisation, limit = _margin(check, expr, scope, what=what)
         check_results.append(
             CheckResult(
                 expr=check.expr,
@@ -229,6 +304,8 @@ def evaluate_calc(calc: Calc) -> Result:
                     f"{_substituted_text(check.expr, scope, calc.precision)} = {passed}"
                 ),
                 passed=passed,
+                utilisation=utilisation,
+                limit=limit,
             )
         )
 
@@ -241,4 +318,5 @@ def evaluate_calc(calc: Calc) -> Result:
         checks=tuple(check_results),
         values=dict(scope),
         passed=all(check.passed for check in check_results),
+        governing=_governing(check_results),
     )
