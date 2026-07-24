@@ -1,7 +1,7 @@
 # ADR 0020 — Multi-line string literals in generated source
 
-Status: **proposed — OPEN QUESTIONS at the end are for sign-off** ·
-Scope: `graph-engine/` ·
+Status: **accepted** (2026-07; all five open questions confirmed at their
+recommended defaults — see the end) · Scope: `graph-engine/` ·
 Relates to: ADR 0004 (D5 literals, D7 straight-line form, Amendment A1),
 ADR 0007 (derived-input params `formulas` / `lines` are the multi-line values
 in practice), ADR 0018 (the multi-line *editor* for these same literals — this
@@ -406,7 +406,7 @@ Per-fragment `repr()`, i.e. Python's own rules, per line:
 
 Streams 1→2→3 are ordered by dependency; 4 and 5 are independent of 3.
 
-## Open questions — please confirm (recommended default in bold)
+## Open questions — **all five confirmed as recommended** (bold = the decision)
 
 1. **Which params get block form?** All string literals by value
    (**value-driven: any `str` containing `\n`**, D2) — or only params whose

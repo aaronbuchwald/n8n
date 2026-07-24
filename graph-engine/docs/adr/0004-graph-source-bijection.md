@@ -93,6 +93,12 @@ can't be branched on). This is a feature — it's what keeps the mapping clean.
 | edges ⟷ argument references | **non-dataflow Python** (control flow — unsupported in the composite by design) |
 | widget values ⟷ literal arguments | |
 
+"Canonical statement formatting" now includes ADR 0020's block form: a
+statement re-emitted with a multi-line string value spells it as parenthesized
+implicit concatenation (one fragment per line) inside an expanded call. The
+*value* is unchanged and byte-exact either way — only the spelling of a
+statement the save already rewrites.
+
 So precisely: **the graph is bijective with the dataflow-wiring composite,
 modulo layout and the formatting of the individual wiring statements that a
 given save actually rewrites** (see Amendment A1 — the earlier, stricter reading

@@ -151,8 +151,39 @@ test('D7-1/2/3: multi-line editing round-trips a referenced entry into the .py, 
       .toBe(withMargin);
     const rewritten = readFileSync(MODULE_PY, 'utf8');
     expect(rewritten).toContain('m = C_min - F_max  # margin over demand');
-    // `repr()` writeback keeps it ONE literal with escaped newlines (ADR 0004).
-    expect(rewritten).toContain(`formulas='${withMargin.replace(/\n/g, '\\n')}'`);
+    // ADR 0020 D1: the multi-line value is written back as parenthesized
+    // implicit concatenation — one repr()-escaped fragment per calc entry, each
+    // carrying its own `\n` — NOT one physical line of escaped newlines.
+    expect(rewritten).toContain(
+      "        formulas=(\n" +
+        "            'r = F_max / C_min  # demand / capacity\\n'\n" +
+        "            'U = 100 * r [%]  # utilisation\\n'\n" +
+        "            'm = C_min - F_max  # margin over demand'\n" +
+        '        ),\n',
+    );
+    expect(rewritten).not.toContain(`formulas='${withMargin.replace(/\n/g, '\\n')}'`);
+
+    // D3: because one argument went block form, the WHOLE call is expanded —
+    // one argument per line, trailing comma, closing paren at statement indent.
+    expect(rewritten).toContain(
+      '    card = calc_card(\n' +
+        "        title='Capacity check',\n" +
+        "        as_of='2026-07-24',\n" +
+        '        formulas=(\n' +
+        "            'r = F_max / C_min  # demand / capacity\\n'\n" +
+        "            'U = 100 * r [%]  # utilisation\\n'\n" +
+        "            'm = C_min - F_max  # margin over demand'\n" +
+        '        ),\n' +
+        '        checks=(\n' +
+        "            'U < 100  # capacity not exceeded\\n'\n" +
+        "            'U < 50  # utilisation target'\n" +
+        '        ),\n' +
+        '        F_max=F_max,\n' +
+        '        C_min=C_min,\n' +
+        '    )\n',
+    );
+    // No triple-quoted block was introduced: the argument stays a plain literal.
+    expect(rewritten).not.toContain('formulas="""');
 
     // Still exactly one surface for that value after the commit.
     await expect(row.getByTestId('inspector-value')).toHaveCount(0);
@@ -376,9 +407,17 @@ test('D7-8: a plain str param whose value holds a newline is edited in a textare
     await expect
       .poll(async () => cardInput(await servedGraph(page), 'title'), { timeout: 10_000 })
       .toBe('Capacity check\nrevision B\nrevision C');
-    expect(readFileSync(MODULE_PY, 'utf8')).toContain(
-      "title='Capacity check\\nrevision B\\nrevision C'",
+    // The rule is value-driven (ADR 0020 D2): a newline in ANY str param — a
+    // plain `title` included — lands as the block form, not an escaped one-liner.
+    const rewritten = readFileSync(MODULE_PY, 'utf8');
+    expect(rewritten).toContain(
+      '        title=(\n' +
+        "            'Capacity check\\n'\n" +
+        "            'revision B\\n'\n" +
+        "            'revision C'\n" +
+        '        ),\n',
     );
+    expect(rewritten).not.toContain("title='Capacity check\\nrevision B\\nrevision C'");
   });
 });
 
