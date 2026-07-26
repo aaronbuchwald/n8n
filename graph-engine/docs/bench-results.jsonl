@@ -1,0 +1,9 @@
+{"label":"calcsheet: uv sync (cold dep resolve+install)\n","seconds":0.51,"rc":0,"load_before":2.49,"load_after":2.49,"cores":4,"result":"\n","ts":"2026-07-26T17:49:04+00:00"}
+{"label":"graph-engine: uv sync (cold dep resolve+install)\n","seconds":0.42,"rc":0,"load_before":2.49,"load_after":2.45,"cores":4,"result":"\n","ts":"2026-07-26T17:49:05+00:00"}
+{"label":"web: pnpm install\n","seconds":1.53,"rc":0,"load_before":2.45,"load_after":2.45,"cores":4,"result":"\n","ts":"2026-07-26T17:49:07+00:00"}
+{"label":"web: pnpm build\n","seconds":18.81,"rc":0,"load_before":2.45,"load_after":2.84,"cores":4,"result":"\n","ts":"2026-07-26T17:49:25+00:00"}
+{"label":"calcsheet: pytest\n","seconds":3.81,"rc":0,"load_before":1.89,"load_after":1.90,"cores":4,"result":"93 passed\n","ts":"2026-07-26T17:50:22+00:00"}
+{"label":"graph-engine: pytest\n","seconds":21.83,"rc":0,"load_before":1.90,"load_after":3.65,"cores":4,"result":"636 passed\n","ts":"2026-07-26T17:50:44+00:00"}
+{"label":"web: pnpm install\n","seconds":1.27,"rc":0,"load_before":3.65,"load_after":4.24,"cores":4,"result":"\n","ts":"2026-07-26T17:50:45+00:00"}
+{"label":"web: pnpm typecheck\n","seconds":5.87,"rc":0,"load_before":4.24,"load_after":4.46,"cores":4,"result":"\n","ts":"2026-07-26T17:50:51+00:00"}
+{"label":"web: pnpm build (no-op rerun)\n","seconds":17.44,"rc":0,"load_before":4.46,"load_after":4.11,"cores":4,"result":"\n","ts":"2026-07-26T17:51:09+00:00"}

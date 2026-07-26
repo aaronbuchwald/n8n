@@ -1,0 +1,10 @@
+{"workers":1,"pass":up,"seconds":165.83,"rc":0,"load_before":4.62,"result":"122 passed"}
+{"workers":2,"pass":up,"seconds":191.34,"rc":1,"load_before":8.29,"result":"121 passed"}
+{"workers":3,"pass":up,"seconds":178.48,"rc":0,"load_before":23.67,"result":"122 passed"}
+{"workers":4,"pass":up,"seconds":190.35,"rc":1,"load_before":27.35,"result":"120 passed"}
+{"workers":6,"pass":up,"seconds":144.50,"rc":1,"load_before":29.44,"result":"120 passed"}
+{"workers":6,"pass":down,"seconds":109.35,"rc":1,"load_before":27.09,"result":"120 passed"}
+{"workers":4,"pass":down,"seconds":129.43,"rc":1,"load_before":22.61,"result":"120 passed"}
+{"workers":3,"pass":down,"seconds":176.39,"rc":1,"load_before":26.97,"result":"120 passed"}
+{"workers":2,"pass":down,"seconds":153.58,"rc":1,"load_before":23.64,"result":"120 passed"}
+{"workers":1,"pass":down,"seconds":241.44,"rc":1,"load_before":20.36,"result":"120 passed"}

@@ -1,0 +1,5 @@
+{"label":"solo-w1","workers":1,"seconds":165.74,"rc":1,"load_mean":9.80,"passed":"119 passed","failed":"3 failed"}
+{"label":"solo-w2","workers":2,"seconds":130.14,"rc":1,"load_mean":14.24,"passed":"120 passed","failed":"2 failed"}
+{"label":"solo-w4","workers":4,"seconds":107.09,"rc":1,"load_mean":20.11,"passed":"120 passed","failed":"2 failed"}
+{"label":"conc-A","workers":2,"seconds":172.41,"rc":1,"load_mean":20.00,"passed":"120 passed","failed":"2 failed"}
+{"label":"conc-B","workers":2,"seconds":176.51,"rc":1,"load_mean":20.06,"passed":"120 passed","failed":"2 failed"}
