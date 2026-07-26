@@ -12,6 +12,7 @@ self-contained** (no runtime dependencies, no reference to any other project).
 | [`web/`](web/) | **Web shell (B1):** a read-only ReactFlow render of the example graph. Self-contained Vite + React + TS app with its own `package.json` (not part of any pnpm workspace); all assets bundled locally, no CDN. See [`web/README.md`](web/README.md). |
 | `freeze_schemas.py` | Writes the golden example snapshots to `engine/schemas/` (and the schema contract on demand, `--contract`). |
 | `docs/adr/` | Architecture decision records (start with `0001` for the core design + deferrals). |
+| [`docs/grouping-strategies.md`](docs/grouping-strategies.md) | How a population of member forces is divided into connection groups — the strategy contract, its invariants, both shipped strategies, and how to add a third. |
 | `tests/` | 33 tests: introspection, bind/validation, run, tracing, ordering, and the graph→Python round-trip. |
 
 ## Author a graph as ordinary Python

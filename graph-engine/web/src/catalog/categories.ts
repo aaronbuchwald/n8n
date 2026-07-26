@@ -79,9 +79,12 @@ export const CATEGORY_BY_ID: Readonly<Record<string, CategoryId>> = {
   // Logic — select, branch, judge.
   'sym.pick': 'logic',
   'rfem.governing_force': 'logic', // it *chooses* the governing row; reading is read_extrema's job
+  'rfem.member_ends': 'logic', // same selection, all the winners kept: the population to divide
+  'grouping.group': 'logic', // divides that population into connection groups
   // Render / Output — produce a human-readable artifact.
   'sources.write_json': 'render-output', // the graph's product leaving it as a file
   'sheet.calc_card': 'render-output', // evaluates a calc, but its product is the card
+  'sheet.group_card': 'render-output', // runs one calc per group, but its product is the one card
   'sheet.render_html': 'render-output',
   'table.table_summary': 'render-output',
   'calc.render_summary': 'render-output',
@@ -99,6 +102,7 @@ export const CATEGORY_BY_ID: Readonly<Record<string, CategoryId>> = {
 export const CATEGORY_BY_MODULE: Readonly<Record<string, CategoryId>> = {
   sources: 'input-data',
   rfem: 'input-data',
+  grouping: 'logic',
   table: 'table',
   calc: 'math',
   sym: 'math',
