@@ -103,33 +103,25 @@ def read_json(path: str = "inputs.json") -> dict:
     return data
 
 
-def _entry_value(entry: object) -> object:
-    """The number an entry carries — bare, or inside a ``value`` field.
-
-    Two accepted spellings, because a source often wants to say more about a
-    value than the value itself: ``{"b": 220}`` and
-    ``{"b": {"value": 220, "unit": "mm"}}`` both mean 220. Anything else the
-    caller sees as-is and rejects with its own message.
-    """
-    if isinstance(entry, dict) and "value" in entry:
-        return entry["value"]
-    return entry
-
-
 @node
-def pick(data: dict, key: str = "") -> float | None:
-    """One named value out of a JSON object.
+def pick(data: dict, key: str = "") -> float | dict | None:
+    """One named entry out of a JSON object — whatever is there.
 
     ``data`` is an object keyed by name (from :func:`read_json` or any node that
-    emits a ``dict``); ``key`` names the value to take. The entry may be the
-    number itself or a record carrying it under ``value`` — that second form is
-    what lets a source keep provenance (a unit, a code reference) next to the
-    number instead of in a second file.
+    emits a ``dict``); ``key`` names the entry to take. Three shapes come back,
+    and the node does not choose between them — the source did:
 
-    JSON ``null`` yields ``None``: the value is *absent by intent*, which is a
-    different statement from a missing key. Downstream, ``sheet``'s calc nodes
-    read that as an **empty given** — the ``–`` an engineering sheet prints for
-    a quantity that does not apply. A missing key, by contrast, is a wiring
+    * a **number** — returned as a ``float``;
+    * ``null`` — returned as ``None``. The value is *absent by intent*, which is
+      a different statement from a missing key. A consumer is free to read that
+      as "not applicable"; ``sheet``'s calc nodes render it as an empty given.
+    * an **object** — returned verbatim. A source that wants to say more about a
+      value than the value itself (a unit, a code reference, a timestamp) puts
+      it beside the number, and this node hands the whole record on rather than
+      throwing the context away.
+
+    Interpreting a record is the *consumer's* business, deliberately: this node
+    knows only that it picked something. A missing key, by contrast, is a wiring
     mistake and raises, listing what the object does have.
     """
     if not isinstance(data, dict):
@@ -141,16 +133,16 @@ def pick(data: dict, key: str = "") -> float | None:
         known = ", ".join(repr(k) for k in data) or "(nothing)"
         raise UserError(f"no key {key!r} in the data; it has: {known}")
 
-    value = _entry_value(data[key])
-    if value is None:
-        return None
+    entry = data[key]
+    if entry is None or isinstance(entry, dict):
+        return entry
     # bool is an int subclass, and a flag is not a quantity.
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    if isinstance(entry, bool) or not isinstance(entry, (int, float)):
         raise UserError(
-            f"key {key!r} must hold a number or null, got {value!r} "
-            f"({type(value).__name__})"
+            f"key {key!r} must hold a number, null, or an object, got {entry!r} "
+            f"({type(entry).__name__})"
         )
-    return float(value)
+    return float(entry)
 
 
 NODES = [read_csv, mock_api, read_json, pick]

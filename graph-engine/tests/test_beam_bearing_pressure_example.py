@@ -63,7 +63,11 @@ def _rows(result) -> dict[str, object]:
 
 
 def _result():
-    """The card's own ``Result`` — the graph's numbers, not a re-derivation."""
+    """The card's own ``Result`` — the graph's numbers, not a re-derivation.
+
+    Fed exactly as the graph feeds it: one ``pick`` per given, in the order the
+    card's derived sockets are declared (which is row order on the card).
+    """
     import sheet
     import sources
     from beam_bearing_pressure import INPUTS_JSON, build_graph
@@ -72,7 +76,8 @@ def _result():
         n for n in build_graph().to_dict()["nodes"] if n["type"] == "sheet.calc_card"
     )
     data = sources.read_json(str(INPUTS_JSON))
-    values = {key: sources.pick(data, key) for key in data}
+    sockets = [s["name"] for s in sheet.formula_free_symbols(card["inputs"]["formulas"])]
+    values = {key: sources.pick(data, key) for key in sockets}
     return sheet.calc(
         title=card["inputs"]["title"],
         as_of=card["inputs"]["as_of"],
@@ -135,9 +140,9 @@ def test_the_calc_literal_carries_the_code_references_units_and_precision():
         "l_l = MinDefined(30, a_1) [mm]  # EN 1995-1-1 6.1.5 (1)\n"
         "l_r = MinDefined(30, l, l_1/2) [mm]  # EN 1995-1-1 6.1.5 (1)\n"
         "l_ef = l_l + l + l_r [mm]  # EN 1995-1-1 6.1.5 (1)\n"
-        "A_ef = l_ef * b [mm^2]  # EN 1995-1-1 6.1.5 (1)\n"
-        "sigma_c90d = F_c90d * 1000 / A_ef [N/mm^2]  # EN 1995-1-1 6.1.5 (1) (6.4)\n"
-        "f_c90d = k_mod * f_c90k / gamma_M [N/mm^2]  # EN 1995-1-1 2.4.1 (1)P (2.14)\n"
+        "A_ef = l_ef * b [mm²]  # EN 1995-1-1 6.1.5 (1)\n"
+        "sigma_c90d = F_c90d * 1000 / A_ef [N/mm²]  # EN 1995-1-1 6.1.5 (1) (6.4)\n"
+        "f_c90d = k_mod * f_c90k / gamma_M [N/mm²]  # EN 1995-1-1 2.4.1 (1)P (2.14)\n"
         "eta = sigma_c90d / (k_c90 * f_c90d) * 100 [%]  # EN 1995-1-1 6.1.5 (1)P (6.3)"
     )
     assert card["inputs"]["checks"] == (
@@ -185,19 +190,24 @@ def test_graph_loads_binds_and_runs_end_to_end():
     validate_graph(graph.to_dict())
     result = run(graph)
 
-    # The nine picks, including the empty one — `null` picks as `None`, which
-    # is what makes `l_1` an empty given downstream.
+    # Each pick hands on the whole record — number plus provenance — and the
+    # empty given's `value` is `None`, which is what makes `l_1` empty downstream.
     picked = {symbol: result.value(nid) for nid, symbol in zip(PICK_IDS, GIVENS)}
-    assert picked == {
+    assert {symbol: entry["value"] for symbol, entry in picked.items()} == {
         "F_c90d": 107.0,
-        "a_1": 0.0,
-        "l": 80.0,
+        "a_1": 0,
+        "l": 80,
         "l_1": None,
-        "b": 220.0,
+        "b": 220,
         "k_c90": 1.75,
         "k_mod": 0.9,
         "f_c90k": 2.5,
         "gamma_M": 1.3,
+    }
+    assert picked["F_c90d"] == {
+        "value": 107.0,
+        "unit": "kN",
+        "ref": "EN 1995-1-1 6.1.5 (1)",
     }
 
 
@@ -223,11 +233,34 @@ def test_the_rows_render_at_five_significant_digits():
         ("l_l", "0", "mm"),
         ("l_r", "30", "mm"),
         ("l_ef", "110", "mm"),
-        ("A_ef", "24200", "mm^2"),
-        ("sigma_c90d", "4.4215", "N/mm^2"),
-        ("f_c90d", "1.7308", "N/mm^2"),
+        ("A_ef", "24200", "mm²"),
+        ("sigma_c90d", "4.4215", "N/mm²"),
+        ("f_c90d", "1.7308", "N/mm²"),
         ("eta", "145.98", "%"),
     ]
+
+
+@needs_sym_extra
+def test_all_nine_givens_carry_their_unit_and_reference_from_inputs_json():
+    """The provenance in the JSON reaches the card's given rows, unaltered."""
+    from beam_bearing_pressure import INPUTS_JSON
+
+    source = json.loads(INPUTS_JSON.read_text(encoding="utf-8"))
+    rows = _result().inputs
+
+    assert [row.symbol for row in rows] == [
+        "a_1", "l", "l_1", "b", "F_c90d", "k_mod", "f_c90k", "gamma_M", "k_c90",
+    ]
+    # Every row's unit and reference are exactly the JSON's, for all nine.
+    assert {row.symbol: (row.unit, row.ref) for row in rows} == {
+        symbol: (entry["unit"], entry["ref"]) for symbol, entry in source.items()
+    }
+    # Spot-check the two the source sheet is most specific about.
+    given = {row.symbol: row for row in rows}
+    assert (given["F_c90d"].value_text, given["F_c90d"].unit) == ("107", "kN")
+    assert (given["l_1"].value_text, given["l_1"].unit) == ("–", "mm")
+    assert given["f_c90k"].unit == "N/mm²"
+    assert given["gamma_M"].ref == "DIN EN 1995-1-1/NA NDP 2.4.1(1)P"
 
 
 @needs_sym_extra
@@ -266,13 +299,16 @@ def test_output_html_carries_the_values_the_verdict_and_the_references():
     html = run(graph).value(graph.output["node"], graph.output["socket"])
 
     assert isinstance(html, str) and html.startswith("<!doctype html>")
-    assert "Auflagerdruck ohne Verstärkung" in html
+    assert "Support pressure without reinforcement" in html
     assert '110&nbsp;<span class="unit">mm</span>' in html
-    assert '24200&nbsp;<span class="unit">mm^2</span>' in html
-    assert '4.4215&nbsp;<span class="unit">N/mm^2</span>' in html
+    assert '24200&nbsp;<span class="unit">mm²</span>' in html
+    assert '4.4215&nbsp;<span class="unit">N/mm²</span>' in html
     assert '145.98&nbsp;<span class="unit">%</span>' in html
-    # The empty given renders as a dash, never as "None".
-    assert '<span class="val">–</span>' in html
+    # The given rows carry their unit and reference from inputs.json.
+    assert '107&nbsp;<span class="unit">kN</span>' in html
+    assert '<span class="ref">DIN EN 1995-1-1/NA NCI 6.1.5 (NA.5)</span>' in html
+    # The empty given renders as a dash — still with its unit — never as "None".
+    assert '–&nbsp;<span class="unit">mm</span>' in html
     assert "None" not in html
     # Authored code references land in the right-hand gutter.
     assert '<span class="ref">EN 1995-1-1 6.1.5 (1)P (6.3)</span>' in html

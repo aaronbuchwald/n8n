@@ -101,17 +101,26 @@ def test_read_json_reports_a_missing_file_and_bad_syntax(tmp_path: Path):
         sources.read_json(_write_json(tmp_path, "{oops"))
 
 
-def test_pick_reads_a_bare_number_and_a_record_carrying_one():
-    """Both spellings mean the same number — the record just adds provenance."""
+def test_pick_returns_a_bare_number_as_a_float():
     assert sources.pick({"b": 220}, "b") == 220.0
-    assert sources.pick({"b": {"value": 220, "unit": "mm", "ref": "EN 1995"}}, "b") == 220.0
     assert isinstance(sources.pick({"b": 220}, "b"), float)
 
 
+def test_pick_hands_a_record_on_verbatim():
+    """`pick` picks; interpreting the provenance is the consumer's business."""
+    record = {"value": 220, "unit": "mm", "ref": "EN 1995-1-1 6.1.5 (1)"}
+    assert sources.pick({"b": record}, "b") == record
+
+
 def test_pick_yields_none_for_json_null():
-    """`null` is a value: the given is empty (not applicable), not missing."""
+    """`null` is a value: absent by intent, which is not a missing key."""
     assert sources.pick({"l_1": None}, "l_1") is None
-    assert sources.pick({"l_1": {"value": None, "unit": "mm"}}, "l_1") is None
+    # Inside a record, `null` stays inside the record — the unit and reference
+    # survive an empty value.
+    assert sources.pick({"l_1": {"value": None, "unit": "mm"}}, "l_1") == {
+        "value": None,
+        "unit": "mm",
+    }
 
 
 def test_pick_missing_key_names_it_and_lists_what_is_there():
@@ -123,11 +132,11 @@ def test_pick_missing_key_names_it_and_lists_what_is_there():
     assert "'a_1'" in message and "'l'" in message  # what the object does have
 
 
-def test_pick_refuses_a_non_numeric_value():
-    with pytest.raises(UserError, match="number or null"):
+def test_pick_refuses_an_entry_that_is_neither_number_null_nor_object():
+    with pytest.raises(UserError, match="number, null, or an object"):
         sources.pick({"a": "eighty"}, "a")
     # A flag is not a quantity, even though bool is an int subclass.
-    with pytest.raises(UserError, match="number or null"):
+    with pytest.raises(UserError, match="number, null, or an object"):
         sources.pick({"a": True}, "a")
 
 

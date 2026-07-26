@@ -37,6 +37,7 @@ from __future__ import annotations
 import ast
 import builtins
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -254,7 +255,14 @@ def parse_checks(text: str) -> list[CheckLine]:
 
 
 def _derived_socket(name: str) -> dict:
-    """One derived input-spec entry for a free symbol (ADR 0007 frozen shape)."""
+    """One derived input-spec entry for a free symbol (ADR 0007 frozen shape).
+
+    The declared ``type``/``widget`` describe what the socket *means* — a
+    quantity, editable as a number when nothing is wired to it. A wire may also
+    deliver that quantity as a value-with-provenance record (see :func:`_given`);
+    that is a richer transport of the same number, not a different socket kind,
+    so the declaration stays as it is.
+    """
     return {
         "name": name,
         "type": "float",
@@ -324,36 +332,83 @@ DEFAULT_CARD_HEIGHT = 320
 # renders" true by construction rather than by test.
 
 
+def _text_field(record: Mapping, field: str, *, name: str) -> str:
+    """One optional display string off a value-with-provenance record."""
+    text = record.get(field, "")
+    if text is None:
+        return ""
+    if not isinstance(text, str):
+        raise UserError(
+            f"input {name!r}: {field!r} must be a string, got {text!r} "
+            f"({type(text).__name__})"
+        )
+    return text
+
+
+def _given(name: str, value: object):
+    """One given quantity, from a bare number or a value-with-provenance record.
+
+    Two spellings, one meaning. A socket fed a bare number behaves exactly as it
+    always has. A socket fed a **record** — any mapping with a ``value`` key,
+    optionally ``unit`` and ``ref`` — takes the number from ``value`` and the
+    row's display unit and reference from the other two. That is the general
+    "a value knows where it came from" convention: a source that has provenance
+    to offer keeps it attached to the number instead of dropping it on the floor
+    (``sources.pick`` hands such a record straight through) — and unrelated keys
+    are ignored, so a richer source is not a breaking change.
+
+    Reading the record HERE, at the calc node, is deliberate: the calc is what
+    owns the notion of a given with a unit and a reference (calcsheet's
+    ``Input``), so nothing upstream has to know what a card wants. ``pick`` just
+    picks.
+
+    ``None`` — bare, or as a record's ``value`` — is an EMPTY given, not a bad
+    one: the source said "this quantity does not apply to this case" (a JSON
+    null). calcsheet renders it as `–`, keeps its unit and reference, and drops
+    it out of any ``MinDefined(...)`` naming it. Coercing or rejecting it here
+    would erase that statement.
+    """
+    from calcsheet import Input
+
+    unit = ref = ""
+    if isinstance(value, Mapping):
+        if "value" not in value:
+            raise UserError(
+                f"input {name!r} is an object without a 'value' key; a given is "
+                f"a number, or a record carrying one as "
+                f"{{'value': …, 'unit': …, 'ref': …}} (got keys: "
+                f"{', '.join(repr(k) for k in value) or '(none)'})"
+            )
+        unit = _text_field(value, "unit", name=name)
+        ref = _text_field(value, "ref", name=name)
+        value = value["value"]
+
+    if value is None:
+        return Input(None, ref=ref, unit=unit)
+    try:
+        return Input(float(value), ref=ref, unit=unit)
+    except (TypeError, ValueError):
+        raise UserError(
+            f"input {name!r} must be a number, got {value!r} "
+            f"({type(value).__name__})"
+        ) from None
+
+
 def _evaluate(
     title: str,
     as_of: str,
     formulas: str,
     checks: str,
     precision: int | None,
-    values: dict[str, float],
+    values: dict[str, object],
 ) -> Result:
     """Parse the mini-syntax, build the ``Calc`` and evaluate it once."""
-    from calcsheet import Calc, CalcError, Check, Formula, Input, evaluate_calc
+    from calcsheet import Calc, CalcError, Check, Formula, evaluate_calc
 
     parsed_formulas = parse_formulas(formulas)
     parsed_checks = parse_checks(checks)
 
-    inputs = {}
-    for name, value in values.items():
-        # `None` is an EMPTY given, not a bad one: an upstream source said "this
-        # quantity does not apply to this case" (a JSON null), and calcsheet
-        # renders it as `–` and drops it out of any MinDefined(...) that names
-        # it. Coercing or rejecting it here would erase that statement.
-        if value is None:
-            inputs[name] = Input(None)
-            continue
-        try:
-            inputs[name] = Input(float(value))
-        except (TypeError, ValueError):
-            raise UserError(
-                f"input {name!r} must be a number, got {value!r} "
-                f"({type(value).__name__})"
-            ) from None
+    inputs = {name: _given(name, value) for name, value in values.items()}
 
     calc = Calc(
         title=title,
@@ -432,7 +487,7 @@ def calc_card(
     formulas: str = "",
     checks: str = "",
     precision: int | None = None,
-    **values: float | None,
+    **values: float | dict | None,
 ) -> str:
     """Evaluate a whole calculation and render it as a self-contained HTML card.
 
@@ -471,7 +526,7 @@ def calc(
     formulas: str = "",
     checks: str = "",
     precision: int | None = None,
-    **values: float | None,
+    **values: float | dict | None,
 ) -> Result:
     """Evaluate a whole calculation and emit the ``Result`` — no rendering here.
 

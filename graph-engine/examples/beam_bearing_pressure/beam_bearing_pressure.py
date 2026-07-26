@@ -1,4 +1,7 @@
-"""Auflagerdruck ohne Verstärkung — a real EC5 support-pressure check.
+"""Support pressure without reinforcement — a real EC5 bearing check.
+
+(The source sheet's own heading is "Auflagerdruck ohne Verstärkung"; the card
+and this module carry the English rendering of it.)
 
 A faithful reproduction of a timber design sheet: the compressive stress
 perpendicular to the grain at a beam support, checked against the design
@@ -18,10 +21,18 @@ other eight. A node that read all nine keys at once would make that a rewrite.
 ``sources.read_json``/``sources.pick`` know nothing about bearing pressure;
 the engineering lives entirely in the ``formulas`` literal.
 
+**Givens keep their provenance.** Each entry in ``inputs.json`` is a record —
+``{"value": …, "unit": …, "ref": …}`` — and ``sources.pick`` hands the whole
+record on rather than reducing it to a bare number. ``sheet.calc_card`` reads
+that general "value with provenance" shape into calcsheet's ``Input``, so every
+given row on the card shows its unit and the code reference it came from, with
+no second place for either to drift.
+
 **The empty given.** The sheet prints ``l_1 = –``: this support has no second
 bearing length, so the quantity does not exist for this member. ``inputs.json``
-says ``"value": null``, ``pick`` yields ``None``, and calcsheet renders the row
-as ``–``. The rule that uses it is still stated in full —
+says ``"value": null``, ``pick`` hands on a record whose value is ``None``, and
+calcsheet renders the row as ``–`` — still carrying ``mm`` and its reference.
+The rule that uses it is still stated in full —
 ``l_r = MinDefined(30, l, l_1/2)`` — and only the argument that depends on the
 empty given drops out before the minimum is taken. So the card shows the
 general rule and the value for *this* case: ``min(30, 80, –/2) = 30 mm``.
@@ -76,8 +87,11 @@ def beam_bearing_pressure(inputs_path: str = "inputs.json") -> str:
 
     # One `pick` per given, in the order the source sheet lists them. Each is an
     # independent node, so re-pointing a single value at another source is a
-    # one-node edit. `l_1` is the empty one: its entry holds `null`, which picks
-    # as `None` and reaches the card as an empty given.
+    # one-node edit. `pick` hands the whole entry on — here a record carrying
+    # the number, its unit and its code reference — and the calc node reads that
+    # provenance into the given's row. `l_1` is the empty one: its `value` is
+    # `null`, so it reaches the card as an empty given and renders `–`, while
+    # still showing `mm` and its reference like every other row.
     F_c90d = pick(data=inputs, key='F_c90d')
     a_1 = pick(data=inputs, key='a_1')
     l = pick(data=inputs, key='l')
@@ -92,6 +106,9 @@ def beam_bearing_pressure(inputs_path: str = "inputs.json") -> str:
     # Every free symbol of `formulas` is a derived input socket (ADR 0007), so
     # the symbols are declared exactly once — in the literal below — and the
     # keyword arguments follow that same first-appearance order.
+    #
+    # `title` is the English rendering of the source sheet's own heading,
+    # "Auflagerdruck ohne Verstärkung".
     #
     # `l_ef` rather than `l`: the source sheet reuses `l` for the 80 mm given
     # AND the 110 mm effective length; calcsheet refuses a redefinition, and
@@ -115,15 +132,15 @@ def beam_bearing_pressure(inputs_path: str = "inputs.json") -> str:
     # concatenate at parse time, so the value is exactly the lines below —
     # indentation is code, never content.
     card = calc_card(
-        title='Auflagerdruck ohne Verstärkung',
+        title='Support pressure without reinforcement',
         as_of='2025-07-02',
         formulas=(
             'l_l = MinDefined(30, a_1) [mm]  # EN 1995-1-1 6.1.5 (1)\n'
             'l_r = MinDefined(30, l, l_1/2) [mm]  # EN 1995-1-1 6.1.5 (1)\n'
             'l_ef = l_l + l + l_r [mm]  # EN 1995-1-1 6.1.5 (1)\n'
-            'A_ef = l_ef * b [mm^2]  # EN 1995-1-1 6.1.5 (1)\n'
-            'sigma_c90d = F_c90d * 1000 / A_ef [N/mm^2]  # EN 1995-1-1 6.1.5 (1) (6.4)\n'
-            'f_c90d = k_mod * f_c90k / gamma_M [N/mm^2]  # EN 1995-1-1 2.4.1 (1)P (2.14)\n'
+            'A_ef = l_ef * b [mm²]  # EN 1995-1-1 6.1.5 (1)\n'
+            'sigma_c90d = F_c90d * 1000 / A_ef [N/mm²]  # EN 1995-1-1 6.1.5 (1) (6.4)\n'
+            'f_c90d = k_mod * f_c90k / gamma_M [N/mm²]  # EN 1995-1-1 2.4.1 (1)P (2.14)\n'
             'eta = sigma_c90d / (k_c90 * f_c90d) * 100 [%]  # EN 1995-1-1 6.1.5 (1)P (6.3)'
         ),
         checks='eta < 100 [eta]  # reinforcement of the support not required',

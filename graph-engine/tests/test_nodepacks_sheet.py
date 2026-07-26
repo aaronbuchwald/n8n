@@ -330,3 +330,99 @@ def test_rendering_something_that_is_not_a_result_names_the_input():
     """A mis-wired canvas edge fails as the user's error, not an AttributeError."""
     with pytest.raises(UserError, match="'result' input must be a calcsheet Result"):
         sheet.render_html("<p>not a result</p>")
+
+
+# -- givens with provenance (the value-with-provenance envelope) ---------------
+
+
+@needs_sym_extra
+def test_a_given_may_arrive_as_a_bare_number_or_as_a_record():
+    """Two spellings, one meaning — a record just carries the row's provenance."""
+
+    def build(F_max, C_min):
+        return sheet.calc(
+            title="Capacity check",
+            as_of="2026-07-24",
+            formulas="r = F_max / C_min  # demand / capacity",
+            checks="",
+            F_max=F_max,
+            C_min=C_min,
+        )
+
+    bare = build(120.0, 210.0)
+    record = build(
+        {"value": 120, "unit": "kN", "ref": "forces.csv"},
+        {"value": 210, "unit": "kN"},
+    )
+
+    # The number is the same either way, so the calculation is unaffected.
+    assert bare.values == record.values == {"F_max": 120.0, "C_min": 210.0, "r": 120 / 210}
+    # A bare number keeps today's behaviour exactly: no unit, no reference.
+    assert [(row.unit, row.ref) for row in bare.inputs] == [("", ""), ("", "")]
+    # The record fills the row's unit and reference; a missing `ref` is simply
+    # absent, not an error.
+    assert [(row.symbol, row.unit, row.ref) for row in record.inputs] == [
+        ("F_max", "kN", "forces.csv"),
+        ("C_min", "kN", ""),
+    ]
+
+
+@needs_sym_extra
+def test_a_records_unit_and_reference_reach_the_rendered_card():
+    html = sheet.calc_card(
+        title="Capacity check",
+        as_of="2026-07-24",
+        formulas="r = F_max / C_min",
+        checks="",
+        F_max={"value": 120, "unit": "kN", "ref": "EN 1995-1-1 6.1.5 (1)"},
+        C_min=210.0,
+    )
+    assert '120&nbsp;<span class="unit">kN</span>' in html
+    assert '<span class="ref">EN 1995-1-1 6.1.5 (1)</span>' in html
+
+
+@needs_sym_extra
+def test_a_record_with_an_empty_value_keeps_its_unit_and_reference():
+    """`–` is still a row: the quantity does not apply, its provenance stands."""
+    result = sheet.calc(
+        title="Bearing",
+        as_of="2025-07-02",
+        formulas="l_r = MinDefined(30, l, l_1/2) [mm]",
+        checks="",
+        l=80.0,
+        l_1={"value": None, "unit": "mm", "ref": "EN 1995-1-1 6.1.5 (1)"},
+    )
+    row = next(r for r in result.inputs if r.symbol == "l_1")
+    assert (row.value, row.value_text, row.unit, row.ref) == (
+        None,
+        "–",
+        "mm",
+        "EN 1995-1-1 6.1.5 (1)",
+    )
+    assert result.values["l_r"] == 30.0
+
+
+@needs_sym_extra
+def test_a_record_without_a_value_key_is_a_user_error_naming_the_input():
+    with pytest.raises(UserError, match="input 'F_max' is an object without a 'value' key"):
+        sheet.calc(
+            title="t",
+            as_of="",
+            formulas="r = F_max / C_min",
+            checks="",
+            F_max={"unit": "kN"},
+            C_min=210.0,
+        )
+
+
+@needs_sym_extra
+def test_a_records_unit_must_be_a_string():
+    with pytest.raises(UserError, match="'unit' must be a string"):
+        sheet.calc(
+            title="t",
+            as_of="",
+            formulas="r = F_max / C_min",
+            checks="",
+            F_max={"value": 120, "unit": 5},
+            C_min=210.0,
+        )
