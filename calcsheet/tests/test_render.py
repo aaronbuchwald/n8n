@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from calcsheet import Calc, CalcError, Check, Formula, Input, Result, Row, render_html
-from calcsheet.mathml import assert_plain_mathml
+from calcsheet.mathml import assert_plain_mathml, expression_mathml, parse_expression
 from calcsheet.examples.capacity import build_calc
 
 
@@ -31,6 +33,64 @@ def test_rows_render_symbols_and_definitions_as_mathml(html: str):
     # fraction — both straight from sympy's LaTeX.
     assert "<msub><mi>F</mi>" in html
     assert "<mfrac>" in html
+
+
+def test_equations_are_display_style_and_symbols_are_not(html: str):
+    # WHY the attribute is what it is: MathML's inline style shrinks every
+    # nested level to 0.71em, so `F_max / C_min` rendered its numerator and
+    # denominator at 9.9px inside a 14px row. Display style typesets them at
+    # the row's own size. It belongs to the EQUATION, not to this card's CSS —
+    # a Result's MathML is handed to whatever renders it.
+    for equation in ('<span class="def">', '<span class="chk__eq">'):
+        for fragment in html.split(equation)[1:]:
+            assert fragment.startswith('<math display="block">')
+    # A symbol is not an equation: it stands in the row's running text, and its
+    # subscript shrinks under either style, which is what a subscript is for.
+    for fragment in html.split('<span class="sym">')[1:]:
+        assert fragment.startswith('<math display="inline">')
+
+
+def test_display_style_changes_the_style_and_nothing_else():
+    # The whole cost of the fix, stated: `display=` moves ONE attribute. Same
+    # elements, same order, same entities — so nothing downstream (the plain-
+    # markup guard, the serializer, another renderer) sees a new shape.
+    expr = parse_expression("F_max / C_min", ["F_max", "C_min"], what="expr")
+    block = expression_mathml(expr, "block")
+    inline = expression_mathml(expr, "inline")
+
+    assert block.startswith('<math display="block">')
+    assert inline.startswith('<math display="inline">')
+    assert block.replace('display="block"', "") == inline.replace(
+        'display="inline"', ""
+    )
+    assert_plain_mathml(block)
+
+
+def test_an_equation_never_gets_a_scroller_or_a_height_of_its_own(html: str):
+    # "Auto-expand, don't scroll": the equation's own cells carry no overflow
+    # and no height, so the row grows to the equation. `.sec` stays the single
+    # horizontal scrollport — and it must stay a DIFFERENT element from the
+    # `min-width:max-content` grid inside it, or it would grow instead of
+    # scrolling and its parent would clip (the original unreachable-content
+    # bug). Vertically nothing scrolls at all; the card grows.
+    stylesheet = html.split("<style>")[1].split("</style>")[0]
+    naked = re.sub(r"/\*.*?\*/", "", stylesheet, flags=re.DOTALL)
+    rules = {
+        rule.split("{", 1)[0].strip(): rule.split("{", 1)[1]
+        for rule in naked.split("}")
+        if "{" in rule
+    }
+
+    def declarations(selector: str) -> str:
+        return rules[selector]
+
+    for selector in (".def", ".chk__eq", ".def math,.chk__eq math"):
+        body = declarations(selector)
+        assert "overflow" not in body
+        assert "height" not in body
+    assert "overflow-x:auto" in declarations(".sec")
+    assert "min-width:max-content" in declarations(".rows")
+    assert "overflow-y" not in stylesheet
 
 
 def test_input_rows_have_no_definition_slot():

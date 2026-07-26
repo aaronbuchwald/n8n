@@ -85,7 +85,14 @@ body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
 /* The SECTION is the horizontal scrollport and the grid inside it takes
    min-width:max-content — they must be DIFFERENT elements, or the "scroll
    container" just grows and its parent clips instead. Content must never be
-   unreachable. */
+   unreachable.
+
+   BASELINE, not centre, and it earns its keep now that a row with a fraction is
+   half again as tall as one without: baseline puts the symbol, both `=` glyphs
+   and the value on the fraction's own bar (measured: 1.3px off it), where an
+   engineer reads them. Centring would put them on the middle of the equation's
+   BOUNDING BOX instead, which drifts off the bar the moment a fraction is
+   lopsided — a nested numerator over a bare denominator moves it 3.2px down. */
 .rows{display:grid;row-gap:11px;column-gap:10px;align-items:baseline;
       min-width:max-content;font-family:var(--mono);font-size:14px}
 /* Two row types, two templates, because they need their slack in different
@@ -101,7 +108,10 @@ body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
    — the alignment the engineering sheet this mirrors uses. */
 .sym{text-align:right}
 .eq{color:var(--faint)}
-.def{white-space:nowrap;overflow-x:auto}
+/* No scroller of its own: an equation is read whole or not at all, so the row
+   simply grows to it and `.sec` stays the one horizontal scrollport for a
+   viewport too narrow for the grid. */
+.def{white-space:nowrap}
 .val{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
 /* A given's value is the start of a phrase, not the end of a column, so it
    sets from the `=` rather than back from the right edge. */
@@ -110,6 +120,18 @@ body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
 .ref{justify-self:end;font-family:var(--sans);font-size:11.5px;color:var(--faint);
      white-space:nowrap;padding-left:14px;border-left:1px solid var(--line)}
 math{font-size:1em}
+/* A definition and a check are DISPLAYED equations, and their markup says so
+   (`display="block"` — see `calcsheet.mathml`). That is what typesets a
+   fraction at full size; under MathML's inline style every nested level is
+   0.71em, so `f_c90k·k_mod / γ_M` read 9.9px against the row's 14px.
+   `display="block"` also asks for a block-level, centred BOX, which a cell in a
+   four-slot row does not want — so only the box is put back on the row's line
+   here. The display STYLE is a separate property and is untouched by this, and
+   a browser too old to know `inline math` merely lays the full-size equation
+   out as its own block. Height is deliberately not constrained anywhere on this
+   path: the cell, the row and the card each grow to whatever the equation
+   needs. */
+.def math,.chk__eq math{display:inline math}
 
 .checks{display:grid;gap:8px}
 .chk{display:grid;grid-template-columns:1fr auto auto;align-items:center;gap:12px;

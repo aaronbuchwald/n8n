@@ -23,12 +23,18 @@ def test_the_shipped_example_renders_the_pinned_card(result):
     # The regression fence for every change in this package: no edit may move a
     # byte of the default card without saying so here.
     #
-    # Recaptured once, deliberately, for the light-by-default redesign — the
-    # only intentional break of this fence. What moved: the light ramp is now
-    # white paper / black ink, the givens grid dropped its definition column,
-    # PASS/FAIL gained a distinguishing glyph, and the type scale collapsed to
-    # four roles. What did NOT move: the numbers, the MathML, the section
-    # order, or any value+unit markup.
+    # Recaptured twice, deliberately:
+    #
+    # 1. the light-by-default redesign — white paper / black ink, the givens
+    #    grid without its definition column, a distinguishing PASS/FAIL glyph,
+    #    and the type scale collapsed to four roles;
+    # 2. equation sizing — a definition and a check now say `display="block"`
+    #    (display style, so a fraction's numerator and denominator typeset at
+    #    the row's own size instead of 0.71em), with three CSS rules to keep
+    #    the equation's BOX on the row's line and drop `.def`'s inner scroller.
+    #
+    # What did NOT move either time: the numbers, the MathML element tree, the
+    # section order, the symbols' own (inline) math, or any value+unit markup.
     assert render_html(result) == GOLDEN.read_text(encoding="utf-8")
 
 
