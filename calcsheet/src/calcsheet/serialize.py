@@ -23,6 +23,17 @@ if TYPE_CHECKING:  # avoid a serialize <-> evaluate import cycle at runtime
 
 # The version key doubles as the "is this ours?" marker: a dict without it is
 # not a calcsheet result, whatever else it contains.
+#
+# Still 1 after empty givens (`"value": null` on a row, and in `values`). The
+# gate below is exact equality, so a bump is not free: it would make this
+# package refuse every result it has already written, and every one of those is
+# still read correctly — the new shape is a strict superset that adds `null`
+# where only numbers appeared before. The other direction stays honest without
+# a bump: an older reader handed a `null` fails loudly and locally in
+# `_number` ("value must be a number, got None") rather than guessing. Refusing
+# to read the archives is a real cost; a slightly less specific message on an
+# old reader is not. Bump when a change can be *misread*, not when it widens a
+# field.
 RESULT_SCHEMA_KEY = "calcsheet_result"
 RESULT_SCHEMA_VERSION = 1
 
@@ -103,7 +114,8 @@ def _row_from_dict(data: object, *, what: str) -> Row:
             _field(row, "definition_mathml", what=what),
             what=f"{what} definition_mathml",
         ),
-        value=_number(_field(row, "value", what=what), what=f"{what} value"),
+        # `null` is an empty given — a row that exists without a number.
+        value=_optional_number(_field(row, "value", what=what), what=f"{what} value"),
         value_text=_text(
             _field(row, "value_text", what=what), what=f"{what} value_text"
         ),
@@ -211,7 +223,7 @@ def result_from_dict(data: Mapping[str, object]) -> Result:
             for check in _sequence(_field(payload, "checks", what=what), what=what)
         ),
         values={
-            name: _number(value, what=f"{what} value {name!r}")
+            name: _optional_number(value, what=f"{what} value {name!r}")
             for name, value in values.items()
         },
         passed=_flag(_field(payload, "passed", what=what), what=f"{what} passed"),

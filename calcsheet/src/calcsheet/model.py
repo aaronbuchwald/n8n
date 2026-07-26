@@ -23,9 +23,16 @@ class Input:
     ``ref`` is provenance shown in the row's right-hand gutter (``"forces.csv
     · max"``); ``unit`` is a plain display string — this package does no unit
     algebra, so the author owns dimensional consistency.
+
+    ``value`` may be ``None``: the given is **empty** — not applicable to this
+    case, the ``–`` an engineering sheet prints for a quantity that does not
+    exist here. An empty given still owns its row, its unit and its reference;
+    what it cannot do is be a number. It is usable only inside
+    :class:`~calcsheet.mathml.MinDefined`, which drops the arguments that depend
+    on it; anywhere else it is an error, and no *formula* is ever empty.
     """
 
-    value: float
+    value: float | None
     ref: str = ""
     unit: str = ""
 

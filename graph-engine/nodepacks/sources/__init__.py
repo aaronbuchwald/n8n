@@ -1,7 +1,10 @@
-"""``sources`` — interchangeable data-source nodes.
+"""``sources`` — generic data-source nodes.
 
-Two nodes that produce the **same shape** (a ``list`` of ``float`` readings) so
-they can be swapped one-for-one in a graph:
+Nothing here knows what the numbers *mean*; every node reads a file (or a
+fixture) and hands back a plain Python value. Two families:
+
+**Column readings** — the same shape (a ``list`` of ``float``) from two places,
+so they can be swapped one-for-one in a graph:
 
 * :func:`read_csv` — read a named column out of a CSV file on disk.
 * :func:`mock_api` — an in-process, network-free mock "API client" that returns
@@ -11,14 +14,25 @@ Because both emit an identical ``result`` socket (``list``), swapping
 ``read_csv`` for ``mock_api`` changes exactly one node's type and leaves the rest
 of the graph — and its output — unchanged. That is the CSV↔API source swap.
 
+**Named scalars** — a JSON document, then one value at a time:
+
+* :func:`read_json` — read a JSON object off disk.
+* :func:`pick` — take one named value out of such an object.
+
+The pair is deliberately split. One ``pick`` per value means each value is its
+own node with its own wire, so any single one can later be re-pointed at a
+different source (another file, an API node, a computed value) without touching
+the others — which a one-node "read these nine keys" reader could not do.
+
 Pure standard library.
 """
 
 from __future__ import annotations
 
 import csv
+import json
 
-from engine import node
+from engine import UserError, node
 
 # In-process fixtures for the mock API — no network, ever. Keyed by dataset name
 # so a graph can pick a series the way it would pick an API endpoint.
@@ -65,6 +79,80 @@ def mock_api(dataset: str = "readings", offline: bool = True) -> list:
     return list(_MOCK_DATASETS[dataset])
 
 
-NODES = [read_csv, mock_api]
+@node
+def read_json(path: str = "inputs.json") -> dict:
+    """Read a JSON **object** from ``path``.
 
-__all__ = ["read_csv", "mock_api", "NODES"]
+    The whole document, as a ``dict`` — no key selection, no coercion, no
+    knowledge of what is inside. Use :func:`pick` to take a value out of it. A
+    document whose top level is an array or a scalar is refused: the thing
+    downstream nodes address by name has to be an object.
+    """
+    try:
+        with open(path, encoding="utf-8") as handle:
+            data = json.load(handle)
+    except FileNotFoundError:
+        raise UserError(f"no such JSON file: {path!r}") from None
+    except json.JSONDecodeError as error:
+        raise UserError(f"{path!r} is not valid JSON ({error})") from None
+    if not isinstance(data, dict):
+        raise UserError(
+            f"{path!r} must hold a JSON object at the top level, got "
+            f"{type(data).__name__}"
+        )
+    return data
+
+
+def _entry_value(entry: object) -> object:
+    """The number an entry carries — bare, or inside a ``value`` field.
+
+    Two accepted spellings, because a source often wants to say more about a
+    value than the value itself: ``{"b": 220}`` and
+    ``{"b": {"value": 220, "unit": "mm"}}`` both mean 220. Anything else the
+    caller sees as-is and rejects with its own message.
+    """
+    if isinstance(entry, dict) and "value" in entry:
+        return entry["value"]
+    return entry
+
+
+@node
+def pick(data: dict, key: str = "") -> float | None:
+    """One named value out of a JSON object.
+
+    ``data`` is an object keyed by name (from :func:`read_json` or any node that
+    emits a ``dict``); ``key`` names the value to take. The entry may be the
+    number itself or a record carrying it under ``value`` — that second form is
+    what lets a source keep provenance (a unit, a code reference) next to the
+    number instead of in a second file.
+
+    JSON ``null`` yields ``None``: the value is *absent by intent*, which is a
+    different statement from a missing key. Downstream, ``sheet``'s calc nodes
+    read that as an **empty given** — the ``–`` an engineering sheet prints for
+    a quantity that does not apply. A missing key, by contrast, is a wiring
+    mistake and raises, listing what the object does have.
+    """
+    if not isinstance(data, dict):
+        raise UserError(
+            f"the 'data' input must be a JSON object (wire it from read_json), "
+            f"got {type(data).__name__}"
+        )
+    if key not in data:
+        known = ", ".join(repr(k) for k in data) or "(nothing)"
+        raise UserError(f"no key {key!r} in the data; it has: {known}")
+
+    value = _entry_value(data[key])
+    if value is None:
+        return None
+    # bool is an int subclass, and a flag is not a quantity.
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise UserError(
+            f"key {key!r} must hold a number or null, got {value!r} "
+            f"({type(value).__name__})"
+        )
+    return float(value)
+
+
+NODES = [read_csv, mock_api, read_json, pick]
+
+__all__ = ["read_csv", "mock_api", "read_json", "pick", "NODES"]

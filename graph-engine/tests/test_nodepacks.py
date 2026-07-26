@@ -1,8 +1,9 @@
 """Tests for the calc + sources node packs and the readings example.
 
-Covers: node outputs, CSV reading, graph run + HTML render, the CSV↔mock-API
-source swap (identical output, one differing node), and re-running after editing
-the CSV values.
+Covers: node outputs, CSV reading, the generic JSON pair (``read_json`` +
+``pick``, including the missing-key error and the ``null`` empty given), graph
+run + HTML render, the CSV↔mock-API source swap (identical output, one
+differing node), and re-running after editing the CSV values.
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ import pytest
 
 import calc
 import sources
-from engine import run
+from engine import UserError, run
 
 from readings import (
     CSV_PATH,
@@ -71,6 +72,68 @@ def test_mock_api_matches_csv_shape():
 def test_mock_api_is_network_free_by_default():
     with pytest.raises(ValueError):
         sources.mock_api("readings", offline=False)
+
+
+# -- sources pack: JSON object + one named value ---------------------------
+
+
+def _write_json(tmp_path: Path, text: str) -> str:
+    path = tmp_path / "inputs.json"
+    path.write_text(text, encoding="utf-8")
+    return str(path)
+
+
+def test_read_json_returns_the_object_unchanged(tmp_path: Path):
+    path = _write_json(tmp_path, '{"a": 1, "b": {"value": 2, "unit": "mm"}}')
+    assert sources.read_json(path) == {"a": 1, "b": {"value": 2, "unit": "mm"}}
+
+
+def test_read_json_refuses_a_non_object_document(tmp_path: Path):
+    path = _write_json(tmp_path, "[1, 2, 3]")
+    with pytest.raises(UserError, match="JSON object"):
+        sources.read_json(path)
+
+
+def test_read_json_reports_a_missing_file_and_bad_syntax(tmp_path: Path):
+    with pytest.raises(UserError, match="no such JSON file"):
+        sources.read_json(str(tmp_path / "absent.json"))
+    with pytest.raises(UserError, match="not valid JSON"):
+        sources.read_json(_write_json(tmp_path, "{oops"))
+
+
+def test_pick_reads_a_bare_number_and_a_record_carrying_one():
+    """Both spellings mean the same number — the record just adds provenance."""
+    assert sources.pick({"b": 220}, "b") == 220.0
+    assert sources.pick({"b": {"value": 220, "unit": "mm", "ref": "EN 1995"}}, "b") == 220.0
+    assert isinstance(sources.pick({"b": 220}, "b"), float)
+
+
+def test_pick_yields_none_for_json_null():
+    """`null` is a value: the given is empty (not applicable), not missing."""
+    assert sources.pick({"l_1": None}, "l_1") is None
+    assert sources.pick({"l_1": {"value": None, "unit": "mm"}}, "l_1") is None
+
+
+def test_pick_missing_key_names_it_and_lists_what_is_there():
+    with pytest.raises(UserError) as error:
+        sources.pick({"a_1": 0, "l": 80}, "l_1")
+
+    message = str(error.value)
+    assert "'l_1'" in message  # the key that was asked for
+    assert "'a_1'" in message and "'l'" in message  # what the object does have
+
+
+def test_pick_refuses_a_non_numeric_value():
+    with pytest.raises(UserError, match="number or null"):
+        sources.pick({"a": "eighty"}, "a")
+    # A flag is not a quantity, even though bool is an int subclass.
+    with pytest.raises(UserError, match="number or null"):
+        sources.pick({"a": True}, "a")
+
+
+def test_pick_refuses_data_that_is_not_an_object():
+    with pytest.raises(UserError, match="JSON object"):
+        sources.pick([1, 2], "a")
 
 
 # -- the graph: run + render -----------------------------------------------

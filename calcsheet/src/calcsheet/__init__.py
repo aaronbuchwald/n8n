@@ -23,7 +23,8 @@ function that calls it.
 from __future__ import annotations
 
 from .errors import CalcError
-from .evaluate import CheckResult, Result, Row, evaluate_calc
+from .evaluate import EMPTY_VALUE_TEXT, CheckResult, Result, Row, evaluate_calc
+from .mathml import EXPRESSION_FUNCTIONS, MinDefined
 from .model import Calc, Check, Formula, Input
 from .registry import (
     RendererInfo,
@@ -36,6 +37,8 @@ from .render import HtmlOptions, render_html
 from .serialize import RESULT_SCHEMA_KEY, RESULT_SCHEMA_VERSION
 
 __all__ = [
+    "EMPTY_VALUE_TEXT",
+    "EXPRESSION_FUNCTIONS",
     "RESULT_SCHEMA_KEY",
     "RESULT_SCHEMA_VERSION",
     "Calc",
@@ -45,6 +48,7 @@ __all__ = [
     "Formula",
     "HtmlOptions",
     "Input",
+    "MinDefined",
     "RendererInfo",
     "Result",
     "Row",

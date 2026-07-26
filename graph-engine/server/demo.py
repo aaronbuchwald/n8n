@@ -35,6 +35,7 @@ EXAMPLES: dict[str, Path] = {
     "showcase": _EXAMPLES / "showcase",
     "capacity_check": _EXAMPLES / "capacity_check",
     "capacity_check_split": _EXAMPLES / "capacity_check_split",
+    "beam_bearing_pressure": _EXAMPLES / "beam_bearing_pressure",
     "handcalc_demo": _EXAMPLES / "handcalc_demo",
     "minimal": _EXAMPLES / "minimal",
 }

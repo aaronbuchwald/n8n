@@ -53,14 +53,15 @@ if TYPE_CHECKING:  # names for annotations only — never imported at run time
 #
 # for a check:
 #
-#     expression  # description
+#     expression [utilisation]  # description
 #
-# `# text` is the reference (formula) or description (check); a trailing
-# `[unit]` on a formula's expression is its display unit. Blank lines and
-# whole-line comments are skipped; anything else that does not fit raises a
+# `# text` is the reference (formula) or description (check); a trailing `[...]`
+# is the formula's display unit or the check's utilisation symbol. Blank lines
+# and whole-line comments are skipped; anything else that does not fit raises a
 # UserError naming the line.
 
-# A trailing `[...]` on a formula expression — its display unit.
+# A trailing `[...]` on an entry's expression — one bracket, two meanings by
+# entry kind: a formula's display unit, a check's utilisation symbol.
 _UNIT = re.compile(r"\[([^\[\]]*)\]\s*$")
 
 # Cap on the authored text so deriving (which runs per keystroke through the
@@ -82,8 +83,15 @@ _STATIC_PARAMS = frozenset({"title", "as_of", "formulas", "checks", "precision"}
 # visible on the canvas.
 _MATH_NAMES = frozenset({"sqrt", "sin", "cos", "tan", "log", "exp", "pi"})
 
-# Names never turned into sockets: Python builtins + the math names above.
-_NON_SOCKET_NAMES = frozenset(dir(builtins)) | _MATH_NAMES
+# calcsheet's own expression vocabulary — functions it binds when parsing, which
+# are therefore calls, not quantities. Spelled out rather than imported from
+# `calcsheet.EXPRESSION_FUNCTIONS` because deriving sockets must work with the
+# `sym` extra uninstalled (the pack's lazy-import contract); the derive endpoint
+# runs per keystroke and may not import sympy.
+_CALC_VOCABULARY = frozenset({"MinDefined"})
+
+# Names never turned into sockets: Python builtins + the names above.
+_NON_SOCKET_NAMES = frozenset(dir(builtins)) | _MATH_NAMES | _CALC_VOCABULARY
 
 
 @dataclass(frozen=True)
@@ -99,11 +107,16 @@ class FormulaLine:
 
 @dataclass(frozen=True)
 class CheckLine:
-    """One parsed check entry: a boolean ``expr`` plus its description."""
+    """One parsed check entry: a boolean ``expr``, its description and utilisation.
+
+    ``utilisation`` is the symbol whose value *is* this check's utilisation (the
+    governing-chip number); empty when the line does not name one.
+    """
 
     lineno: int
     expr: str
     description: str
+    utilisation: str = ""
 
 
 def _entries(text: str, *, what: str) -> list[tuple[int, str, str]]:
@@ -198,19 +211,42 @@ def parse_checks(text: str) -> list[CheckLine]:
         U < 100  # capacity not exceeded
         U < 50   # utilisation target
 
+    A trailing ``[symbol]`` names the check's **utilisation** — the symbol whose
+    value is the number the governing chip reports::
+
+        eta < 100 [eta]  # reinforcement not required
+
+    Same bracket the formulas use for a unit, in the same trailing position: an
+    entry's ``[…]`` annotates the entry. It is optional, and a check without one
+    behaves exactly as before (a plain PASS/FAIL, no chip) — the verdict is
+    authoritative either way, and the utilisation only augments it.
+
     A check must be a relational/boolean expression over the final scope;
     calcsheet rejects a bare quantity ("a number is not a verdict"). Note a
     failing check does NOT fail the run — it renders FAIL on the card.
     """
     checks: list[CheckLine] = []
     for lineno, body, description in _entries(text, what="checks"):
+        utilisation_match = _UNIT.search(body)
+        utilisation = ""
+        if utilisation_match is not None:
+            utilisation = utilisation_match.group(1).strip()
+            body = body[: utilisation_match.start()].strip()
+            if not utilisation.isidentifier():
+                raise UserError(
+                    f"checks line {lineno}: {utilisation!r} is not a valid symbol "
+                    f"name; a check's '[...]' names the symbol whose value is its "
+                    f"utilisation"
+                )
+        if not body:
+            raise UserError(f"checks line {lineno}: no expression before the '[...]'")
         if "=" in body.replace("==", "").replace("!=", "").replace("<=", "").replace(">=", ""):
             raise UserError(
                 f"checks line {lineno}: {body!r} looks like an assignment; a check is "
                 f"a comparison such as 'U < 100' (use '==' to test equality)"
             )
         _check_expression(body, what="checks", lineno=lineno)
-        checks.append(CheckLine(lineno, body, description))
+        checks.append(CheckLine(lineno, body, description, utilisation))
     return checks
 
 
@@ -304,6 +340,13 @@ def _evaluate(
 
     inputs = {}
     for name, value in values.items():
+        # `None` is an EMPTY given, not a bad one: an upstream source said "this
+        # quantity does not apply to this case" (a JSON null), and calcsheet
+        # renders it as `–` and drops it out of any MinDefined(...) that names
+        # it. Coercing or rejecting it here would erase that statement.
+        if value is None:
+            inputs[name] = Input(None)
+            continue
         try:
             inputs[name] = Input(float(value))
         except (TypeError, ValueError):
@@ -317,7 +360,7 @@ def _evaluate(
         as_of=as_of,
         inputs=inputs,
         formulas=[Formula(f.symbol, f.expr, ref=f.ref, unit=f.unit) for f in parsed_formulas],
-        checks=[Check(c.expr, c.description) for c in parsed_checks],
+        checks=[Check(c.expr, c.description, c.utilisation) for c in parsed_checks],
         # An emptied number widget commits `null`, which is the UI's way of
         # saying "not set" — that must mean the default, not a crash.
         precision=DEFAULT_PRECISION if precision is None else precision,
@@ -389,7 +432,7 @@ def calc_card(
     formulas: str = "",
     checks: str = "",
     precision: int | None = None,
-    **values: float,
+    **values: float | None,
 ) -> str:
     """Evaluate a whole calculation and render it as a self-contained HTML card.
 
@@ -398,7 +441,9 @@ def calc_card(
     text`` being the reference/description and a trailing ``[unit]`` a
     formula's display unit. Every free symbol of ``formulas`` becomes an input
     socket (ADR 0007), so the given quantities are wired from upstream nodes
-    rather than restated here.
+    rather than restated here. A given arriving as ``None`` is **empty** — not
+    applicable to this case — and renders as ``–``; it is usable only inside
+    ``MinDefined(...)``, which drops the arguments depending on it.
 
     ``as_of`` is caller-provided and never read from the clock: an artifact
     that re-renders differently tomorrow is not an artifact.
@@ -426,7 +471,7 @@ def calc(
     formulas: str = "",
     checks: str = "",
     precision: int | None = None,
-    **values: float,
+    **values: float | None,
 ) -> Result:
     """Evaluate a whole calculation and emit the ``Result`` — no rendering here.
 
