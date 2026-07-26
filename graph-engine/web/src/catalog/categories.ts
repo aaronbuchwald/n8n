@@ -52,7 +52,10 @@ export const CATEGORY_BY_ID: Readonly<Record<string, CategoryId>> = {
   // Input / Data — bringing values into the graph.
   'sources.read_csv': 'input-data',
   'sources.mock_api': 'input-data',
+  'sources.read_json': 'input-data',
+  'sources.pick': 'input-data', // one named given out of a read document
   'table.read_table': 'input-data', // read_table's capability is *bringing data in*
+  'rfem.read_extrema': 'input-data',
   'minimal.read_values': 'input-data',
   // Table — operating on tabular data you already have.
   'table.apply_recipe': 'table',
@@ -75,7 +78,9 @@ export const CATEGORY_BY_ID: Readonly<Record<string, CategoryId>> = {
   'sheet.calc': 'math', // the split pair's producer: its product is the numbers
   // Logic — select, branch, judge.
   'sym.pick': 'logic',
+  'rfem.governing_force': 'logic', // it *chooses* the governing row; reading is read_extrema's job
   // Render / Output — produce a human-readable artifact.
+  'sources.write_json': 'render-output', // the graph's product leaving it as a file
   'sheet.calc_card': 'render-output', // evaluates a calc, but its product is the card
   'sheet.render_html': 'render-output',
   'table.table_summary': 'render-output',
@@ -93,6 +98,7 @@ export const CATEGORY_BY_ID: Readonly<Record<string, CategoryId>> = {
 // from a known pack still lands in the right place.
 export const CATEGORY_BY_MODULE: Readonly<Record<string, CategoryId>> = {
   sources: 'input-data',
+  rfem: 'input-data',
   table: 'table',
   calc: 'math',
   sym: 'math',

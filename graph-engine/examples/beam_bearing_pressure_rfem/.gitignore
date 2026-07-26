@@ -1,0 +1,4 @@
+# A run output, not a source: `sources.write_json` writes it on every run, and a
+# committed copy would be a second place the governing force is written down.
+governing.json
+__pycache__/

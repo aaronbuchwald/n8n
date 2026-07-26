@@ -24,6 +24,29 @@ own node with its own wire, so any single one can later be re-pointed at a
 different source (another file, an API node, a computed value) without touching
 the others — which a one-node "read these nine keys" reader could not do.
 
+**One node writes** — :func:`write_json`, and it is the first node in this
+engine that touches disk in the write direction. That is a capability change,
+not a convenience, so its reach is stated here rather than left implicit:
+
+* the destination is **relative, always** — resolved against the working
+  directory the graph runs in, which is the running program's own directory.
+  An absolute path is refused outright;
+* it may not climb out of that directory: a ``..`` component is refused, and so
+  is any path whose real location (after following symlinks) lands outside;
+* it writes exactly one file and creates no directories.
+
+**Relationship to ADR 0003's ``mounts``.** The right way to express "this graph
+may write here" is the environment descriptor: ``mounts: [{"path": …, "mode":
+"rw"}]``, resolved and confined by the mount guard the C-stream will own. That
+guard does not exist yet, and this node is **not** it — it is a narrow,
+hard-coded stand-in that grants exactly one thing (write inside the run
+directory) to exactly one node, so a graph can produce an artifact before the
+descriptor can grant the capability properly. The design is unfinished on
+purpose: when ``mounts`` is enforced, this node's rule should become the
+guard's, and the hard-coding here should go. Until then, treat it the way
+ADR 0003 asks its own descriptor to be treated — accident-proof, not
+malice-proof.
+
 Pure standard library.
 """
 
@@ -31,6 +54,7 @@ from __future__ import annotations
 
 import csv
 import json
+from pathlib import Path
 
 from engine import UserError, node
 
@@ -145,6 +169,75 @@ def pick(data: dict, key: str = "") -> float | dict | None:
     return float(entry)
 
 
-NODES = [read_csv, mock_api, read_json, pick]
+@node
+def write_json(data: dict, path: str = "artifact.json") -> str:
+    """Write ``data`` to ``path`` as JSON; returns the file it wrote.
 
-__all__ = ["read_csv", "mock_api", "read_json", "pick", "NODES"]
+    The one writing node in the pack. ``data`` is any JSON-serialisable value —
+    typically a record a selector node produced — written pretty-printed (two
+    spaces, keys in their existing order, non-ASCII kept as itself) with a
+    trailing newline, so the artifact reads as a document rather than one long
+    line.
+
+    **Where it may write, and why that is the whole design.** ``path`` is
+    resolved against the working directory the graph runs in — the running
+    program's own directory — and must stay inside it:
+
+    * an **absolute** path is refused; the destination is the run's business,
+      not the graph author's;
+    * a ``..`` component is refused;
+    * a path whose real location escapes the run directory through a
+      **symlink** is refused, checked after resolution rather than by reading
+      the string.
+
+    Each refusal raises :class:`engine.UserError` naming the offending path and
+    stating the rule — a graph that asks for more than the node may give gets a
+    sentence about the boundary, not a traceback.
+
+    The rule is hard-coded because the descriptor that should grant this
+    properly — ADR 0003's ``mounts``, with the mount guard resolving and
+    confining paths — is not enforced yet. See the module docstring: this node
+    is a deliberate stand-in, and its containment is accident-proofing, not a
+    security boundary.
+
+    The returned string is the resolved file, so a downstream node (or a person
+    reading the run output) is told exactly what was written, not what was
+    asked for.
+    """
+    if not isinstance(path, str) or not path.strip():
+        raise UserError("write_json needs a 'path' to write to; it was empty")
+
+    root = Path.cwd().resolve()
+    rule = (
+        f"write_json may only write inside the directory the graph runs in "
+        f"({root}); the path must be relative and stay under it"
+    )
+    candidate = Path(path)
+    if candidate.is_absolute():
+        raise UserError(f"refusing to write to the absolute path {path!r}: {rule}")
+    if ".." in candidate.parts:
+        raise UserError(f"refusing to write to {path!r}: it climbs out with '..'; {rule}")
+
+    target = (root / candidate).resolve()
+    if target == root:
+        raise UserError(f"refusing to write to {path!r}: it names the run directory itself")
+    if not target.is_relative_to(root):
+        # Reached here only via a symlink: the string itself is clean.
+        raise UserError(
+            f"refusing to write to {path!r}: it resolves to {target}, outside "
+            f"the run directory (a symlink leads out of it); {rule}"
+        )
+    if not target.parent.is_dir():
+        raise UserError(
+            f"cannot write {path!r}: its directory {target.parent} does not "
+            f"exist, and write_json creates no directories"
+        )
+
+    text = json.dumps(data, indent=2, ensure_ascii=False, sort_keys=False)
+    target.write_text(text + "\n", encoding="utf-8")
+    return str(target)
+
+
+NODES = [read_csv, mock_api, read_json, pick, write_json]
+
+__all__ = ["read_csv", "mock_api", "read_json", "pick", "write_json", "NODES"]

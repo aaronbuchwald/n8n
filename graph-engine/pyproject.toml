@@ -67,10 +67,10 @@ build-backend = "hatchling.build"
 # Real, installable packages, so `import engine` / `import server` /
 # `import calc` / `import sources` work anywhere (examples, node packs, tests)
 # without any sys.path manipulation.
-packages = ["engine", "server", "nodepacks/calc", "nodepacks/sheet", "nodepacks/sources", "nodepacks/sym", "nodepacks/table"]
+packages = ["engine", "server", "nodepacks/calc", "nodepacks/rfem", "nodepacks/sheet", "nodepacks/sources", "nodepacks/sym", "nodepacks/table"]
 
 [tool.pytest.ini_options]
 # `engine` and the node packs are installed into the venv; only the example
 # modules need a path so tests can import them directly.
-pythonpath = ["examples/minimal", "examples/readings", "examples/bijection", "examples/symbolic", "examples/table", "examples/showcase", "examples/capacity_check", "examples/capacity_check_split", "examples/handcalc_demo", "examples/beam_bearing_pressure"]
+pythonpath = ["examples/minimal", "examples/readings", "examples/bijection", "examples/symbolic", "examples/table", "examples/showcase", "examples/capacity_check", "examples/capacity_check_split", "examples/handcalc_demo", "examples/beam_bearing_pressure", "examples/beam_bearing_pressure_rfem"]
 testpaths = ["tests"]
