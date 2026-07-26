@@ -298,7 +298,13 @@ def test_output_html_carries_the_export_provenance_and_the_verdict(run_dir):
     assert f'<span class="ref">{GOVERNING_REF}</span>' in html
     assert '12.28&nbsp;<span class="unit">N/mm²</span>' in html
     assert '405.43&nbsp;<span class="unit">%</span>' in html
-    assert "405.43 &lt; 100 = False" in html and 'badge--fail">FAIL' in html
+    # The chip states the measured value and the limit it was judged against —
+    # never the substituted inequality, which for a failing check is a false
+    # statement printed on a design document.
+    assert '<span class="chk__tag">actual</span> 405.43&nbsp;<span class="unit">%</span>' in html
+    assert '<span class="chk__tag">limit</span> 100&nbsp;<span class="unit">%</span>' in html
+    assert 'badge--fail">FAIL' in html
+    assert "405.43 &lt; 100 = False" not in html
     assert 'class="status status--fail"' in html and "Overall <b>FAIL</b>" in html
     # Self-contained, like every card in this repo.
     assert "http" not in html
