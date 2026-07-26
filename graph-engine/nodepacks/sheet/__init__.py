@@ -323,6 +323,15 @@ def formula_free_symbols(formulas: str) -> list[dict]:
 # tall shows a sliver of whitespace, one too short scrolls.
 DEFAULT_CARD_HEIGHT = 320
 
+# The grouped card's declared height. It is *inherently* a compromise, and
+# unlike `DEFAULT_CARD_HEIGHT` it cannot be measured once and be right: a group
+# card grows two input rows, two calculation rows and one check per group, and
+# the group count is a property of the data. A scriptless iframe cannot report
+# its own height, so the frame scrolls when the content is taller — which is the
+# survivable failure. This is sized for the two-or-three-group case that
+# motivated the node; a longer division scrolls.
+GROUP_CARD_HEIGHT = 560
+
 
 # -- the shared pipeline -----------------------------------------------------
 #
@@ -403,10 +412,33 @@ def _evaluate(
     values: dict[str, object],
 ) -> Result:
     """Parse the mini-syntax, build the ``Calc`` and evaluate it once."""
-    from calcsheet import Calc, CalcError, Check, Formula, evaluate_calc
+    return _evaluate_parsed(
+        title,
+        as_of,
+        parse_formulas(formulas),
+        parse_checks(checks),
+        precision,
+        values,
+    )
 
-    parsed_formulas = parse_formulas(formulas)
-    parsed_checks = parse_checks(checks)
+
+def _evaluate_parsed(
+    title: str,
+    as_of: str,
+    parsed_formulas: list[FormulaLine],
+    parsed_checks: list[CheckLine],
+    precision: int | None,
+    values: dict[str, object],
+) -> Result:
+    """Build the ``Calc`` from already-parsed entries and evaluate it once.
+
+    Split out of :func:`_evaluate` so a node that *derives* its entries — the
+    per-group expansion in :func:`group_card` — can hand them over directly
+    instead of serialising them back to the mini-syntax for this function to
+    re-parse. One evaluation path either way, which is what keeps every card in
+    this pack unable to drift from another.
+    """
+    from calcsheet import Calc, CalcError, Check, Formula, evaluate_calc
 
     inputs = {name: _given(name, value) for name, value in values.items()}
 
@@ -445,6 +477,257 @@ def _render(result: Result, *, header: str, footer: str, theme: str) -> str:
         # already lists the available ones.
         raise UserError(str(error)) from None
     return render_html_card(result, options)
+
+
+# -- per-group expansion (the group summary card) -----------------------------
+#
+# One calculation is authored ONCE, for one group, and instantiated for each of
+# the N groups a grouping strategy returned (see `nodepacks/grouping` and
+# `docs/grouping-strategies.md`). The expansion below is the whole mechanism:
+# it decides which of the author's formulas actually vary with the group, copies
+# only those, and leaves everything the groups share computed exactly once.
+
+# The key that marks a wire value as a *population of groups* rather than one
+# given. `grouping.group` is what puts it there.
+GROUPS_KEY = "groups"
+
+# The symbol prefix of the per-group "how many member ends fell in this group"
+# row, and the unit it displays. The count is a row of the card rather than a
+# note beside it because a reviewer checking that the groups partition the
+# population has to be able to add the column up.
+COUNT_SYMBOL = "n"
+COUNT_UNIT = "ends"
+
+
+def _is_groups_record(value: object) -> bool:
+    """Does this socket value carry N groups rather than one quantity?"""
+    return isinstance(value, Mapping) and GROUPS_KEY in value
+
+
+def _varying_socket(values: Mapping[str, object]) -> tuple[str, Mapping]:
+    """The one socket fed a groups record — the given that varies per group.
+
+    Discovered from the wire rather than named by a separate parameter, and
+    that is deliberate: on the canvas the difference between the single-group
+    card and the grouped one is *which node the force wire comes from*, and
+    nothing else. Naming the symbol again in a literal would be a second place
+    to keep in sync with the formulas.
+    """
+    found = [(name, value) for name, value in values.items() if _is_groups_record(value)]
+    if not found:
+        raise UserError(
+            "no input carries a group population: wire grouping.group's result "
+            "into the given that varies per group (the force, typically), and "
+            "leave the givens every group shares as they are"
+        )
+    if len(found) > 1:
+        names = ", ".join(repr(name) for name, _ in found)
+        raise UserError(
+            f"inputs {names} all carry a group population; exactly one given "
+            f"may vary per group — a second varying quantity would mean the "
+            f"groups are not one division of one population"
+        )
+    return found[0]
+
+
+def _validate_groups(record: Mapping) -> list[Mapping]:
+    """Check a groups record's shape and return its groups."""
+    groups = record.get(GROUPS_KEY)
+    if not isinstance(groups, (list, tuple)) or not groups:
+        raise UserError(
+            f"the group population's {GROUPS_KEY!r} must be a non-empty list, "
+            f"got {groups!r}"
+        )
+    for index, group in enumerate(groups):
+        if not isinstance(group, Mapping):
+            raise UserError(
+                f"group {index} is {type(group).__name__}, not an object"
+            )
+        for field in ("key", "label", "count", "governing"):
+            if field not in group:
+                raise UserError(f"group {index} has no {field!r} key")
+        if not isinstance(group["key"], str) or not group["key"].isidentifier():
+            raise UserError(
+                f"group {index} has key {group['key']!r}, which is not a valid "
+                f"symbol suffix; a group's key becomes part of its symbols"
+            )
+    return list(groups)
+
+
+def _loaded_names(expr: str) -> set[str]:
+    """Every name an expression *reads* (a superset is fine; we only test it)."""
+    tree = ast.parse(expr, mode="eval")
+    return {
+        n.id for n in ast.walk(tree) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)
+    }
+
+
+def _rename(expr: str, mapping: Mapping[str, str]) -> str:
+    """``expr`` with the named symbols renamed, everything else byte-identical.
+
+    Spliced by the AST's own column offsets rather than regex-replaced or
+    round-tripped through ``ast.unparse``: the expression text is what the card
+    typesets, so an author's spacing and parentheses must survive a rename that
+    only touches identifiers. Entries are single-line by construction (the
+    mini-syntax is one per line), so a column offset indexes ``expr`` directly.
+    """
+    tree = ast.parse(expr, mode="eval")
+    edits = sorted(
+        (
+            (n.col_offset, n.end_col_offset, mapping[n.id])
+            for n in ast.walk(tree)
+            if isinstance(n, ast.Name)
+            and isinstance(n.ctx, ast.Load)
+            and n.id in mapping
+        ),
+        reverse=True,
+    )
+    for start, end, replacement in edits:
+        expr = expr[:start] + replacement + expr[end:]
+    return expr
+
+
+def _expand_for_groups(
+    formulas: list[FormulaLine],
+    checks: list[CheckLine],
+    varying: str,
+    groups: list[Mapping],
+) -> tuple[list[FormulaLine], list[CheckLine], list[str]]:
+    """Instantiate a one-group calculation for N groups.
+
+    A formula is **varying** when it reads the varying given or any symbol a
+    varying formula already produced; everything else is **shared** and is
+    computed once. That rule is what makes "all groups share one geometry" fall
+    out of the arithmetic instead of being asserted: ``l_ef``/``A_ef`` do not
+    mention the force, so there is exactly one of each on the card, and only
+    ``sigma_c90d``/``eta`` are copied per group.
+
+    Shared formulas keep their authored order and are emitted first, which is
+    always sound: a shared formula can only depend on inputs and other shared
+    formulas, so hoisting them cannot move a symbol behind its use.
+
+    A check is copied per group on the same rule, with the group's label folded
+    into its description; a check that mentions no varying symbol (a geometry
+    sanity check, say) stays a single row.
+
+    Returns the expanded formulas, the expanded checks, and the varying symbols
+    (so the caller knows which names it must supply per group).
+    """
+    varying_symbols: set[str] = {varying}
+    shared: list[FormulaLine] = []
+    per_group: list[FormulaLine] = []
+    for formula in formulas:
+        if _loaded_names(formula.expr) & varying_symbols:
+            varying_symbols.add(formula.symbol)
+            per_group.append(formula)
+        else:
+            shared.append(formula)
+
+    declared = {f.symbol for f in formulas}
+    keys = [str(group["key"]) for group in groups]
+
+    def suffixed(symbol: str, key: str) -> str:
+        name = f"{symbol}_{key}"
+        if name in declared:
+            raise UserError(
+                f"expanding {symbol!r} for group {key!r} would produce "
+                f"{name!r}, which the formulas already define; rename one of "
+                f"them (a group's key becomes a symbol suffix)"
+            )
+        return name
+
+    out_formulas = list(shared)
+    for key in keys:
+        rename = {symbol: suffixed(symbol, key) for symbol in varying_symbols}
+        for formula in per_group:
+            out_formulas.append(
+                FormulaLine(
+                    lineno=formula.lineno,
+                    symbol=rename[formula.symbol],
+                    expr=_rename(formula.expr, rename),
+                    unit=formula.unit,
+                    ref=formula.ref,
+                )
+            )
+
+    out_checks: list[CheckLine] = []
+    for check in checks:
+        names = _loaded_names(check.expr)
+        if check.utilisation:
+            names.add(check.utilisation)
+        if not (names & varying_symbols):
+            out_checks.append(check)
+            continue
+        for key, group in zip(keys, groups):
+            rename = {symbol: suffixed(symbol, key) for symbol in varying_symbols}
+            label = str(group["label"])
+            out_checks.append(
+                CheckLine(
+                    lineno=check.lineno,
+                    expr=_rename(check.expr, rename),
+                    description=f"{label} — {check.description}"
+                    if check.description
+                    else label,
+                    utilisation=rename.get(check.utilisation, check.utilisation),
+                )
+            )
+
+    return out_formulas, out_checks, sorted(varying_symbols)
+
+
+def _group_values(
+    values: Mapping[str, object], varying: str, groups: list[Mapping]
+) -> dict[str, object]:
+    """The card's givens: the shared ones, with the varying one expanded in place.
+
+    The per-group rows are inserted exactly where the varying given sat, so the
+    grouped card reads like the single-group card with one row opened out into N
+    blocks. Each block is two rows — how many member ends fell in the group
+    (referenced by its label/range) and the force that governs it (referenced by
+    the member, node, position and load case it was read from). Those two rows
+    are the whole provenance chain from the export to the design, side by side.
+    """
+    out: dict[str, object] = {}
+    for name, value in values.items():
+        if name != varying:
+            out[name] = value
+            continue
+        for group in groups:
+            key = str(group["key"])
+            out[f"{COUNT_SYMBOL}_{key}"] = {
+                "value": group["count"],
+                "unit": COUNT_UNIT,
+                "ref": str(group["label"]),
+            }
+            governing = group["governing"]
+            if not isinstance(governing, Mapping):
+                raise UserError(
+                    f"group {key!r} has no governing record; a group's "
+                    f"'governing' is the force record its design is sized for"
+                )
+            out[f"{varying}_{key}"] = governing
+    return out
+
+
+def _grouping_footnote(record: Mapping, groups: list[Mapping]) -> str:
+    """The card's fine print: which rule divided the population, and how far.
+
+    A reviewer must be able to check the division, not just read its result, so
+    the strategy's name **and its exact parameters** go on the artifact rather
+    than living only in the inputs file.
+    """
+    strategy = record.get("strategy", "?")
+    params = record.get("params") or {}
+    detail = ""
+    if isinstance(params, Mapping) and params:
+        detail = " (" + ", ".join(f"{k}={v!r}" for k, v in params.items()) + ")"
+    total = record.get("count")
+    counted = total if isinstance(total, int) else sum(int(g["count"]) for g in groups)
+    plural = "" if len(groups) == 1 else "s"
+    return (
+        f"Grouped by {strategy!r}{detail} — {counted} member ends in "
+        f"{len(groups)} group{plural}."
+    )
 
 
 # -- the nodes ---------------------------------------------------------------
@@ -543,6 +826,77 @@ def calc(
     return _evaluate(title, as_of, formulas, checks, precision, values)
 
 
+@node(
+    widgets=_CALC_WIDGETS,
+    dynamic=DerivedInputs(param="formulas", derive=formula_free_symbols),
+    renderer=Renderer("html-card", socket="result", height=GROUP_CARD_HEIGHT),
+)
+def group_card(
+    title: str = "Calculation",
+    as_of: str = "",
+    formulas: str = "",
+    checks: str = "",
+    precision: int | None = None,
+    **values: float | dict | None,
+) -> str:
+    """One calculation, run for every group of a population — as **one** card.
+
+    Authoring is exactly :func:`calc_card`'s: the same ``formulas`` / ``checks``
+    mini-syntax, the same derived symbol sockets (ADR 0007), the same
+    caller-provided ``as_of``. The calculation is written **once, for one
+    group**. What differs is that one of those sockets is fed a *group
+    population* — the record ``grouping.group`` produces — instead of a single
+    quantity, and the node then runs the calculation for each group.
+
+    So the diff between designing one connection and designing N is one wire::
+
+        F_c90d=governing   # rfem.governing_force  -> one design, sheet.calc_card
+        F_c90d=groups      # grouping.group        -> N designs, sheet.group_card
+
+    **How many groups there are is a property of the data, never of the graph.**
+    Moving a threshold in the project's inputs changes the number of rows on the
+    card and nothing about the canvas. That is why this is one node emitting one
+    card rather than N per-group nodes: a graph whose shape tracked a tier list
+    could not be edited without re-authoring it every time the list moved.
+
+    **What the card shows, per group.** Its label (for tiers, the load range);
+    how many member ends fell in it; the governing force with the member, node,
+    position and load case it was read from; the utilisation the check reports;
+    and that check's verdict. The shared givens and every formula that does not
+    depend on the group appear exactly **once** — the groups share one geometry,
+    and the card says so by not repeating it. The fine print names the strategy
+    and its parameters, so the division itself can be checked and not merely
+    read.
+
+    **The accepted cost** (the owner's explicit trade): the per-group arithmetic
+    happens inside this node instead of being individually openable on the
+    canvas. The card carries that burden — every intermediate value is a row on
+    it, subscripted with the group's key.
+
+    A failing check renders **FAIL** for its group and leaves the run green,
+    exactly as in :func:`calc_card`: the verdict is card content, not an
+    execution error. A group that fails does not suppress the others — all N
+    verdicts are on the one card, and the overall verdict is the conjunction.
+    """
+    varying, record = _varying_socket(values)
+    groups = _validate_groups(record)
+
+    parsed_formulas, parsed_checks, _ = _expand_for_groups(
+        parse_formulas(formulas), parse_checks(checks), varying, groups
+    )
+    result = _evaluate_parsed(
+        title,
+        as_of,
+        parsed_formulas,
+        parsed_checks,
+        precision,
+        _group_values(values, varying, groups),
+    )
+    return _render(
+        result, header="", footer=_grouping_footnote(record, groups), theme="auto"
+    )
+
+
 # The renderer declaration belongs to the node that actually produces HTML —
 # here, not on `calc`, whose `Result` socket is data (ADR 0010 D1 / 0021 D3).
 @node(renderer=Renderer("html-card", socket="result", height=DEFAULT_CARD_HEIGHT))
@@ -569,16 +923,21 @@ def render_html(
 
 
 # All node types this pack defines (handy for registries / snapshots).
-NODES = [calc_card, calc, render_html]
+NODES = [calc_card, calc, group_card, render_html]
 
 __all__ = [
     "CheckLine",
+    "COUNT_SYMBOL",
+    "COUNT_UNIT",
     "DEFAULT_CARD_HEIGHT",
     "FormulaLine",
+    "GROUPS_KEY",
+    "GROUP_CARD_HEIGHT",
     "NODES",
     "calc",
     "calc_card",
     "formula_free_symbols",
+    "group_card",
     "parse_checks",
     "parse_formulas",
     "render_html",

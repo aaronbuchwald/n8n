@@ -7,13 +7,16 @@ start/end" export has a ``Stab``/``Knoten``/``x_m`` locator, that its fourth
 column names the extremum type each row reports, that its force columns are in
 kN. Keeping that here is what lets ``sources`` stay generic.
 
-Two nodes, deliberately split::
+Three nodes, deliberately split::
 
-    export.csv ─> read_extrema ──table──> governing_force ──record──> …
+    export.csv ─> read_extrema ─┬─table─> governing_force ──record──> …
+                                └─table─> member_ends ──population──> grouping.group ─> …
 
 * :func:`read_extrema` — the export CSV as a table.
 * :func:`governing_force` — the one row that governs, as a value-with-provenance
   record.
+* :func:`member_ends` — *every* row that reports the component, as a population
+  of those same records.
 
 **Why two nodes and not one.** Reading the export and *choosing* a row are
 different jobs with different lifetimes. The reading is fixed by the file
@@ -21,6 +24,17 @@ format; the selection is an engineering decision that will change — a differen
 component, a member filter, a per-support envelope. With the split, swapping
 the selection is a new node on the same wire; fused, every such change would be
 a rewrite of the reader too.
+
+**Why a third node beside the second.** :func:`governing_force` answers "which
+one row governs everything"; :func:`member_ends` answers "what are all the
+member-end forces". The second question is the one a *grouping strategy* is
+asked (``grouping.group``), and the two share :func:`_member_ends` so the
+records — and therefore the numbers — are the same either way: ``single``
+grouping over :func:`member_ends` reproduces :func:`governing_force` exactly,
+because both maxima are taken over the same filtered rows. Keeping the
+population node here rather than in ``grouping`` is what lets that pack know
+nothing about RFEM: this module owns the export's shape, and ``grouping`` owns
+what a group is.
 
 **The table shape is ``table``'s, not a second one.** :func:`read_extrema`
 returns ``{'columns': [...], 'rows': [[...]]}`` and gets there by calling
@@ -101,29 +115,17 @@ def _cell(value: object) -> str:
     return str(value)
 
 
-@node
-def governing_force(table: dict, component: str = "Vz") -> dict:
-    """The governing row of an RFEM export, as a value-with-provenance record.
+def _member_ends(table: dict, component: str) -> list[dict]:
+    """Every ``Extremum == component`` row of ``table``, as force records.
 
-    Two steps, in this order:
+    The one place the export's shape is turned into records, shared by
+    :func:`governing_force` and :func:`member_ends` so the two can never
+    disagree about which rows count or what a record holds. Validation order —
+    table shape, known component, required columns, at least one matching row,
+    numeric force cells — is the order the messages are most useful in.
 
-    1. **Filter** to the rows whose ``Extremum`` column equals ``component``.
-    2. Of those, take the row with the largest **absolute** value in that
-       component's force column.
-
-    **Why the filter is not optional.** RFEM has already done the extremum
-    search — an ``Extremum = Vz`` row *is* its answer for "the largest Vz here",
-    per member end and load case. Taking its answer is the owner's explicit
-    choice over re-deriving one from every row in the file. The other rows are
-    not competing candidates at all: they carry the Vz that merely *accompanies*
-    some other component's extremum. (On this particular file the two scans
-    happen to return the same number. That is a coincidence of the data, not a
-    reason to drop the filter — see the tests, which pin the filter on a table
-    where the two answers differ.)
-
-    The return is the ``{'value', 'unit', 'ref'}`` envelope ``sheet``'s calc
-    nodes unwrap into a given's row, so the card cites where its number came
-    from without anything in between having to know what a card wants:
+    Each record is the ``{'value', 'unit', 'ref'}`` envelope ``sheet``'s calc
+    nodes unwrap into a given's row, plus provenance beside it:
 
     * ``value`` — the **magnitude**, ``|Vz|``. A support reaction's sign is a
       statement about direction in the model's axes; a bearing check consumes
@@ -132,9 +134,9 @@ def governing_force(table: dict, component: str = "Vz") -> dict:
     * ``unit`` — ``kN``, the export's own force unit.
     * ``ref`` — the source row: ``RFEM <member>/<node> @ <x> m · <load case>``.
 
-    Everything else in the record (``component``, ``signed``, ``member``,
-    ``node``, ``position``, ``load_case``, ``source``) is provenance the
-    unwrapper ignores by design — a richer source is never a breaking change.
+    Everything else (``component``, ``signed``, ``member``, ``node``,
+    ``position``, ``load_case``, ``source``) is provenance a consumer is free to
+    ignore — a richer source is never a breaking change.
     """
     columns = table.get("columns") if isinstance(table, dict) else None
     rows = table.get("rows") if isinstance(table, dict) else None
@@ -169,46 +171,103 @@ def governing_force(table: dict, component: str = "Vz") -> dict:
             f"{', '.join(seen) or '(nothing)'}"
         )
 
-    def magnitude(row: list) -> float:
+    source = table.get("source", "")
+    records: list[dict] = []
+    for row in candidates:
         value = row[force_at]
         if not isinstance(value, (int, float)) or isinstance(value, bool):
             raise UserError(
                 f"column {force_column!r} holds {value!r} "
                 f"({type(value).__name__}), which is not a force"
             )
-        return abs(float(value))
+        signed = float(value)
 
-    governing = max(candidates, key=magnitude)
-    signed = float(governing[force_at])
+        def at(name: str, row: list = row) -> object:
+            return row[index[name]] if name in index else None
 
-    def at(name: str) -> object:
-        return governing[index[name]] if name in index else None
+        ref = (
+            f"RFEM {_cell(at(MEMBER))}/{_cell(at(NODE))} "
+            f"@ {_cell(at(POSITION))} m · {_cell(at(LOAD_CASE))}"
+        )
+        records.append(
+            {
+                # The envelope `sheet._given` reads.
+                "value": abs(signed),
+                "unit": FORCE_UNIT,
+                "ref": ref,
+                # Provenance beside it — ignored by the unwrapper, read by humans.
+                "component": component,
+                "signed": signed,
+                "member": at(MEMBER),
+                "node": at(NODE),
+                "position": at(POSITION),
+                "load_case": at(LOAD_CASE),
+                "source": source,
+            }
+        )
+    return records
 
-    ref = (
-        f"RFEM {_cell(at(MEMBER))}/{_cell(at(NODE))} "
-        f"@ {_cell(at(POSITION))} m · {_cell(at(LOAD_CASE))}"
-    )
-    return {
-        # The envelope `sheet._given` reads.
-        "value": abs(signed),
-        "unit": FORCE_UNIT,
-        "ref": ref,
-        # Provenance beside it — ignored by the unwrapper, read by humans.
-        "component": component,
-        "signed": signed,
-        "member": at(MEMBER),
-        "node": at(NODE),
-        "position": at(POSITION),
-        "load_case": at(LOAD_CASE),
-        "source": table.get("source", ""),
-    }
+
+@node
+def governing_force(table: dict, component: str = "Vz") -> dict:
+    """The governing row of an RFEM export, as a value-with-provenance record.
+
+    Two steps, in this order:
+
+    1. **Filter** to the rows whose ``Extremum`` column equals ``component``.
+    2. Of those, take the row with the largest **absolute** value in that
+       component's force column.
+
+    **Why the filter is not optional.** RFEM has already done the extremum
+    search — an ``Extremum = Vz`` row *is* its answer for "the largest Vz here",
+    per member end and load case. Taking its answer is the owner's explicit
+    choice over re-deriving one from every row in the file. The other rows are
+    not competing candidates at all: they carry the Vz that merely *accompanies*
+    some other component's extremum. (On this particular file the two scans
+    happen to return the same number. That is a coincidence of the data, not a
+    reason to drop the filter — see the tests, which pin the filter on a table
+    where the two answers differ.)
+
+    The return is the ``{'value', 'unit', 'ref'}`` envelope described on
+    :func:`_member_ends` — the same record :func:`member_ends` puts in its
+    population, so the card cites where its number came from without anything in
+    between having to know what a card wants.
+
+    This node is "the whole population, governed by its maximum" with the
+    population left implicit. Making it explicit is :func:`member_ends` plus the
+    ``grouping`` pack's ``single`` strategy, which returns the same number over
+    the same rows. The two differ only in how they break an exact tie: this node
+    takes whichever equal-largest row the export lists first, while a grouping
+    strategy is required to be order-independent and breaks the tie on ``ref``.
+    """
+    return max(_member_ends(table, component), key=lambda record: record["value"])
 
 
-NODES = [read_extrema, governing_force]
+@node
+def member_ends(table: dict, component: str = "Vz") -> list:
+    """Every member-end force of one component, as a population of records.
+
+    The same filter :func:`governing_force` applies (``Extremum == component``,
+    which is RFEM's own extremum answer per member end and load case) — but
+    keeping *all* of the surviving rows instead of only the largest. The result
+    is the ``grouping`` pack's **population**: an ordered list of force records,
+    each carrying its magnitude, its unit and the member/node/position/load case
+    it was read from.
+
+    Order follows the export's own row order. Nothing downstream may depend on
+    it — a grouping strategy is required to be order-independent (see
+    ``docs/grouping-strategies.md``) — but preserving it means a reader can line
+    the population up against the file by eye.
+    """
+    return _member_ends(table, component)
+
+
+NODES = [read_extrema, governing_force, member_ends]
 
 __all__ = [
     "read_extrema",
     "governing_force",
+    "member_ends",
     "FORCE_COLUMNS",
     "FORCE_UNIT",
     "REQUIRED_COLUMNS",
