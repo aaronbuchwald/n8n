@@ -109,6 +109,13 @@ for (const viewport of VIEWPORTS) {
 // cells meant that at ~280px the rows/checks were wider than the box and
 // horizontally unreachable — a vertical scrollbar existed, a horizontal one
 // did not.
+//
+// TWO FIXTURES, and the second one is the lesson. The shipped example's title
+// is "Capacity check" — two short words — so for a long time this spec passed
+// over a card whose HEAD was clipped at 320px (278px of head in a 262px box,
+// cut off by the same `.card { overflow:hidden }`) simply because no fixture
+// here had a real sheet heading in it. A convenient fixture is how an invariant
+// goes blind, so the long title is now part of the matrix.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const CALCSHEET_DIR = path.resolve(
@@ -116,44 +123,62 @@ const CALCSHEET_DIR = path.resolve(
   '../../../calcsheet',
 );
 
-/** Render the capacity-check card by importing calcsheet — self-contained. */
-function renderCalcCard(): string {
+/** Run a snippet against the real calcsheet module and take its stdout. */
+function renderCalcCard(snippet: string): string {
   return execFileSync(
     'uv',
-    [
-      'run',
-      '--directory',
-      CALCSHEET_DIR,
-      'python',
-      '-c',
-      'from calcsheet.examples.capacity import render; import sys; sys.stdout.write(render())',
-    ],
+    ['run', '--directory', CALCSHEET_DIR, 'python', '-c', snippet],
     { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 },
   );
 }
 
-test.describe('content reachability — calc card (sandboxed on canvas, rendered directly here)', () => {
-  let cardHtml = '';
+/**
+ * The shipped example, and the same calc under a heading the length of a real
+ * one. Both come from the module — the long title is the pinned example with
+ * its title replaced, so it cannot drift away from what calcsheet actually
+ * renders, and no HTML is hand-written here.
+ */
+const LONG_TITLE = 'Support pressure without reinforcement at the intermediate bearing';
+const CARDS = [
+  {
+    name: 'capacity',
+    title: 'Capacity check',
+    snippet:
+      'from calcsheet.examples.capacity import render; import sys; sys.stdout.write(render())',
+  },
+  {
+    name: 'long-titled',
+    title: LONG_TITLE,
+    snippet:
+      'import sys; from dataclasses import replace; from calcsheet import render_html; ' +
+      'from calcsheet.examples.capacity import build_calc; ' +
+      `sys.stdout.write(render_html(replace(build_calc(), title=${JSON.stringify(LONG_TITLE)}).evaluate()))`,
+  },
+] as const;
 
-  test.beforeAll(() => {
-    cardHtml = renderCalcCard();
-    expect(cardHtml, 'the calcsheet module must render the capacity card').toContain(
-      'Capacity check',
-    );
-  });
+for (const card of CARDS) {
+  test.describe(`content reachability — ${card.name} calc card (sandboxed on canvas, rendered directly here)`, () => {
+    let cardHtml = '';
 
-  // 320 is roughly the node-card width the canvas gives the card; 480 is a
-  // cramped dock; 900 is the comfortable case that must not regress either.
-  for (const width of [320, 480, 900]) {
-    test(`the card keeps every row and check reachable at ${width}px`, async ({ page }) => {
-      await page.setViewportSize({ width, height: 700 });
-      await page.setContent(cardHtml);
-      await expect(page.locator('.card__title')).toHaveText('Capacity check');
-      // Both sections really are present — reachability is only interesting for
-      // content that exists.
-      await expect(page.locator('.rows').first()).toBeAttached();
-      await expect(page.locator('.chk').first()).toBeAttached();
-      await expectContentReachable(page, `calcsheet capacity card @ ${width}px wide`);
+    test.beforeAll(() => {
+      cardHtml = renderCalcCard(card.snippet);
+      expect(cardHtml, 'the calcsheet module must render the card').toContain(card.title);
     });
-  }
-});
+
+    // 320 is roughly the node-card width the canvas gives the card; 480 is a
+    // cramped dock; 900 is the comfortable case that must not regress either.
+    for (const width of [320, 480, 900]) {
+      test(`the card keeps every row and check reachable at ${width}px`, async ({ page }) => {
+        await page.setViewportSize({ width, height: 700 });
+        await page.setContent(cardHtml);
+        await expect(page.locator('.card__title')).toHaveText(card.title);
+        // The head and both sections really are present — reachability is only
+        // interesting for content that exists.
+        await expect(page.locator('.card__head')).toBeAttached();
+        await expect(page.locator('.rows').first()).toBeAttached();
+        await expect(page.locator('.chk').first()).toBeAttached();
+        await expectContentReachable(page, `calcsheet ${card.name} card @ ${width}px wide`);
+      });
+    }
+  });
+}

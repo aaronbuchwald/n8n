@@ -23,9 +23,19 @@ body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
    only bleed. The shadow is a second, screen-only cue, never the only one. */
 .card{background:var(--card);border:1px solid var(--rule);border-radius:8px;
       overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.06)}
-.card__head{display:flex;align-items:center;gap:12px;padding:16px 20px;
+/* The head WRAPS, and the title's `flex-basis:auto` is what makes it: a real
+   sheet heading ("Support pressure without reinforcement") plus the as-of and
+   the verdict pill needed 278px of a 262px card at node width, and `.card`
+   clips to its radius — so the title was cut off with nowhere to scroll. With
+   a content-sized basis the line breaks before that happens and the pill drops
+   below the heading; with `basis:0` it never could, because a zero-width item
+   always "fits". The wide layout is unchanged: one growing item takes all the
+   free space either way. `min-width`/`overflow-wrap` keep the promise for a
+   heading with no spaces in it. */
+.card__head{display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding:16px 20px;
             border-bottom:1px solid var(--line)}
-.card__title{font-size:17px;font-weight:650;margin:0;flex:1;letter-spacing:-.005em}
+.card__title{font-size:17px;font-weight:650;margin:0;flex:1 1 auto;min-width:0;
+             overflow-wrap:break-word;letter-spacing:-.005em}
 .card__asof{font-family:var(--mono);font-size:11.5px;color:var(--faint)}
 /* PASS/FAIL must survive greyscale, so the verdict is carried by the WORD and
    by a distinct glyph (check vs cross). Colour is the third cue, never the
@@ -92,15 +102,18 @@ math{font-size:1em}
 .def math,.chk__eq math{display:inline math}
 
 .checks{display:grid;gap:8px}
-.chk{display:grid;grid-template-columns:1fr auto auto;align-items:center;gap:12px;
+/* FLEX, not a grid template, because a chip carries two, one or no measured
+   quantities (see `_check_html`) and a template would need a variant per
+   count. The rule takes the slack; every other cell is only as wide as what it
+   says, and an absent one leaves nothing behind. */
+.chk{display:flex;align-items:center;gap:12px;
      padding:9px 12px;border:1px solid var(--line);border-radius:8px;
      min-width:max-content}
+.chk__rule{flex:1}
 /* A failing check reads as failing with the colour removed: heavier leading
    edge (weight is form), plus the cross glyph and the word in its badge. */
 .chk--fail{border-left:3px solid var(--fail);padding-left:10px}
 .chk__eq{font-family:var(--mono);font-size:14px}
-.chk__bool{font-family:var(--mono);font-size:11.5px;color:var(--muted);
-           font-variant-numeric:tabular-nums;white-space:nowrap}
 .chk__what{display:block;font-family:var(--sans);font-size:11.5px;color:var(--muted);
            margin-top:2px}
 .badge{font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:.1em;
@@ -142,13 +155,11 @@ math{font-size:1em}
       <p class="sec__label">Design checks</p>
       <div class="checks">
         <div class="chk">
-          <div><span class="chk__eq"><math display="block"><mrow><mi>U</mi><mo>&#x0003C;</mo><mn>100</mn></mrow></math></span><span class="chk__what">capacity not exceeded</span></div>
-          <span class="chk__bool">57.1 &lt; 100 = True</span>
+          <div class="chk__rule"><span class="chk__eq"><math display="block"><mrow><mi>U</mi><mo>&#x0003C;</mo><mn>100</mn></mrow></math></span><span class="chk__what">capacity not exceeded</span></div>
           <span class="badge badge--pass">PASS &#10003;</span>
         </div>
         <div class="chk chk--fail">
-          <div><span class="chk__eq"><math display="block"><mrow><mi>U</mi><mo>&#x0003C;</mo><mn>50</mn></mrow></math></span><span class="chk__what">utilisation target</span></div>
-          <span class="chk__bool">57.1 &lt; 50 = False</span>
+          <div class="chk__rule"><span class="chk__eq"><math display="block"><mrow><mi>U</mi><mo>&#x0003C;</mo><mn>50</mn></mrow></math></span><span class="chk__what">utilisation target</span></div>
           <span class="badge badge--fail">FAIL &#10007;</span>
         </div>
       </div>
