@@ -71,6 +71,29 @@ def test_every_field_survives_including_the_empty_ones():
     assert restored.checks[0].description == "positive"
 
 
+def test_an_archive_written_before_a_check_carried_its_unit_still_reads():
+    # Widening a field must not make this package refuse results it has already
+    # written — the same rule the version note in `serialize` states. An old
+    # payload has no `utilisation_unit`; it reads back as "" and renders the
+    # unitless chip those cards always showed, at the SAME schema version.
+    result = Calc(
+        title="older archive",
+        as_of="2026-07-24",
+        inputs={"a": Input(4.0)},
+        formulas=[Formula("u", "a * 10", unit="%")],
+        checks=[Check("u < 100", "target", utilisation="u")],
+    ).evaluate()
+    payload = json.loads(json.dumps(result.to_dict()))
+    for check in payload["checks"]:
+        del check["utilisation_unit"]
+
+    restored = Result.from_dict(payload)
+
+    assert restored.checks[0].utilisation_unit == ""
+    assert restored.checks[0].utilisation == result.checks[0].utilisation
+    assert restored.checks[0].limit == 100.0
+
+
 def test_an_unknown_schema_version_is_refused(result):
     payload = result.to_dict()
     payload[RESULT_SCHEMA_KEY] = RESULT_SCHEMA_VERSION + 1

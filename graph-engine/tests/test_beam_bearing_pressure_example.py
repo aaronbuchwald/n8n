@@ -313,9 +313,15 @@ def test_output_html_carries_the_values_the_verdict_and_the_references():
     # Authored code references land in the right-hand gutter.
     assert '<span class="ref">EN 1995-1-1 6.1.5 (1)P (6.3)</span>' in html
     assert '<span class="ref">EN 1995-1-1 2.4.1 (1)P (2.14)</span>' in html
-    # FAIL, with the governing chip.
-    assert "145.98 &lt; 100 = False" in html and 'badge--fail">FAIL' in html
-    assert "145.98 ≤ 100" in html
+    # FAIL, with the measured value and the ceiling it was judged against —
+    # stated as facts, in the unit of the row that defines eta. The card prints
+    # no substituted inequality: `145.98 < 100` and `145.98 ≤ 100` are both
+    # untrue of this member, and the rule decides the badge rather than being
+    # displayed as though it held.
+    assert 'badge--fail">FAIL' in html
+    assert '<span class="chk__tag">actual</span> 145.98&nbsp;<span class="unit">%</span>' in html
+    assert '<span class="chk__tag">limit</span> 100&nbsp;<span class="unit">%</span>' in html
+    assert "145.98 &lt; 100" not in html and "145.98 ≤ 100" not in html
     assert 'class="status status--fail"' in html and "Overall <b>FAIL</b>" in html
     # Math is native MathML — no script, no CDN, no external reference.
     assert "<math" in html and "</math>" in html

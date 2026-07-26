@@ -65,9 +65,19 @@ body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
    only bleed. The shadow is a second, screen-only cue, never the only one. */
 .card{background:var(--card);border:1px solid var(--rule);border-radius:8px;
       overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.06)}
-.card__head{display:flex;align-items:center;gap:12px;padding:16px 20px;
+/* The head WRAPS, and the title's `flex-basis:auto` is what makes it: a real
+   sheet heading ("Support pressure without reinforcement") plus the as-of and
+   the verdict pill needed 278px of a 262px card at node width, and `.card`
+   clips to its radius — so the title was cut off with nowhere to scroll. With
+   a content-sized basis the line breaks before that happens and the pill drops
+   below the heading; with `basis:0` it never could, because a zero-width item
+   always "fits". The wide layout is unchanged: one growing item takes all the
+   free space either way. `min-width`/`overflow-wrap` keep the promise for a
+   heading with no spaces in it. */
+.card__head{display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding:16px 20px;
             border-bottom:1px solid var(--line)}
-.card__title{font-size:17px;font-weight:650;margin:0;flex:1;letter-spacing:-.005em}
+.card__title{font-size:17px;font-weight:650;margin:0;flex:1 1 auto;min-width:0;
+             overflow-wrap:break-word;letter-spacing:-.005em}
 .card__asof{font-family:var(--mono);font-size:11.5px;color:var(--faint)}
 /* PASS/FAIL must survive greyscale, so the verdict is carried by the WORD and
    by a distinct glyph (check vs cross). Colour is the third cue, never the
@@ -134,15 +144,18 @@ math{font-size:1em}
 .def math,.chk__eq math{display:inline math}
 
 .checks{display:grid;gap:8px}
-.chk{display:grid;grid-template-columns:1fr auto auto;align-items:center;gap:12px;
+/* FLEX, not a grid template, because a chip carries two, one or no measured
+   quantities (see `_check_html`) and a template would need a variant per
+   count. The rule takes the slack; every other cell is only as wide as what it
+   says, and an absent one leaves nothing behind. */
+.chk{display:flex;align-items:center;gap:12px;
      padding:9px 12px;border:1px solid var(--line);border-radius:8px;
      min-width:max-content}
+.chk__rule{flex:1}
 /* A failing check reads as failing with the colour removed: heavier leading
    edge (weight is form), plus the cross glyph and the word in its badge. */
 .chk--fail{border-left:3px solid var(--fail);padding-left:10px}
 .chk__eq{font-family:var(--mono);font-size:14px}
-.chk__bool{font-family:var(--mono);font-size:11.5px;color:var(--muted);
-           font-variant-numeric:tabular-nums;white-space:nowrap}
 .chk__what{display:block;font-family:var(--sans);font-size:11.5px;color:var(--muted);
            margin-top:2px}
 .badge{font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:.1em;
@@ -164,11 +177,16 @@ _SLOT_CSS = """.card__banner{padding:10px 20px;border-bottom:1px solid var(--lin
             font-size:11.5px}
 """
 
-# Same rule as the slots: only calcs that report a utilisation pay for the
-# fourth chip column. `.chk--util` follows `.chk`, so the override wins.
-_UTILISATION_CSS = """.chk--util{grid-template-columns:1fr auto auto auto}
-.chk__util{font-family:var(--mono);font-size:14px;font-weight:700;
-           font-variant-numeric:tabular-nums;white-space:nowrap}
+# Same rule as the slots: only calcs whose checks report a utilisation pay for
+# the quantity cells. `actual` is the number the reader came for, so it is the
+# one thing on the chip set in bold; `limit` is context and sits back. Each is
+# tagged in words (annotation size, `--faint`), so neither has to be inferred
+# from where it sits.
+_UTILISATION_CSS = """.chk__actual,.chk__limit{font-family:var(--mono);font-size:14px;
+                        font-variant-numeric:tabular-nums;white-space:nowrap}
+.chk__actual{font-weight:700}
+.chk__limit{color:var(--muted)}
+.chk__tag{font-family:var(--sans);font-size:11.5px;font-weight:400;color:var(--faint)}
 """
 
 _THEMES = {"auto": _DARK_MEDIA, "light": "", "dark": _DARK_ALWAYS}
@@ -280,20 +298,40 @@ def _section_html(label: str, rows: tuple[Row, ...], *, with_definition: bool) -
     )
 
 
-def _margin_text(check: CheckResult, precision: int) -> str:
-    """``0.759 ≤ 0.833`` — the margin an engineer reads instead of PASS.
+def _quantity_html(kind: str, value: float, unit: str, precision: int) -> str:
+    """``actual 145.98 %`` — one measured quantity, named in words.
 
-    ``≤`` is the utilisation relation itself ("must not exceed the limit"),
-    not the check's operator; the exact operator and numbers sit alongside in
-    the substituted string.
+    The word carries the meaning, so nothing has to be inferred from position,
+    and the number is free to be only what it is: a number. The unit repeats
+    the one already on the row that defines the symbol (both copied from the
+    same field), and ``format_value`` is the card's one formatter, so this
+    number and that row's read identically.
     """
-    utilisation = format_value(check.utilisation, precision)
-    if check.limit is None:
-        return utilisation
-    return f"{utilisation} ≤ {format_value(check.limit, precision)}"
+    suffix = f'&nbsp;<span class="unit">{escape(unit)}</span>' if unit else ""
+    return (
+        f'          <span class="chk__{kind}"><span class="chk__tag">{kind}</span> '
+        f"{escape(format_value(value, precision))}{suffix}</span>\n"
+    )
 
 
 def _check_html(check: CheckResult, precision: int) -> str:
+    """One check chip: the rule, what was measured, what bounds it, the verdict.
+
+    NO SUBSTITUTED INEQUALITY. The old chip printed ``145.98 ≤ 100`` and
+    ``145.98 < 100 = False`` — a design document asserting something untrue,
+    twice, about its own worst case. The rule (``η < 100``) still opens the
+    chip because a check IS its rule and an engineer reads the operator; what
+    it no longer does is masquerade as a fact. It decides the badge, and the
+    facts are stated separately: ``actual`` is what the calc computed and
+    ``limit`` is what it was judged against.
+
+    Both are optional and drop out cleanly. A check that declared no
+    utilisation symbol has nothing to measure and renders rule → verdict; one
+    whose rule is not an inequality bounding that symbol (a geometry check,
+    ``2*eta <= 2.0``) has a value but no comparable ceiling and shows the value
+    alone. That is why the chip is a flex row rather than a grid template: the
+    two, one and zero quantity cases are the same markup, minus cells.
+    """
     assert_plain_mathml(check.expr_mathml)
     verdict = _verdict(check.passed).lower()
     description = (
@@ -301,23 +339,23 @@ def _check_html(check: CheckResult, precision: int) -> str:
         if check.description
         else ""
     )
-    margin = (
-        f'          <span class="chk__util">'
-        f"{escape(_margin_text(check, precision))}</span>\n"
-        if check.utilisation is not None
-        else ""
-    )
+    quantities = ""
+    if check.utilisation is not None:
+        quantities = _quantity_html(
+            "actual", check.utilisation, check.utilisation_unit, precision
+        )
+        if check.limit is not None:
+            quantities += _quantity_html(
+                "limit", check.limit, check.utilisation_unit, precision
+            )
     classes = ["chk"]
-    if margin:
-        classes.append("chk--util")
     if not check.passed:
         classes.append("chk--fail")
     return (
         f'        <div class="{" ".join(classes)}">\n'
-        f'          <div><span class="chk__eq">{check.expr_mathml}</span>'
+        f'          <div class="chk__rule"><span class="chk__eq">{check.expr_mathml}</span>'
         f"{description}</div>\n"
-        f"{margin}"
-        f'          <span class="chk__bool">{escape(check.substituted)}</span>\n'
+        f"{quantities}"
         f'          <span class="badge badge--{verdict}">'
         f"{_verdict_label(check.passed)}</span>\n"
         "        </div>"

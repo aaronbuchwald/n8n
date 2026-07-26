@@ -55,7 +55,7 @@ def test_capacity_check_runs_to_a_rendered_verdict() -> None:
     assert isinstance(html, str) and "<math" in html
     # The computed values and both verdicts are on the card…
     assert '<span class="val">0.571</span>' in html
-    assert "57.1 &lt; 100 = True" in html and "57.1 &lt; 50 = False" in html
+    assert '57.1&nbsp;<span class="unit">%</span>' in html
     assert 'badge--pass">PASS' in html and 'badge--fail">FAIL' in html
     # …and the failing check did NOT redden the run: errors is empty above.
     assert "Overall <b>FAIL</b>" in html

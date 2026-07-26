@@ -66,7 +66,16 @@ class CheckResult:
     ``passed`` is the verdict and is authoritative. ``utilisation`` and
     ``limit`` are the same fact as a margin an engineer can read and tooling
     can rank — present only when the check declared a utilisation symbol and
-    (for ``limit``) the check is an inequality bounding it.
+    (for ``limit``) the check is an inequality bounding it. ``utilisation_unit``
+    is that quantity's display unit, copied from the row that defines it, so a
+    renderer states ``145.98 %`` rather than a bare number.
+
+    ``substituted`` is the evaluation trace (``"57.1 < 50 = False"``) and stays
+    part of the archived result. The HTML card no longer prints it: on a design
+    document a substituted inequality reads as an assertion, and for a failing
+    check that assertion is false. The card states the measured value, the
+    limit it was judged against, and the verdict — the inequality's job is to
+    DECIDE the verdict, not to be displayed as a fact.
     """
 
     expr: str
@@ -76,6 +85,7 @@ class CheckResult:
     passed: bool
     utilisation: float | None = None
     limit: float | None = None
+    utilisation_unit: str = ""
 
 
 @dataclass(frozen=True)
@@ -316,6 +326,12 @@ def evaluate_calc(calc: Calc) -> Result:
             )
         )
 
+    # A check reports its utilisation as a quantity, so it needs that
+    # quantity's unit — which is already stated once, on the row that defines
+    # the symbol. Copied, never re-derived: the chip and the row show the same
+    # number in the same unit because they read the same two fields.
+    units = {row.symbol: row.unit for row in (*input_rows, *formula_rows)}
+
     check_results: list[CheckResult] = []
     for check in calc.checks:
         what = f"check {check.expr!r}"
@@ -353,6 +369,7 @@ def evaluate_calc(calc: Calc) -> Result:
                 passed=passed,
                 utilisation=utilisation,
                 limit=limit,
+                utilisation_unit=units.get(check.utilisation, ""),
             )
         )
 

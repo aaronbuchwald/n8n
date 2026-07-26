@@ -143,7 +143,8 @@ def test_the_second_rendering_differs_only_in_presentation():
     for fragment in (
         '<span class="val">0.571</span>',
         "57.1&nbsp;<span class=\"unit\">%</span>",
-        "57.1 &lt; 50 = False",
+        '<span class="chk__what">utilisation target</span>',
+        'badge badge--fail">FAIL',
         "Overall <b>FAIL</b>",
     ):
         assert fragment in plain and fragment in branded

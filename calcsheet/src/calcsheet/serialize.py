@@ -133,6 +133,7 @@ def _check_to_dict(check: CheckResult) -> dict[str, object]:
         "passed": check.passed,
         "utilisation": check.utilisation,
         "limit": check.limit,
+        "utilisation_unit": check.utilisation_unit,
     }
 
 
@@ -156,6 +157,13 @@ def _check_from_dict(data: object, *, what: str) -> CheckResult:
             _field(check, "utilisation", what=what), what=f"{what} utilisation"
         ),
         limit=_optional_number(_field(check, "limit", what=what), what=f"{what} limit"),
+        # Absent in archives written before a check carried its unit. Defaulted
+        # rather than demanded, for the reason the version note above gives: a
+        # widened field must not make this package refuse results it has
+        # already written, and "" renders exactly as those cards did.
+        utilisation_unit=_text(
+            check.get("utilisation_unit", ""), what=f"{what} utilisation_unit"
+        ),
     )
 
 

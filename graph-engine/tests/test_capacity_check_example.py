@@ -155,9 +155,13 @@ def test_output_html_carries_the_computed_values_and_verdicts():
     # The authored references land in the right-hand gutter.
     assert '<span class="ref">demand / capacity</span>' in html
     assert '<span class="ref">utilisation</span>' in html
-    # One check passes, one fails, each with its substituted boolean.
-    assert "57.1 &lt; 100 = True" in html and 'badge--pass">PASS' in html
-    assert "57.1 &lt; 50 = False" in html and 'badge--fail">FAIL' in html
+    # One check passes, one fails. Neither declares a utilisation symbol, so
+    # each chip is its rule, its description and its badge — the card states no
+    # substituted inequality, which for the failing check would be untrue.
+    assert '<span class="chk__what">capacity not exceeded</span>' in html
+    assert '<span class="chk__what">utilisation target</span>' in html
+    assert 'badge--pass">PASS' in html and 'badge--fail">FAIL' in html
+    assert "= True" not in html and "= False" not in html
     # Binary severity: any false check makes the whole card FAIL.
     assert 'class="status status--fail"' in html
     assert "Overall <b>FAIL</b>" in html
@@ -229,8 +233,10 @@ def test_one_edit_to_the_formulas_moves_the_values_and_the_verdict():
         )
 
     fails = _card("r = F_max / C_min\nU = 100 * r [%]")
-    assert "57.1 &lt; 50 = False" in fails and "Overall <b>FAIL</b>" in fails
+    assert '57.1&nbsp;<span class="unit">%</span>' in fails
+    assert "Overall <b>FAIL</b>" in fails
 
     # Halve the demand: 28.6 % clears the 50 % target, same checks literal.
     passes = _card("r = 0.5 * F_max / C_min\nU = 100 * r [%]")
-    assert "28.6 &lt; 50 = True" in passes and "Overall <b>PASS</b>" in passes
+    assert '28.6&nbsp;<span class="unit">%</span>' in passes
+    assert "Overall <b>PASS</b>" in passes

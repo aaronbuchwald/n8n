@@ -122,11 +122,20 @@ render is byte-for-byte the card this package has always emitted — the CSS for
 a slot is only emitted when the slot is filled.
 
 The substituted middle step is deliberately dropped — that is the C4 model, and
-it is why `handcalcs` is not used here. Design checks render as one row each:
-check expression as math, its description, the substituted boolean
-(`57.1 < 50 = False`) and a PASS/FAIL badge. A check that reports a utilisation
-gains a fourth column with the margin itself — `0.759 ≤ 0.833`, which is what an
-engineer actually reads — and the governing check is named in the card foot.
+it is why `handcalcs` is not used here. Design checks render as one chip each:
+the rule as math, its description, and a PASS/FAIL badge. A check that reports a
+utilisation adds the two facts an engineer reads — `actual 145.98 %` and
+`limit 100 %`, the computed value and the ceiling it was judged against — and the
+governing check is named in the card foot.
+
+**The card never prints a substituted inequality.** `145.98 ≤ 100` and
+`145.98 < 100 = False` are both statements a design document has no business
+making about its own failing case; the rule's job is to *decide* the verdict,
+not to be displayed as a fact. The evaluation trace stays on
+`CheckResult.substituted` for tooling and the CLI. `actual` appears whenever the
+check declared a utilisation symbol, `limit` only when the rule is an inequality
+bounding that very symbol — a check with neither is a rule and a verdict, which
+is all it ever claimed to be.
 Light and dark themes ship via `prefers-color-scheme`, or are pinned with
 `HtmlOptions(theme="light"|"dark")`.
 

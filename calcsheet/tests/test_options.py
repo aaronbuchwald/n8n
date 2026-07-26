@@ -31,10 +31,15 @@ def test_the_shipped_example_renders_the_pinned_card(result):
     # 2. equation sizing — a definition and a check now say `display="block"`
     #    (display style, so a fraction's numerator and denominator typeset at
     #    the row's own size instead of 0.71em), with three CSS rules to keep
-    #    the equation's BOX on the row's line and drop `.def`'s inner scroller.
+    #    the equation's BOX on the row's line and drop `.def`'s inner scroller;
+    # 3. honest checks — the chip dropped the substituted inequality
+    #    (`57.1 < 50 = False`) and the margin pair (`0.759 ≤ 0.833`) for named
+    #    `actual` / `limit` facts, and became a flex row; plus a wrapping card
+    #    head, so a long title cannot be clipped out of reach at node width.
     #
-    # What did NOT move either time: the numbers, the MathML element tree, the
-    # section order, the symbols' own (inline) math, or any value+unit markup.
+    # What did NOT move any time: the numbers themselves, the MathML element
+    # tree, the section order, the symbols' own (inline) math, or any row's
+    # value+unit markup.
     assert render_html(result) == GOLDEN.read_text(encoding="utf-8")
 
 

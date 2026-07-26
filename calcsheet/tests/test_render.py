@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from html import escape
 
 import pytest
 
@@ -117,15 +118,26 @@ def test_values_carry_their_unit_and_reference(html: str):
     assert '<span class="ref">forces.csv · max</span>' in html
 
 
-def test_checks_render_description_substituted_boolean_and_badges(html: str):
+def test_checks_render_their_rule_description_and_badge(html: str):
     assert "capacity not exceeded" in html
     assert "utilisation target" in html
-    assert "57.1 &lt; 100 = True" in html
-    assert "57.1 &lt; 50 = False" in html
     assert '<span class="badge badge--pass">PASS &#10003;</span>' in html
     assert '<span class="badge badge--fail">FAIL &#10007;</span>' in html
     # ...and the failing chip is marked in form as well as colour.
     assert "chk--fail" in html
+
+
+def test_the_card_asserts_nothing_it_knows_to_be_false(html: str):
+    # The chip used to print the check substituted and evaluated —
+    # `57.1 < 50 = False`. A design document does not get to state an
+    # inequality it has itself just disproved: the rule DECIDES the badge, and
+    # what the card asserts is the measured value and the limit. The trace
+    # survives on the Result for tooling and the CLI; it is not card content.
+    assert "= False" not in html
+    assert "57.1 &lt; 50" not in html
+    assert "chk__bool" not in html
+    for check in build_calc().evaluate().checks:
+        assert escape(check.substituted) not in html
 
 
 def test_footer_states_the_overall_verdict(html: str):
