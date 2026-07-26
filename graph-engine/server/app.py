@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import os
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Optional
 
@@ -73,6 +75,17 @@ def _graph_from(body: dict) -> Graph:
     return Graph.from_dict(raw)
 
 
+# Node types whose ``path`` names a **destination**, not a source. Their literal
+# is handed to the node exactly as authored: absolutising it would defeat the
+# node's own containment rule (relative-only, never out of the run directory),
+# and the run already executes *in* that directory — see `_run_in` below.
+# Hard-coded here for the same reason `sources.write_json`'s rule is hard-coded
+# in the node: ADR 0003's `mounts` descriptor is the seam that should eventually
+# say "this input is a write target, confined to here", and it is not enforced
+# yet.
+DESTINATION_PATH_TYPES = frozenset({"sources.write_json"})
+
+
 def _resolve_run_paths(graph: Graph, base_dir: Optional[Path]) -> Graph:
     """A copy of ``graph`` with relative ``path`` inputs resolved against ``base_dir``.
 
@@ -84,15 +97,41 @@ def _resolve_run_paths(graph: Graph, base_dir: Optional[Path]) -> Graph:
     the served program's own directory, so a program with N CSV reads (each a
     different relative file) runs from any working directory, unchanged, with no
     absolute path ever reaching the source.
+
+    Read paths only: a node in :data:`DESTINATION_PATH_TYPES` keeps its literal.
     """
     if base_dir is None:
         return graph
     patched = Graph.from_dict(graph.to_dict())  # deep copy; never mutate the caller's graph
     for node in patched.nodes:
+        if node.type in DESTINATION_PATH_TYPES:
+            continue
         value = node.inputs.get("path")
         if isinstance(value, str) and value and not Path(value).is_absolute():
             node.inputs["path"] = str(base_dir / value)
     return patched
+
+
+@contextmanager
+def _run_in(base_dir: Optional[Path]):
+    """Execute the run with the served program's directory as the working directory.
+
+    Relative read paths are already rewritten to absolute ones by
+    :func:`_resolve_run_paths`; this is what a node that *writes* needs — a
+    defined run directory to be confined to (``sources.write_json``). It is a
+    process-global ``chdir``, which is honest about what it is: a stand-in until
+    ADR 0003's C-stream runs each graph in a subprocess with its own scratch cwd
+    and a mount guard. Restored in ``finally``, and a no-op without a base dir.
+    """
+    if base_dir is None:
+        yield
+        return
+    previous = os.getcwd()
+    os.chdir(base_dir)
+    try:
+        yield
+    finally:
+        os.chdir(previous)
 
 
 def create_app(
@@ -188,7 +227,8 @@ def create_app(
         try:
             # environment honoured by stream C later; path resolution never
             # touches `graph` itself, only the copy handed to the executor.
-            result = run(_resolve_run_paths(graph, base_dir), registry)
+            with _run_in(base_dir):
+                result = run(_resolve_run_paths(graph, base_dir), registry)
         except NodeExecutionError as exc:
             # ADR 0002's shape is additive on failure: `errors` is unchanged,
             # but `outputs`/`order` now carry every node that ran before the
