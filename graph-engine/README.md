@@ -49,9 +49,15 @@ frozen JSON contract and `run`/`to_python` are unchanged. `main` is just
 cd graph-engine
 uv sync --extra dev
 uv run python examples/minimal/minimal.py   # run the graph + print exported Python
-uv run --extra dev pytest tests/ -q         # 33 passing
+uv run --extra sym --extra dev python -m pytest -q   # 574 passing
 uv run python freeze_schemas.py             # regenerate example snapshots
 ```
+
+> **Use `python -m pytest`, not a bare `pytest`.** `uv run --extra dev pytest`
+> resolves a *global* pytest that is outside the project environment, so it
+> collects nothing (or fails to import the package) and reports success on zero
+> tests. `python -m` runs the pytest inside the synced venv. The same applies in
+> `calcsheet/`. Without `--extra sym` the calcsheet-backed sheet tests skip.
 
 ## Notes
 

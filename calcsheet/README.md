@@ -153,13 +153,18 @@ From a clean checkout, in this directory (`calcsheet/`). `uv` creates and syncs
 the environment on the first run — no separate install step:
 
 ```bash
-# tests (79 of them)
+# tests (94 of them)
 uv run --extra dev python -m pytest -q
 
 # the example: writes out/capacity-check.html and opens it in a browser
 uv run python -m calcsheet.examples.capacity
 uv run python -m calcsheet.examples.capacity --no-open   # write only
 ```
+
+> **Use `python -m pytest`, not a bare `pytest`.** `uv run pytest -q` resolves a
+> *global* pytest from outside this project's environment, which cannot import
+> `calcsheet` and dies in collection with `ModuleNotFoundError`. `python -m`
+> runs the pytest inside the synced venv. Same rule in `graph-engine/`.
 
 Explicit environment, if you prefer one:
 

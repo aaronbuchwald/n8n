@@ -428,8 +428,14 @@ def _evaluate(
         raise UserError(str(error)) from None
 
 
-def _render(result: Result, *, header: str, footer: str, theme: str) -> str:
-    """Render ``result`` as the self-contained HTML card."""
+def _render(
+    result: Result, *, header: str = "", footer: str = "", theme: str | None = None
+) -> str:
+    """Render ``result`` as the self-contained HTML card.
+
+    ``theme=None`` means "whatever calcsheet defaults to" — the default is not
+    restated here, so there is no second place for it to drift.
+    """
     from calcsheet import CalcError, HtmlOptions, Result
     from calcsheet import render_html as render_html_card
 
@@ -438,8 +444,9 @@ def _render(result: Result, *, header: str, footer: str, theme: str) -> str:
             f"the 'result' input must be a calcsheet Result (wire it from a "
             f"calc node), got {type(result).__name__}"
         )
+    theme_option = {} if theme is None else {"theme": theme}
     try:
-        options = HtmlOptions(theme=theme, header=header, footer=footer)
+        options = HtmlOptions(header=header, footer=footer, **theme_option)
     except CalcError as error:
         # The only rejectable option is an unknown theme, and its message
         # already lists the available ones.
@@ -513,7 +520,8 @@ def calc_card(
     ``result`` output is the HTML document.
     """
     result = _evaluate(title, as_of, formulas, checks, precision, values)
-    return _render(result, header="", footer="", theme="auto")
+    # No options: the card comes out exactly as calcsheet renders it by default.
+    return _render(result)
 
 
 @node(
@@ -550,7 +558,7 @@ def render_html(
     result: Result,
     header: str = "",
     footer: str = "",
-    theme: str = "auto",
+    theme: str = "light",
 ) -> str:
     """Render a :func:`calc` ``Result`` as a self-contained HTML card.
 
@@ -560,6 +568,10 @@ def render_html(
     slot under the verdict, ``theme`` one of ``auto`` / ``light`` / ``dark``.
     They are presentation only and live here alone — the calculation upstream
     knows nothing about them.
+
+    ``theme`` must be a literal scalar to be a node param, so calcsheet's
+    default is mirrored here rather than deferred to; ``light`` is that default
+    because a card is a document, not a panel of the editor around it.
 
     Deterministic: the same ``Result`` and options render byte-identical HTML,
     and with every option left at its default that HTML is exactly what
