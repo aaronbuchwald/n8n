@@ -1,5 +1,13 @@
 import { test, expect } from '@playwright/test';
 
+import { stableScreenshot, stubWorkspace } from './visual';
+
+// Pin the branch label the top bar paints, so the committed captures don't
+// depend on which branch/worktree the suite happens to run from.
+test.beforeEach(async ({ page }) => {
+  await stubWorkspace(page);
+});
+
 // The served demo is now the widget SHOWCASE (ADR 0005 integration): the table
 // chain (read_table → apply_recipe → table_summary) and the symbolic chain
 // (parse_expr → solve_for → … → render_math_card) composed by `dashboard`.
@@ -56,7 +64,7 @@ test('renders the showcase graph fetched live from the API (not fixtures)', asyn
   await expect.poll(async () => minimapNodes.count(), { timeout: 10_000 }).toBe(NODE_COUNT);
   await expect(minimapNodes.first()).toBeVisible();
 
-  await page.screenshot({ path: 'tests/__screenshots__/graph.png', fullPage: false });
+  await stableScreenshot(page, 'tests/__screenshots__/graph.png');
 
   // Nodes are draggable: onNodesChange must apply position changes.
   const nodeEl = page.locator('.react-flow__node', { hasText: 'parse_expr' }).first();
@@ -118,7 +126,7 @@ test('runs the showcase graph and exports it to Python from the UI', async ({ pa
   await expect(page.getByTestId('flow-canvas')).toBeVisible();
   await expect(page.getByTestId('export-panel')).toBeVisible();
 
-  await page.screenshot({ path: 'tests/__screenshots__/run.png', fullPage: false });
+  await stableScreenshot(page, 'tests/__screenshots__/run.png');
 });
 
 test('shows an error state when the API fails', async ({ page }) => {

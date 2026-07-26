@@ -1,5 +1,13 @@
 import { test, expect, type Page } from '@playwright/test';
 
+import { stableScreenshot, stubWorkspace } from './visual';
+
+// Pin the branch label the top bar paints, so the committed captures don't
+// depend on which branch/worktree the suite happens to run from.
+test.beforeEach(async ({ page }) => {
+  await stubWorkspace(page);
+});
+
 // ADR 0010 stream 10-W: the renderer registry + RendererSlot shell, WITHOUT any
 // product kind (html-card is 10-K). What must hold:
 //  * nodes with no declared renderer show today's result chips, unchanged;
@@ -135,7 +143,7 @@ test('a registered kind mounts in the result strip only; shell chrome is untouch
   await expect(renderer).toContainText('result');
   await expect(nodeCard(page, 'dashboard').getByTestId('node-result')).toBeVisible();
 
-  await page.screenshot({ path: 'tests/__screenshots__/renderer-slot.png', fullPage: false });
+  await stableScreenshot(page, 'tests/__screenshots__/renderer-slot.png');
 
   expect(external, 'EXTERNAL_REQUESTS must be 0').toHaveLength(0);
 });

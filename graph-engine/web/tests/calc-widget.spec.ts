@@ -1,4 +1,12 @@
 import { test, expect, type Page } from '@playwright/test';
+
+import { stableScreenshot, stubWorkspace } from './visual';
+
+// Pin the branch label the top bar paints, so the committed captures don't
+// depend on which branch/worktree the suite happens to run from.
+test.beforeEach(async ({ page }) => {
+  await stubWorkspace(page);
+});
 import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -174,8 +182,7 @@ test('calc widget: live derived chips, invalid-equation refusal, commit reshapes
     // the canvas needed no second derive POST for the committed literal.
     expect(deriveCalls.filter((v) => v === withSafety).length).toBe(1);
 
-    await page.screenshot({
-      path: path.join(HERE, '__screenshots__', 'calc-widget.png'),
+    await stableScreenshot(page, path.join(HERE, '__screenshots__', 'calc-widget.png'), {
       fullPage: true,
     });
 
