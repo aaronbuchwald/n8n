@@ -1,4 +1,12 @@
 import { test, expect, type Page } from '@playwright/test';
+
+import { stableScreenshot, stubWorkspace } from './visual';
+
+// Pin the branch label the top bar paints, so the committed captures don't
+// depend on which branch/worktree the suite happens to run from.
+test.beforeEach(async ({ page }) => {
+  await stubWorkspace(page);
+});
 import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -187,7 +195,7 @@ test('palette drop lands pinned at the drop point; connect persists; delete spli
     // Wired state reflects on the card, and the badge clears (values is wired).
     await expect(card.getByTestId('node-needs-wiring')).toBeHidden();
 
-    await page.screenshot({ path: 'tests/__screenshots__/canvas-editing.png', fullPage: false });
+    await stableScreenshot(page, 'tests/__screenshots__/canvas-editing.png');
 
     // The edge survives a full reload — re-parsed from the rewritten module.
     await openApp(page);

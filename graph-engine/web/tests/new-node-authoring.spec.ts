@@ -4,6 +4,14 @@ import path from 'node:path';
 
 import { test, expect, type Page } from '@playwright/test';
 
+import { stableScreenshot, stubWorkspace } from './visual';
+
+// Pin the branch label the top bar paints, so the committed captures don't
+// depend on which branch/worktree the suite happens to run from.
+test.beforeEach(async ({ page }) => {
+  await stubWorkspace(page);
+});
+
 // Both tests write a new @node into showcase.py and restore it — serialize so
 // the create test's write never leaks into the collision test's file check
 // (they own the workspace via the `new-node` project; see playwright.config.ts).
@@ -17,6 +25,37 @@ test.describe.configure({ mode: 'serial' });
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SHOWCASE_FILE = path.join(HERE, '..', '..', 'examples', 'showcase', 'showcase.py');
+
+// Fixed, not a random UUID: this name is typed into Monaco and echoed in the
+// "Created …" notice, both of which land in the committed screenshot — a fresh
+// id per run made that PNG differ on every run. `stripLeftoverNode` below keeps
+// the fixed name collision-safe, which is what the randomness was buying.
+const FN_NAME = 'e2e_new_node';
+
+/**
+ * Remove a previously-written `@node def <name>` block from a module's source.
+ *
+ * The happy path restores showcase.py in a `finally`, so residue only survives
+ * a hard kill (e.g. the worker being torn down mid-test). Without this, such
+ * residue would wedge the fixed name permanently — every later run would fail
+ * the create with a name collision. Walks back over decorator lines and
+ * forward over the indented body, so it does not depend on the block sitting
+ * last in the file.
+ */
+function stripLeftoverNode(source: string, name: string): string {
+  const lines = source.split('\n');
+  const defIndex = lines.findIndex((line) => line.startsWith(`def ${name}(`));
+  if (defIndex === -1) return source;
+
+  let start = defIndex;
+  while (start > 0 && lines[start - 1].startsWith('@')) start -= 1;
+  while (start > 0 && lines[start - 1].trim() === '') start -= 1;
+
+  let end = defIndex + 1;
+  while (end < lines.length && (lines[end].trim() === '' || /^\s/.test(lines[end]))) end += 1;
+
+  return [...lines.slice(0, start), ...lines.slice(end)].join('\n');
+}
 
 interface MonacoModel {
   getValue(): string;
@@ -78,8 +117,12 @@ test('authoring a new @node in Monaco shows the destination before writing, then
   page,
 }) => {
   const external = trackExternalRequests(page);
-  const originalFile = readFileSync(SHOWCASE_FILE, 'utf-8');
-  const fnName = `e2e_new_node_${crypto.randomUUID().replace(/-/g, '').slice(0, 8)}`;
+  // Clear any residue from a killed run BEFORE snapshotting, so the `finally`
+  // restore doesn't write it back.
+  const onDisk = readFileSync(SHOWCASE_FILE, 'utf-8');
+  const originalFile = stripLeftoverNode(onDisk, FN_NAME);
+  if (originalFile !== onDisk) writeFileSync(SHOWCASE_FILE, originalFile, 'utf-8');
+  const fnName = FN_NAME;
 
   try {
     await gotoAndSettle(page);
@@ -142,7 +185,7 @@ test('authoring a new @node in Monaco shows the destination before writing, then
     const specs = await (await page.request.get('/api/specs')).json();
     expect(Object.keys(specs.specs)).toContain(`showcase.${fnName}`);
 
-    await page.screenshot({ path: 'tests/__screenshots__/new-node-authoring.png', fullPage: false });
+    await stableScreenshot(page, 'tests/__screenshots__/new-node-authoring.png');
 
     expect(external, 'EXTERNAL_REQUESTS must be 0').toHaveLength(0);
   } finally {

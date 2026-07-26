@@ -1,5 +1,13 @@
 import { test, expect, type Page } from '@playwright/test';
 
+import { stableScreenshot, stubWorkspace } from './visual';
+
+// Pin the branch label the top bar paints, so the committed captures don't
+// depend on which branch/worktree the suite happens to run from.
+test.beforeEach(async ({ page }) => {
+  await stubWorkspace(page);
+});
+
 // ADR 0010 stream 10-K: the `html-card` kind end-to-end against the LIVE demo
 // (no spec rewriting — the packs really declare it since 10-E/10-K). What must
 // hold (D5/D6/D7):
@@ -92,7 +100,7 @@ test('render_math_card renders its MathML card in a sandboxed iframe in the resu
     nodeCard(page, 'dashboard').getByTestId('html-card-frame'),
   ).toHaveAttribute('sandbox', '');
 
-  await page.screenshot({ path: 'tests/__screenshots__/html-card.png', fullPage: false });
+  await stableScreenshot(page, 'tests/__screenshots__/html-card.png');
 
   expect(external, 'EXTERNAL_REQUESTS must be 0').toHaveLength(0);
 });

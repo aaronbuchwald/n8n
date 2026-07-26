@@ -1,5 +1,15 @@
 import { test, expect, type Page } from '@playwright/test';
 
+import { stableScreenshot, stubWorkspace } from './visual';
+
+// Pin the branch label the top bar paints, so the committed captures don't
+// depend on which branch/worktree the suite happens to run from. The
+// badge-unchanged assertion below compares the badge against itself, so a
+// fixed value still exercises it.
+test.beforeEach(async ({ page }) => {
+  await stubWorkspace(page);
+});
+
 // ADR 0009 stream 9-S2c: the top-bar GraphPicker wired onto the merged 8-S1
 // sync store. What must hold (D6 + the ADR 0008 composition point):
 //  * switching entries moves `?graph=<id>` in the URL — the store's `graphId`
@@ -132,7 +142,9 @@ test('switches entries via the picker: URL key, full canvas swap, cleared run pa
     .filter({ has: page.locator('.ge-socket__name', { hasText: 'path' }) });
   await expect(pathRow.getByTestId('widget-preview')).toContainText(NEW_PATH);
 
-  await page.screenshot({ path: 'tests/__screenshots__/graph-picker.png', fullPage: false });
+  // capacity_check's cards carry KaTeX math, so the canvas' one-shot initial
+  // fit raced the math's final height — see `refit` in visual.ts.
+  await stableScreenshot(page, 'tests/__screenshots__/graph-picker.png', { refit: true });
 
   expect(external, 'EXTERNAL_REQUESTS must be 0').toHaveLength(0);
 });

@@ -11,6 +11,22 @@ const executablePath = existsSync(PREINSTALLED_CHROMIUM) ? PREINSTALLED_CHROMIUM
 const WEB_PORT = Number(process.env.GE_WEB_PORT ?? 4173);
 const API_PORT = Number(process.env.GE_API_PORT ?? 8000);
 
+// Pin Chromium's rasterizer so the committed captures in tests/__screenshots__
+// are byte-reproducible. Without these, an otherwise pixel-identical frame
+// still came out with a handful of bytes different per run — antialiasing on
+// card corner radii and glyph edges, magnitude 1/255, from partial/threaded
+// raster reusing tiles and from CPU-feature-dependent Skia paths. These flags
+// constrain HOW the frame is rasterized; they do not relax any comparison.
+const DETERMINISTIC_RASTER_ARGS = [
+  '--disable-partial-raster', // don't reuse previously rastered tiles
+  '--disable-skia-runtime-opts', // no CPU-feature-dependent Skia code paths
+  '--disable-checker-imaging', // no progressive image raster
+  '--disable-threaded-animation',
+  '--disable-lcd-text', // grayscale AA instead of subpixel-order-dependent
+  '--disable-font-subpixel-positioning',
+  '--force-color-profile=srgb',
+];
+
 export default defineConfig({
   testDir: './tests',
   // The server-mount spec has its own config (playwright.server-mount.config.ts)
@@ -22,7 +38,10 @@ export default defineConfig({
   use: {
     baseURL: `http://127.0.0.1:${WEB_PORT}`,
     trace: 'off',
-    launchOptions: executablePath ? { executablePath } : {},
+    launchOptions: {
+      args: DETERMINISTIC_RASTER_ARGS,
+      ...(executablePath ? { executablePath } : {}),
+    },
   },
   projects: [
     {
