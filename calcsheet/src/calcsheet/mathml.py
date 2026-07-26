@@ -220,9 +220,21 @@ def latex_to_mathml(latex: str, display: str = "block") -> str:
     namespace attribute is dropped — it is implied in HTML parsing, and keeps
     the output free of any ``http`` reference.
 
-    ``display`` is ``"block"`` for standalone equations and ``"inline"`` for
-    the four-slot rows, where the math sits in a grid cell and must share the
-    row's baseline rather than form its own centred block.
+    ``display`` picks the typesetting **style**, which is the only thing it
+    changes in the markup — the element tree is identical either way:
+
+    * ``"block"`` is MathML's *display* style. A fraction typesets at full
+      size: ``\\frac{a}{b}`` keeps numerator and denominator at the size of the
+      text around them.
+    * ``"inline"`` is MathML's *compact* style, which shrinks every nested
+      level to 0.71em — right for a symbol standing in running text, wrong for
+      an equation, whose numerator would then read two sizes smaller than the
+      line it sits on.
+
+    ``display="block"`` **also** asks for a block-level, centred box. That half
+    is layout, and a renderer that wants the equation on a row's line is free
+    to put the box back inline in CSS (the card does exactly that); the style
+    above is a separate property and survives the override.
     """
     body = _ALIGNED.sub("", _LATEX_WRAPPERS.sub("", latex.strip()))
     rows = [row.strip().replace("&", "") for row in body.split("\\\\")]
@@ -235,17 +247,29 @@ def latex_to_mathml(latex: str, display: str = "block") -> str:
     return "\n".join(blocks)
 
 
-def expression_mathml(expr: Basic, display: str = "inline") -> str:
+def expression_mathml(expr: Basic, display: str = "block") -> str:
     """MathML for a sympy object, via its LaTeX form.
 
     Underscored names become subscripts for free: sympy prints ``F_max`` as
     ``F_{max}``, which MathML renders as F with a "max" subscript.
+
+    Display style by default: an expression is an *equation*, and every
+    consumer of one wants its fractions at full size. The markup carries that,
+    not the renderer's stylesheet — a ``Result`` hands its MathML to whatever
+    renders it (ADR 0021 lets a second renderer hang off the same wire), and a
+    string that only typesets correctly under one card's CSS would be a
+    property of that card rather than of the equation.
     """
     return latex_to_mathml(sympy.latex(expr), display=display)
 
 
 def symbol_mathml(name: str, display: str = "inline") -> str:
-    """MathML for a bare symbol name (``"F_max"`` -> F with subscript "max")."""
+    """MathML for a bare symbol name (``"F_max"`` -> F with subscript "max").
+
+    Inline, unlike :func:`expression_mathml`: a symbol stands in the running
+    text of a row, and has nothing to gain from display style — a subscript
+    shrinks under both, which is what a subscript is for.
+    """
     return expression_mathml(sympy.Symbol(name), display=display)
 
 

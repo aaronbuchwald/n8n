@@ -36,8 +36,9 @@ def test_a_check_without_a_utilisation_is_exactly_what_it_always_was():
     assert result.passed is False
 
 
-def test_the_shipped_example_still_renders_the_card_it_always_did():
-    # The whole feature is opt-in: unused, it costs zero bytes of output.
+def test_the_shipped_example_renders_the_pinned_card():
+    # The whole feature is opt-in: unused, it costs zero bytes of output. The
+    # golden it is checked against is the one pinned in test_options.py.
     assert render_html(build_calc().evaluate()) == GOLDEN.read_text(encoding="utf-8")
 
 

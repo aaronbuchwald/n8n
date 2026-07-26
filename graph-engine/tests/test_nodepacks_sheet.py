@@ -280,7 +280,10 @@ def test_render_html_consumes_a_result_and_declares_the_card_renderer():
 def test_the_html_options_are_flattened_to_scalar_node_params():
     """ADR 0021 D3: each knob is a literal with a type-derived widget."""
     options = {i["name"]: i for i in sheet.render_html.spec["inputs"] if i["name"] != "result"}
-    assert [i["default"] for i in options.values()] == ["", "", "auto"]
+    # `theme` defaults to `light`, matching calcsheet's own default: a card is a
+    # document, so it does not flip to dark on the viewer's OS preference. Only
+    # the DEFAULT moved — all three themes are still accepted (see below).
+    assert [i["default"] for i in options.values()] == ["", "", "light"]
     assert all(i["widget"] == {"kind": "text"} for i in options.values())
     assert set(options) == {"header", "footer", "theme"}
 
@@ -319,10 +322,28 @@ def test_one_result_feeds_many_renderings_without_re_evaluating():
 
 @needs_sym_extra
 def test_a_theme_is_honoured_and_an_unknown_one_is_a_user_error():
-    dark = sheet.render_html(sheet.calc(**CALC), theme="dark")
+    result = sheet.calc(**CALC)
+    dark = sheet.render_html(result, theme="dark")
     assert "prefers-color-scheme" not in dark  # the dark ramp, unconditionally
+    assert "--bg:#0e1117" in dark
+    # All three are still on offer; only the default moved to `light`.
+    assert "prefers-color-scheme" in sheet.render_html(result, theme="auto")
     with pytest.raises(UserError, match="unknown theme"):
-        sheet.render_html(sheet.calc(**CALC), theme="neon")
+        sheet.render_html(result, theme="neon")
+
+
+@needs_sym_extra
+def test_a_card_rendered_through_the_engine_is_light_by_default():
+    """The mandate lands on the flagship consumer, not just the library.
+
+    Both node forms must produce a card on white paper with black ink, and
+    neither may carry the media query that flips it to dark on an OS
+    preference — a card is a document, not a panel of the editor around it.
+    """
+    for html in (sheet.calc_card(**CALC), sheet.render_html(sheet.calc(**CALC))):
+        assert "--bg:#fff" in html and "--ink:#000" in html
+        assert "prefers-color-scheme" not in html
+        assert "--bg:#0e1117" not in html
 
 
 @needs_sym_extra

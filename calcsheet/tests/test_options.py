@@ -19,9 +19,22 @@ def result():
     return build_calc().evaluate()
 
 
-def test_the_shipped_example_still_renders_the_card_it_always_did(result):
-    # Captured from the renderer BEFORE options existed: the regression fence
-    # for every additive change in this package.
+def test_the_shipped_example_renders_the_pinned_card(result):
+    # The regression fence for every change in this package: no edit may move a
+    # byte of the default card without saying so here.
+    #
+    # Recaptured twice, deliberately:
+    #
+    # 1. the light-by-default redesign — white paper / black ink, the givens
+    #    grid without its definition column, a distinguishing PASS/FAIL glyph,
+    #    and the type scale collapsed to four roles;
+    # 2. equation sizing — a definition and a check now say `display="block"`
+    #    (display style, so a fraction's numerator and denominator typeset at
+    #    the row's own size instead of 0.71em), with three CSS rules to keep
+    #    the equation's BOX on the row's line and drop `.def`'s inner scroller.
+    #
+    # What did NOT move either time: the numbers, the MathML element tree, the
+    # section order, the symbols' own (inline) math, or any value+unit markup.
     assert render_html(result) == GOLDEN.read_text(encoding="utf-8")
 
 
@@ -29,8 +42,18 @@ def test_default_options_are_the_no_options_render(result):
     assert render_html(result, HtmlOptions()) == render_html(result)
 
 
-def test_options_default_to_auto_theme_and_empty_slots():
-    assert HtmlOptions() == HtmlOptions(theme="auto", header="", footer="")
+def test_options_default_to_the_light_theme_and_empty_slots():
+    # A card is a document, so its default is a document's: white paper, black
+    # ink, whoever opens it. `auto` and `dark` stay available — the card may be
+    # handed to another viewer or a PDF path, so the theme is stated in the
+    # file rather than inferred from wherever it happens to land.
+    assert HtmlOptions() == HtmlOptions(theme="light", header="", footer="")
+    assert "prefers-color-scheme" not in render_html(build_calc().evaluate())
+
+
+def test_the_theme_is_a_choice_of_three_and_auto_is_still_one_of_them():
+    for theme in ("auto", "light", "dark"):
+        assert HtmlOptions(theme=theme).theme == theme
 
 
 def test_options_are_json_round_trippable():

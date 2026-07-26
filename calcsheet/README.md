@@ -101,10 +101,19 @@ html = render_html(result)
 
 | slot | content |
 | --- | --- |
-| symbol | MathML |
-| definition | MathML (formulas only — inputs get a single `=`) |
+| symbol | MathML, `display="inline"` |
+| definition | MathML, `display="block"` (formulas only — inputs get a single `=`) |
 | value + unit | right-aligned, tabular numerals, unit upright and muted |
 | reference | right-hand gutter, plain text, hairline rule |
+
+`display="block"` on a definition (and on a check's expression) is MathML's
+**display style**, and it is what makes a fraction typeset at the size of the
+text around it — inline style shrinks every nested level to 0.71em, so
+`f_c90k·k_mod / γ_M` would read two sizes down from its own row. The style
+belongs to the equation, so any renderer of a `Result` gets it; the HTML card
+additionally puts the equation's *box* back on the row's line (`display: inline
+math`) and lets the row grow to whatever height the equation needs — it is
+never clipped, shrunk to fit, or given a scroller of its own.
 
 Two optional slots sit around it: `HtmlOptions.header` is a banner above the
 card, `HtmlOptions.footer` is the notes line under the verdict (source pins, a
@@ -153,13 +162,18 @@ From a clean checkout, in this directory (`calcsheet/`). `uv` creates and syncs
 the environment on the first run — no separate install step:
 
 ```bash
-# tests (79 of them)
+# tests (94 of them)
 uv run --extra dev python -m pytest -q
 
 # the example: writes out/capacity-check.html and opens it in a browser
 uv run python -m calcsheet.examples.capacity
 uv run python -m calcsheet.examples.capacity --no-open   # write only
 ```
+
+> **Use `python -m pytest`, not a bare `pytest`.** `uv run pytest -q` resolves a
+> *global* pytest from outside this project's environment, which cannot import
+> `calcsheet` and dies in collection with `ModuleNotFoundError`. `python -m`
+> runs the pytest inside the synced venv. Same rule in `graph-engine/`.
 
 Explicit environment, if you prefer one:
 
