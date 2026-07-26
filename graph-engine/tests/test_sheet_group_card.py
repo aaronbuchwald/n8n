@@ -227,7 +227,13 @@ def test_a_mixed_verdict_lands_on_one_card_and_the_run_stays_green():
 
     assert html.startswith("<!doctype html>")
     assert 'badge--fail">FAIL' in html and 'badge--pass">PASS' in html
-    assert "444.44 &lt; 100 = False" in html and "88.889 &lt; 100 = True" in html
+    # Each group's chip states its measured utilisation and the limit it was
+    # judged against — not the substituted inequality, which for the failing
+    # group would be a false statement printed on a design document.
+    assert '<span class="chk__tag">actual</span> 444.44' in html
+    assert '<span class="chk__tag">actual</span> 88.889' in html
+    assert '<span class="chk__tag">limit</span> 100' in html
+    assert "&lt; 100 = False" not in html and "&lt; 100 = True" not in html
     # A calc is valid only when every check passes, so overall is FAIL.
     assert "Overall <b>FAIL</b>" in html
 
